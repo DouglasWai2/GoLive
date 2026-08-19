@@ -1,20 +1,34 @@
 import { FormEvent, useState } from "react";
 import { Brand } from "./Brand";
+import { joinRoom } from "../utils/signaling";
 
 type NameGateProps = {
   roomId: string;
-  onJoin: (name: string) => void;
+  onJoin: (name: string, token: string) => void;
 };
 
 export function NameGate({ roomId, onJoin }: NameGateProps) {
   const [name, setName] = useState(() => localStorage.getItem("golive-name") ?? "");
+  const [error, setError] = useState("");
+  const [joining, setJoining] = useState(false);
 
-  const submit = (event: FormEvent) => {
+  const submit = async (event: FormEvent) => {
     event.preventDefault();
     const trimmed = name.trim();
     if (!trimmed || trimmed.length > 32) return;
-    localStorage.setItem("golive-name", trimmed);
-    onJoin(trimmed);
+
+    setJoining(true);
+    setError("");
+
+    try {
+      const { token } = await joinRoom(roomId, trimmed);
+      localStorage.setItem("golive-name", trimmed);
+      onJoin(trimmed, token);
+    } catch (caught) {
+      setError("Could not enter the room. Try again.");
+    } finally {
+      setJoining(false);
+    }
   };
 
   return (
@@ -32,8 +46,13 @@ export function NameGate({ roomId, onJoin }: NameGateProps) {
           onChange={(event) => setName(event.target.value)}
           placeholder="Your name"
         />
-        <button className="primary-button" type="submit" disabled={!name.trim()}>
-          Enter the room <span>→</span>
+        {error && <p className="gate-error">{error}</p>}
+        <button
+          className="primary-button"
+          type="submit"
+          disabled={!name.trim() || joining}
+        >
+          {joining ? "Entering…" : "Enter the room"} <span>→</span>
         </button>
         <small>Your camera and microphone stay off.</small>
       </form>

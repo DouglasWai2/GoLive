@@ -1,15 +1,19 @@
 import { FormEvent, useState } from "react";
 import { ScreenIcon } from "./icons";
 import { Brand } from "./Brand";
-import { createRoomId, goToRoom, normalizeRoomCode } from "../utils/room";
+import { createRoomId, goToRoom, roomTargetFromInput } from "../utils/room";
 
 export function Landing() {
   const [roomCode, setRoomCode] = useState("");
 
+  const createRoom = () => {
+    goToRoom(createRoomId());
+  };
+
   const joinRoom = (event: FormEvent) => {
     event.preventDefault();
-    const normalized = normalizeRoomCode(roomCode);
-    if (/^[a-zA-Z0-9_-]{1,64}$/.test(normalized)) goToRoom(normalized);
+    const target = roomTargetFromInput(roomCode);
+    if (target) window.location.assign(target);
   };
 
   return (
@@ -27,7 +31,7 @@ export function Landing() {
             Start a room and share your screen with a link. No installs,
             accounts, or video servers in the middle.
           </p>
-          <button className="primary-button large" onClick={() => goToRoom(createRoomId())}>
+          <button className="primary-button large" onClick={createRoom}>
             <ScreenIcon size={21} />
             Create a room
           </button>

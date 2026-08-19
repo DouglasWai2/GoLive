@@ -62,14 +62,16 @@ export class RoomSession {
 
   private roomId = "";
   private name = "";
+  private token = "";
 
   constructor(callbacks: RoomSessionCallbacks) {
     this.callbacks = callbacks;
   }
 
-  start(roomId: string, name: string) {
+  start(roomId: string, name: string, token: string) {
     this.roomId = roomId;
     this.name = name;
+    this.token = token;
     this.active = true;
 
     this.callbacks.onStatus("connecting");
@@ -344,9 +346,7 @@ export class RoomSession {
     let resolvedIceServers: RTCIceServer[];
 
     try {
-      resolvedIceServers = await getIceServers();
-
-      console.log("Cloudflare ICE servers loaded", resolvedIceServers);
+      resolvedIceServers = await getIceServers(this.token);
     } catch (caught) {
       console.warn(
         "Could not load TURN credentials. Falling back to STUN only.",
@@ -390,6 +390,7 @@ export class RoomSession {
           type: "join",
           room: this.roomId,
           name: this.name,
+          token: this.token,
         }),
       );
     };
@@ -430,9 +431,6 @@ export class RoomSession {
       this.peerConnections.delete(peerId);
     }
 
-    console.log(`[${peerId}] Creating peer connection`, {
-      iceServers: this.iceServers,
-    });
 
     const connection = new RTCPeerConnection({
       iceServers: this.iceServers,

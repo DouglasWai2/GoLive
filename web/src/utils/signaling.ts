@@ -36,8 +36,41 @@ export function websocketUrl(): string {
   return url.toString();
 }
 
-export async function getIceServers(): Promise<RTCIceServer[]> {
-  const response = await fetch(signalingHttpUrl("/turn-credentials"));
+export type JoinRoomResult = {
+  session: {
+    kind: "room";
+    sessionId: string;
+    roomId: string;
+    name: string;
+  };
+  token: string;
+};
+
+export async function joinRoom(
+  roomId: string,
+  name: string,
+): Promise<JoinRoomResult> {
+  const response = await fetch(signalingHttpUrl("/room"), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ roomId, name }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to join room: ${response.status}`);
+  }
+
+  return (await response.json()) as JoinRoomResult;
+}
+
+export async function getIceServers(token: string): Promise<RTCIceServer[]> {
+  const response = await fetch(signalingHttpUrl("/turn-credentials"), {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
 
   if (!response.ok) {
     throw new Error(`Failed to get TURN credentials: ${response.status}`);

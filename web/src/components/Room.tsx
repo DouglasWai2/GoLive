@@ -10,10 +10,11 @@ import { ControlDock } from "./room/ControlDock";
 type RoomProps = {
   roomId: string;
   name: string;
+  token: string;
 };
 
-export function Room({ roomId, name }: RoomProps) {
-  const room = useRoom(roomId, name);
+export function Room({ roomId, name, token }: RoomProps) {
+  const room = useRoom(roomId, name, token);
   const [shareSettings, setShareSettings] = useState<ShareSettings | null>(null);
 
   const startShare = (settings: ShareSettings) => {

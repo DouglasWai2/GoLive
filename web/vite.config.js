@@ -8,6 +8,17 @@ export default defineConfig({
                 target: "ws://localhost:3000",
                 ws: true,
             },
+            "/room": {
+                target: "http://localhost:3000",
+                bypass: function (req) {
+                    if (req.method !== "POST") {
+                        return req.url;
+                    }
+                },
+            },
+            "/turn-credentials": {
+                target: "http://localhost:3000",
+            },
         },
     },
 });

@@ -12,7 +12,8 @@ export function RoomHeader({ roomId, status }: RoomHeaderProps) {
   const [copied, setCopied] = useState(false);
 
   const copyInvite = async () => {
-    await navigator.clipboard.writeText(window.location.href);
+    const url = new URL(`/room/${roomId}`, window.location.origin);
+    await navigator.clipboard.writeText(url.toString());
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1800);
   };

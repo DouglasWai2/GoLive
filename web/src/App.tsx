@@ -4,11 +4,16 @@ import { Landing } from "./components/Landing";
 import { NameGate } from "./components/NameGate";
 import { Room } from "./components/Room";
 
+type Join = {
+  name: string;
+  token: string;
+};
+
 export default function App() {
   const roomId = roomFromPath();
-  const [name, setName] = useState<string | null>(null);
+  const [join, setJoin] = useState<Join | null>(null);
 
   if (!roomId) return <Landing />;
-  if (!name) return <NameGate roomId={roomId} onJoin={setName} />;
-  return <Room roomId={roomId} name={name} />;
+  if (!join) return <NameGate roomId={roomId} onJoin={(name, token) => setJoin({ name, token })} />;
+  return <Room roomId={roomId} name={join.name} token={join.token} />;
 }
