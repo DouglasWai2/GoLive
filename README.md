@@ -72,6 +72,8 @@ use the committed `.env.example` files as templates.
 | `ORIGIN` | — | CORS allow-origin for the web app. Required when the web app and server are on different origins. |
 | `CLOUDFLARE_TURN_KEY_ID` | — | Cloudflare TURN key ID, sent to `/turn-credentials`. |
 | `CLOUDFLARE_TURN_API_TOKEN` | — | Cloudflare TURN API token, sent to `/turn-credentials`. |
+| `CLOUDFLARE_ACCOUNT_ID` | — | Cloudflare account ID, queried by `/turn-usage`. |
+| `CLOUDFLARE_ANALYTICS_API_TOKEN` | — | Cloudflare API token with analytics read access, used by `/turn-usage`. |
 
 ### Web (`web/.env`)
 
@@ -101,10 +103,27 @@ connections, at the cost of relaying traffic through Cloudflare.
 ├── server/                 # @golive/server — Fastify signaling server
 │   ├── .env.example        # template for server environment variables
 │   ├── package.json
+│   ├── tsconfig.json
 │   └── src/
-│       ├── app.ts          # Fastify app, CORS, /health, /turn-credentials, listen
-│       ├── signaling.ts    # WebSocket /ws endpoint, room signaling protocol
-│       └── rooms.ts        # in-memory room and peer store
+│       ├── index.ts        # entry point: load env, build the app, listen
+│       ├── app.ts          # buildApp(): Fastify, plugins, error handler, routes
+│       ├── config/
+│       │   └── env.ts      # centralized environment variables
+│       ├── controllers/    # request/connection handlers
+│       │   ├── health.controller.ts
+│       │   ├── signaling.controller.ts
+│       │   └── turn.controller.ts
+│       ├── routes/         # route definitions (health, turn, /ws)
+│       │   └── index.ts
+│       ├── services/       # business logic
+│       │   ├── room.service.ts      # in-memory room/peer store
+│       │   ├── signaling.service.ts # WebSocket signaling protocol
+│       │   └── turn.service.ts      # Cloudflare TURN credentials + usage
+│       ├── middlewares/
+│       │   └── error-handler.ts     # global Fastify error handler
+│       ├── types/          # shared type definitions (room, message, turn)
+│       └── utils/
+│           └── ws.ts       # WebSocket send helper
 └── web/                    # @golive/web — React + Vite client
     ├── .env.example        # template for web environment variables
     ├── index.html
