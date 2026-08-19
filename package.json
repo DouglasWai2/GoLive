@@ -1,0 +1,17 @@
+{
+  "name": "golive",
+  "private": true,
+  "workspaces": [
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "dev": "concurrently -n server,web -c cyan,green \"npm run dev -w server\" \"npm run dev -w web\"",
+    "build": "npm run build -w server && npm run build -w web",
+    "typecheck": "npm run typecheck -w server && npm run typecheck -w web",
+    "start": "npm run start -w server"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}
