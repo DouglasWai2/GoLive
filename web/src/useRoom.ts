@@ -106,6 +106,30 @@ export function useRoom(roomId: string, name: string) {
           });
         }
       };
+      connection.oniceconnectionstatechange = () => {
+        console.log(
+          `[${peerId}] ICE connection:`,
+          connection.iceConnectionState,
+        );
+      };
+      
+      connection.onicegatheringstatechange = () => {
+        console.log(
+          `[${peerId}] ICE gathering:`,
+          connection.iceGatheringState,
+        );
+      };
+      
+      connection.onicecandidateerror = (event) => {
+        console.error(
+          `[${peerId}] ICE candidate error`,
+          {
+            url: event.url,
+            errorCode: event.errorCode,
+            errorText: event.errorText,
+          },
+        );
+      };
 
       connection.ontrack = (event) => {
         const [stream] = event.streams;
@@ -120,16 +144,63 @@ export function useRoom(roomId: string, name: string) {
           [peerId]: connection.connectionState,
         }));
 
-        if (
-          connection.connectionState === "failed" ||
-          connection.connectionState === "closed"
-        ) {
+        if (connection.connectionState === "closed") {
           closePeer(peerId);
+        }
+        
+        if (connection.connectionState === "failed") {
+          console.error(
+            `[${peerId}] Peer connection failed`,
+          );
         }
       };
 
       return connection;
     };
+
+    async function addOrQueueCandidate(
+      peerId: string,
+      connection: RTCPeerConnection,
+      candidate: RTCIceCandidateInit,
+    ) {
+      if (connection.remoteDescription) {
+        try {
+          await connection.addIceCandidate(candidate);
+        } catch (error) {
+          console.error("addIceCandidate failed", peerId, error);
+        }
+    
+        return;
+      }
+    
+      const pending =
+        pendingCandidatesRef.current.get(peerId) ?? [];
+    
+      pending.push(candidate);
+      pendingCandidatesRef.current.set(peerId, pending);
+    }
+    
+    async function flushCandidates(
+      peerId: string,
+      connection: RTCPeerConnection,
+    ) {
+      const pending =
+        pendingCandidatesRef.current.get(peerId) ?? [];
+    
+      for (const candidate of pending) {
+        try {
+          await connection.addIceCandidate(candidate);
+        } catch (error) {
+          console.error(
+            "queued addIceCandidate failed",
+            peerId,
+            error,
+          );
+        }
+      }
+    
+      pendingCandidatesRef.current.delete(peerId);
+    }
 
     createOfferRef.current = async (peerId: string) => {
       if (
