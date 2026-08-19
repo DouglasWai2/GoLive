@@ -2,7 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import type { Peer, ServerMessage, SignalData, SocketStatus } from "./types";
 
 const iceServers: RTCIceServer[] = [
-  { urls: "stun:stun.l.google.com:19302" },
+  {
+    urls: [
+      "stun:stun.cloudflare.com:3478",
+      "stun:stun.l.google.com:19302",
+    ],
+  },
 ];
 
 function websocketUrl(): string {
