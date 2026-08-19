@@ -126,14 +126,13 @@ export function useRoom(roomId: string, name: string) {
       };
       
       connection.onicecandidateerror = (event) => {
-        console.error(
-          `[${peerId}] ICE candidate error`,
-          {
-            url: event.url,
-            errorCode: event.errorCode,
-            errorText: event.errorText,
-          },
-        );
+        console.error(`[${peerId}] ICE candidate error`, {
+          url: event.url,
+          address: event.address,
+          port: event.port,
+          errorCode: event.errorCode,
+          errorText: event.errorText,
+        });
       };
 
       connection.ontrack = (event) => {
