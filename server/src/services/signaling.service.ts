@@ -1,11 +1,15 @@
 import { randomUUID } from "node:crypto";
 import type { WebSocket } from "ws";
 import type { ClientMessage, Membership } from "../types/message.js";
+import type { RoomToken } from "../types/room.js";
 import { send } from "../utils/ws.js";
 import { RoomService } from "./room.service.js";
 
 export class SignalingService {
-  constructor(private readonly rooms: RoomService) {}
+  constructor(
+    private readonly rooms: RoomService,
+    private readonly verifyRoomToken: (token: string) => RoomToken | null,
+  ) {}
 
   handleConnection(socket: WebSocket): void {
     let membership: Membership | undefined;
@@ -51,6 +55,17 @@ export class SignalingService {
   ): Membership | undefined {
     const roomId = message.room.trim();
     const name = message.name.trim();
+
+    const token = this.verifyRoomToken(message.token);
+
+    if (!token || token.roomId !== roomId || token.name !== name) {
+      send(socket, {
+        type: "error",
+        code: "UNAUTHORIZED",
+        message: "Invalid session token.",
+      });
+      return;
+    }
 
     if (!roomId || !/^[a-zA-Z0-9_-]{1,64}$/.test(roomId)) {
       send(socket, { type: "error", message: "Invalid room ID." });
@@ -161,9 +176,10 @@ function parseMessage(raw: Buffer | ArrayBuffer | Buffer[]): ClientMessage | nul
     if (
       message.type === "join" &&
       typeof message.room === "string" &&
-      typeof message.name === "string"
+      typeof message.name === "string" &&
+      typeof message.token === "string"
     ) {
-      return { type: "join", room: message.room, name: message.name };
+      return { type: "join", room: message.room, name: message.name, token: message.token };
     }
 
     if (

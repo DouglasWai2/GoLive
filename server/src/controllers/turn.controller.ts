@@ -14,23 +14,6 @@ export function createTurnController(turnService: TurnService) {
         return handleTurnError(error, reply);
       }
     },
-
-    async getTurnUsage(
-      _request: FastifyRequest,
-      reply: FastifyReply,
-    ): Promise<FastifyReply> {
-      try {
-        const now = new Date();
-        const startOfMonth = new Date(
-          Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
-        );
-
-        const usage = await turnService.getCachedUsage(startOfMonth, now);
-        return reply.send(usage);
-      } catch (error) {
-        return handleTurnError(error, reply);
-      }
-    },
   };
 }
 

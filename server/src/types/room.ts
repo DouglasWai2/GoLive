@@ -9,3 +9,16 @@ export type Peer = {
 export type Client = Peer & {
   socket: WebSocket;
 };
+
+export type RoomSession = {
+  kind: "room";
+  sessionId: string;
+  roomId: string;
+  name: string;
+};
+
+export type RoomToken = {
+  sessionId: string;
+  roomId: string;
+  name: string;
+};

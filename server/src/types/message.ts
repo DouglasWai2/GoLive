@@ -1,7 +1,7 @@
 import type { Client } from "./room.js";
 
 export type ClientMessage =
-  | { type: "join"; room: string; name: string }
+  | { type: "join"; room: string; name: string; token: string }
   | { type: "signal"; target: string; data: unknown }
   | { type: "sharing"; sharing: boolean };
 

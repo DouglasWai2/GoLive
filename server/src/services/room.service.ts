@@ -1,7 +1,19 @@
-import type { Client, Peer } from "../types/room.js";
+import { randomUUID } from "node:crypto";
+import type { Client, Peer, RoomSession } from "../types/room.js";
 
 export class RoomService {
   private readonly rooms = new Map<string, Map<string, Client>>();
+
+  createSession(roomId: string, name: string): RoomSession {
+    const session: RoomSession = {
+      kind: "room",
+      sessionId: randomUUID(),
+      roomId,
+      name: name.trim(),
+    };
+
+    return session;
+  }
 
   getRoom(roomId: string): Map<string, Client> {
     let room = this.rooms.get(roomId);

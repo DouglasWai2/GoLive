@@ -26,4 +26,8 @@ export const env = {
   get cloudflareAnalyticsApiToken(): string | undefined {
     return process.env.CLOUDFLARE_ANALYTICS_API_TOKEN;
   },
-};
+
+  get jwtSecret(): string | undefined {
+    return process.env.JWT_SECRET;
+  },
+}
