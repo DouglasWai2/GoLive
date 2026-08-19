@@ -46,7 +46,7 @@ app.get("/turn-credentials", async (_request, reply) => {
   if (!response.ok) {
     const error = await response.text();
 
-    fastify.log.error(
+    app.log.error(
       {
         status: response.status,
         error,
