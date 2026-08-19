@@ -111,6 +111,27 @@ button { cursor: pointer; }
 .stop-button { min-height: 48px; padding: 0 20px; background: #31201d; border: 1px solid #69342d; color: #ff9386; border-radius: 4px; font-weight: 700; display: flex; gap: 9px; align-items: center; }.stop-button > span { width: 10px; height: 10px; background: var(--red); }
 .privacy-note { justify-self: end; display: flex; align-items: center; gap: 10px; color: #87877f; }.privacy-note i { font-style: normal; width: 33px; height: 33px; border: 1px solid #41413c; border-radius: 50%; display: grid; place-items: center; }.privacy-note strong, .privacy-note small { display: block; }.privacy-note strong { color: #aaa9a0; font-size: 10px; margin-bottom: 3px; }.privacy-note small { font-size: 9px; }
 
+.share-control { position: relative; display: grid; place-items: center; }
+.sharing-state { display: flex; align-items: center; gap: 12px; }
+.quality-badge { color: #b5b5ad; font-family: ui-monospace, monospace; font-size: 10px; display: flex; align-items: center; gap: 8px; border: 1px solid #3b3b36; border-radius: 4px; padding: 0 11px; min-height: 34px; background: #22221e; }
+.quality-badge i { width: 3px; height: 3px; border-radius: 50%; background: var(--acid); }
+
+.share-settings { position: absolute; bottom: calc(100% + 16px); left: 50%; transform: translateX(-50%); width: min(360px, 92vw); background: #1b1b18; border: 1px solid #3b3b36; border-radius: 8px; padding: 18px; box-shadow: 0 22px 60px rgba(0,0,0,.5); z-index: 20; }
+.share-settings-head { margin-bottom: 16px; }
+.share-settings-head strong { display: block; font-size: 15px; letter-spacing: -.02em; margin-bottom: 4px; }
+.share-settings-head small { color: var(--muted); font-size: 11px; }
+.setting-row { margin-bottom: 14px; }
+.setting-row label { display: block; color: #9c9c93; font-size: 10px; text-transform: uppercase; letter-spacing: .11em; margin-bottom: 7px; }
+.segmented { display: flex; gap: 4px; background: #12120f; border: 1px solid #30302b; border-radius: 5px; padding: 3px; }
+.segmented button { flex: 1; border: 0; background: transparent; color: #8d8d84; font-size: 11px; font-weight: 600; min-height: 31px; border-radius: 3px; transition: background .15s, color .15s; }
+.segmented button:hover:not(.active) { color: var(--paper); }
+.segmented button.active { background: var(--acid); color: #15160f; }
+.share-settings-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
+.ghost-button { border: 1px solid #373732; background: transparent; color: #b5b5ad; border-radius: 4px; min-height: 40px; padding: 0 15px; font-weight: 600; font-size: 12px; }
+.ghost-button:hover:not(:disabled) { border-color: #5f5f57; color: var(--paper); }
+.ghost-button:disabled { opacity: .42; cursor: not-allowed; }
+.share-settings-actions .primary-button { min-height: 40px; }
+
 @media (max-width: 850px) {
   .landing-shell { padding: 0 24px 40px; }
   .hero { grid-template-columns: 1fr; padding: 70px 0; gap: 70px; }

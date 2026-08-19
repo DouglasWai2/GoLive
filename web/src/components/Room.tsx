@@ -1,4 +1,7 @@
+import { useState } from "react";
 import { useRoom } from "../hooks/useRoom";
+import type { ShareSettings } from "../types";
+import { formatBitrate, formatResolution } from "../utils/sharePresets";
 import { RoomHeader } from "./room/RoomHeader";
 import { ErrorBanner } from "./room/ErrorBanner";
 import { VideoStage } from "./room/VideoStage";
@@ -11,6 +14,22 @@ type RoomProps = {
 
 export function Room({ roomId, name }: RoomProps) {
   const room = useRoom(roomId, name);
+  const [shareSettings, setShareSettings] = useState<ShareSettings | null>(null);
+
+  const startShare = (settings: ShareSettings) => {
+    setShareSettings(settings);
+    room.startSharing(settings);
+  };
+
+  const stopShare = () => {
+    setShareSettings(null);
+    room.stopSharing();
+  };
+
+  const localQuality =
+    room.localStream && shareSettings
+      ? `${formatResolution(shareSettings.width, shareSettings.height)} · ${shareSettings.frameRate} fps · ${formatBitrate(shareSettings.maxBitrate)}`
+      : null;
 
   return (
     <main className="room-shell">
@@ -25,6 +44,8 @@ export function Room({ roomId, name }: RoomProps) {
         peers={room.peers}
         remoteStreams={room.remoteStreams}
         connectionStates={room.connectionStates}
+        remoteStats={room.remoteStats}
+        localQuality={localQuality}
         localName={name}
       />
 
@@ -34,8 +55,9 @@ export function Room({ roomId, name }: RoomProps) {
         localStream={room.localStream}
         isStartingShare={room.isStartingShare}
         peers={room.peers}
-        onStartShare={room.startSharing}
-        onStopShare={room.stopSharing}
+        activeSettings={shareSettings}
+        onStartShare={startShare}
+        onStopShare={stopShare}
       />
     </main>
   );

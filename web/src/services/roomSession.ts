@@ -1,6 +1,19 @@
-import type { Peer, ServerMessage, SignalData, SocketStatus } from "../types";
+import type {
+  Peer,
+  RemoteVideoStats,
+  ServerMessage,
+  ShareSettings,
+  SignalData,
+  SocketStatus,
+} from "../types";
 import { fallbackIceServers, getIceServers, websocketUrl } from "../utils/signaling";
-import { logSelectedIceRoute } from "../utils/webrtc";
+import {
+  computeInboundVideoStats,
+  configureVideoSender,
+  getInboundVideoSample,
+  logSelectedIceRoute,
+  type InboundVideoSample,
+} from "../utils/webrtc";
 
 export type RoomSessionCallbacks = {
   onStatus: (status: SocketStatus) => void;
@@ -9,6 +22,7 @@ export type RoomSessionCallbacks = {
   onIsStartingShare: (isStarting: boolean) => void;
   onRemoteStream: (peerId: string, stream: MediaStream | null) => void;
   onConnectionState: (peerId: string, state: RTCPeerConnectionState | null) => void;
+  onRemoteStats: (peerId: string, stats: RemoteVideoStats | null) => void;
   onError: (message: string) => void;
 };
 
@@ -31,10 +45,16 @@ export class RoomSession {
   private peers: Peer[] = [];
   private localStream: MediaStream | null = null;
 
+  private shareSettings: ShareSettings | null = null;
+  private scaleResolutionDownBy = 1;
+
   private peerConnections = new Map<string, RTCPeerConnection>();
   private pendingCandidates = new Map<string, RTCIceCandidateInit[]>();
   private pendingOffers = new Set<string>();
   private signalQueues = new Map<string, Promise<void>>();
+
+  private statsTimers = new Map<string, number>();
+  private statsSamples = new Map<string, InboundVideoSample | null>();
 
   private sharingRequest: ((accepted: boolean) => void) | null = null;
   private startingShare = false;
@@ -68,6 +88,13 @@ export class RoomSession {
 
     this.signalQueues.clear();
 
+    for (const timer of this.statsTimers.values()) {
+      window.clearInterval(timer);
+    }
+
+    this.statsTimers.clear();
+    this.statsSamples.clear();
+
     if (this.socket) {
       this.socket.onopen = null;
       this.socket.onclose = null;
@@ -91,10 +118,13 @@ export class RoomSession {
     this.pendingCandidates.clear();
     this.pendingOffers.clear();
 
+    this.shareSettings = null;
+    this.scaleResolutionDownBy = 1;
+
     this.peers = [];
   }
 
-  async startSharing() {
+  async startSharing(settings: ShareSettings) {
     if (
       this.startingShare ||
       this.localStream ||
@@ -117,9 +147,17 @@ export class RoomSession {
     try {
       stream = await navigator.mediaDevices.getDisplayMedia({
         video: {
+          width: {
+            ideal: settings.width,
+            max: settings.width,
+          },
+          height: {
+            ideal: settings.height,
+            max: settings.height,
+          },
           frameRate: {
-            ideal: 30,
-            max: 60,
+            ideal: settings.frameRate,
+            max: settings.frameRate,
           },
         },
         audio: true,
@@ -132,6 +170,43 @@ export class RoomSession {
 
         return;
       }
+
+      const videoTrack = stream.getVideoTracks()[0];
+
+      if (videoTrack) {
+        try {
+          await videoTrack.applyConstraints({
+            width: {
+              ideal: settings.width,
+              max: settings.width,
+            },
+            height: {
+              ideal: settings.height,
+              max: settings.height,
+            },
+            frameRate: {
+              ideal: settings.frameRate,
+              max: settings.frameRate,
+            },
+          });
+        } catch {
+          /* Some browsers reject post-capture constraints; the sender encoding caps output anyway. */
+        }
+
+        const trackSettings = videoTrack.getSettings();
+        const trackWidth = trackSettings.width;
+        const trackHeight = trackSettings.height;
+
+        if (typeof trackWidth === "number" && typeof trackHeight === "number") {
+          this.scaleResolutionDownBy = Math.max(
+            1,
+            trackWidth / settings.width,
+            trackHeight / settings.height,
+          );
+        }
+      }
+
+      this.shareSettings = settings;
 
       /*
        * Ask signaling server whether we're
@@ -239,6 +314,9 @@ export class RoomSession {
 
     this.localStream = null;
     this.callbacks.onLocalStream(null);
+
+    this.shareSettings = null;
+    this.scaleResolutionDownBy = 1;
 
     for (const peerId of Array.from(this.peerConnections.keys())) {
       this.closePeer(peerId);
@@ -474,7 +552,80 @@ export class RoomSession {
       }
     };
 
+    const timer = window.setInterval(() => {
+      this.pollPeerStats(peerId, connection);
+    }, 1000);
+
+    this.statsTimers.set(peerId, timer);
+
     return connection;
+  }
+
+  /*
+   * Apply the sharer's chosen quality (bitrate, fps, resolution
+   * cap) to a connection's outbound video sender. Called before
+   * createOffer() so the encoding caps are baked into the SDP.
+   */
+  private async applySenderSettings(connection: RTCPeerConnection) {
+    const settings = this.shareSettings;
+
+    if (!settings) {
+      return;
+    }
+
+    const sender = connection
+      .getSenders()
+      .find((candidate) => candidate.track?.kind === "video");
+
+    if (!sender) {
+      return;
+    }
+
+    await configureVideoSender(sender, {
+      maxBitrate: settings.maxBitrate,
+      maxFramerate: settings.frameRate,
+      scaleResolutionDownBy: this.scaleResolutionDownBy,
+    });
+  }
+
+  /*
+   * Sample inbound video stats for the receiver-quality badge.
+   */
+  private pollPeerStats(peerId: string, connection: RTCPeerConnection) {
+    if (!this.active) {
+      return;
+    }
+
+    void (async () => {
+      try {
+        const sample = await getInboundVideoSample(connection);
+
+        if (!sample) {
+          this.statsSamples.delete(peerId);
+          this.callbacks.onRemoteStats(peerId, null);
+          return;
+        }
+
+        const previous = this.statsSamples.get(peerId) ?? null;
+
+        this.statsSamples.set(peerId, sample);
+
+        const stats = computeInboundVideoStats(sample, previous);
+
+        if (stats.width && stats.height && stats.fps) {
+          this.callbacks.onRemoteStats(peerId, {
+            width: stats.width,
+            height: stats.height,
+            fps: stats.fps,
+            bitrateKbps: stats.bitrateKbps ?? 0,
+          });
+        } else {
+          this.callbacks.onRemoteStats(peerId, null);
+        }
+      } catch (caught) {
+        console.warn(`[${peerId}] Could not read receive stats`, caught);
+      }
+    })();
   }
 
   /*
@@ -553,6 +704,8 @@ export class RoomSession {
 
         return;
       }
+
+      await this.applySenderSettings(connection);
 
       const offer = await connection.createOffer();
 
@@ -835,8 +988,18 @@ export class RoomSession {
     this.pendingCandidates.delete(peerId);
     this.pendingOffers.delete(peerId);
 
+    const timer = this.statsTimers.get(peerId);
+
+    if (timer) {
+      window.clearInterval(timer);
+      this.statsTimers.delete(peerId);
+    }
+
+    this.statsSamples.delete(peerId);
+
     this.callbacks.onRemoteStream(peerId, null);
     this.callbacks.onConnectionState(peerId, null);
+    this.callbacks.onRemoteStats(peerId, null);
   }
 
   private send(message: unknown) {

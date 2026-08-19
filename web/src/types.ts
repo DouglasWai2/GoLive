@@ -4,6 +4,20 @@ export type Peer = {
   sharing: boolean;
 };
 
+export type ShareSettings = {
+  width: number;
+  height: number;
+  frameRate: number;
+  maxBitrate: number;
+};
+
+export type RemoteVideoStats = {
+  width: number;
+  height: number;
+  fps: number;
+  bitrateKbps: number;
+};
+
 export type ServerMessage =
   | { type: "room-state"; selfId: string; peers: Peer[] }
   | { type: "peer-joined"; peer: Peer }

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { Peer, SocketStatus } from "../types";
+import type { Peer, RemoteVideoStats, ShareSettings, SocketStatus } from "../types";
 import { RoomSession } from "../services/roomSession";
 
 export function useRoom(roomId: string, name: string) {
@@ -9,6 +9,7 @@ export function useRoom(roomId: string, name: string) {
   const [isStartingShare, setIsStartingShare] = useState(false);
   const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({});
   const [connectionStates, setConnectionStates] = useState<Record<string, RTCPeerConnectionState>>({});
+  const [remoteStats, setRemoteStats] = useState<Record<string, RemoteVideoStats | null>>({});
   const [error, setError] = useState("");
 
   const sessionRef = useRef<RoomSession | null>(null);
@@ -45,6 +46,19 @@ export function useRoom(roomId: string, name: string) {
           return next;
         });
       },
+      onRemoteStats: (peerId, stats) => {
+        setRemoteStats((current) => {
+          const next = { ...current };
+
+          if (stats) {
+            next[peerId] = stats;
+          } else {
+            delete next[peerId];
+          }
+
+          return next;
+        });
+      },
       onError: setError,
     });
 
@@ -58,7 +72,7 @@ export function useRoom(roomId: string, name: string) {
     };
   }, [roomId, name]);
 
-  const startSharing = () => sessionRef.current?.startSharing();
+  const startSharing = (settings: ShareSettings) => sessionRef.current?.startSharing(settings);
   const stopSharing = () => sessionRef.current?.stopSharing();
 
   return {
@@ -68,6 +82,7 @@ export function useRoom(roomId: string, name: string) {
     isStartingShare,
     remoteStreams,
     connectionStates,
+    remoteStats,
     error,
     setError,
     startSharing,

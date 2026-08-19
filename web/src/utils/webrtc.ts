@@ -61,6 +61,71 @@ export async function logSelectedIceRoute(peerId: string, connection: RTCPeerCon
   });
 }
 
+export type InboundVideoSample = {
+  timestamp: number;
+  width: number | null;
+  height: number | null;
+  fps: number | null;
+  bytes: number;
+};
+
+export type InboundVideoStats = {
+  width: number | null;
+  height: number | null;
+  fps: number | null;
+  bitrateKbps: number | null;
+};
+
+export async function getInboundVideoSample(
+  connection: RTCPeerConnection,
+): Promise<InboundVideoSample | null> {
+  const stats = await connection.getStats();
+
+  let sample: InboundVideoSample | null = null;
+
+  stats.forEach((report) => {
+    const rtp = report as any;
+
+    if (
+      report.type === "inbound-rtp" &&
+      rtp.kind === "video"
+    ) {
+      sample = {
+        timestamp: Date.now(),
+        width: typeof rtp.frameWidth === "number" ? rtp.frameWidth : null,
+        height: typeof rtp.frameHeight === "number" ? rtp.frameHeight : null,
+        fps: typeof rtp.framesPerSecond === "number" ? rtp.framesPerSecond : null,
+        bytes: typeof rtp.bytesReceived === "number" ? rtp.bytesReceived : 0,
+      };
+    }
+  });
+
+  return sample;
+}
+
+export function computeInboundVideoStats(
+  sample: InboundVideoSample,
+  previous: InboundVideoSample | null,
+): InboundVideoStats {
+  let bitrateKbps: number | null = null;
+
+  if (previous && sample.bytes >= previous.bytes) {
+    const deltaBytes = sample.bytes - previous.bytes;
+    const deltaSeconds = (Date.now() - previous.timestamp) / 1000;
+
+    if (deltaBytes > 0 && deltaSeconds > 0) {
+      bitrateKbps = (deltaBytes * 8) / deltaSeconds / 1000;
+    }
+  }
+
+  return {
+    width: sample.width,
+    height: sample.height,
+    fps: sample.fps,
+    bitrateKbps,
+  };
+}
+
 export async function configureVideoSender(
   sender: RTCRtpSender,
   {

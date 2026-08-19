@@ -1,16 +1,18 @@
 import { ScreenIcon, UsersIcon } from "../icons";
 import { VideoTile } from "../VideoTile";
-import type { Peer } from "../../types";
+import type { Peer, RemoteVideoStats } from "../../types";
 
 type VideoStageProps = {
   localStream: MediaStream | null;
   peers: Peer[];
   remoteStreams: Record<string, MediaStream>;
   connectionStates: Record<string, RTCPeerConnectionState>;
+  remoteStats: Record<string, RemoteVideoStats | null>;
+  localQuality: string | null;
   localName: string;
 };
 
-export function VideoStage({ localStream, peers, remoteStreams, connectionStates, localName }: VideoStageProps) {
+export function VideoStage({ localStream, peers, remoteStreams, connectionStates, remoteStats, localQuality, localName }: VideoStageProps) {
   const activeSharer = peers.find((peer) => peer.sharing);
   const remoteTiles = peers.filter((peer) => remoteStreams[peer.id]);
 
@@ -25,13 +27,14 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
       </div>
 
       <div className={`video-grid ${localStream || remoteTiles.length ? "has-video" : ""}`}>
-        {localStream && <VideoTile stream={localStream} name={localName} local />}
+        {localStream && <VideoTile stream={localStream} name={localName} local qualityLabel={localQuality} />}
         {remoteTiles.map((peer) => (
           <VideoTile
             key={peer.id}
             stream={remoteStreams[peer.id]!}
             name={peer.name}
             state={connectionStates[peer.id]}
+            stats={remoteStats[peer.id] ?? null}
           />
         ))}
         {!localStream && remoteTiles.length === 0 && (
