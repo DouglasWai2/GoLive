@@ -131,9 +131,8 @@ button.active:hover {
 .video-tile .volume-control, .cinema .volume-control { position: absolute; right: 12px; bottom: 12px; }
 .video-tile .volume-control .icon-button, .cinema .volume-control .icon-button { background: rgba(16,16,14,.88); backdrop-filter: blur(8px); }
 .cinema .volume-control { right: 18px; bottom: 18px; }
-.volume-popover { position: absolute; top: calc(100% + 8px); right: 0; display: none; background: rgba(16,16,14,.94); backdrop-filter: blur(8px); border: 1px solid #3b3b36; border-radius: 6px; padding: 10px 12px; box-shadow: 0 18px 45px rgba(0,0,0,.45); z-index: 20; }
+.volume-popover { position: absolute; top: calc(100% + 8px); right: 0; display: block; background: rgba(16,16,14,.94); backdrop-filter: blur(8px); border: 1px solid #3b3b36; border-radius: 6px; padding: 10px 12px; box-shadow: 0 18px 45px rgba(0,0,0,.45); z-index: 20; }
 .video-tile .volume-popover, .cinema .volume-popover { top: auto; bottom: calc(100% + 8px); }
-.volume-control:hover .volume-popover, .volume-popover:hover { display: block; }
 .volume-popover input[type="range"] { width: 130px; margin: 0; accent-color: var(--acid); cursor: pointer; }
 .stream-stats { display: flex; flex-wrap: wrap; gap: 22px; max-width: calc(100% - 24px); background: rgba(16,16,14,.9); backdrop-filter: blur(8px); border: 1px solid #3b3b36; border-radius: 6px; padding: 14px 18px; transition: opacity .2s; }
 .cinema .stream-stats { position: absolute; left: 18px; bottom: 66px; }

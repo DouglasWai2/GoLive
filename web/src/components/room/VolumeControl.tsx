@@ -1,4 +1,5 @@
 import { VolumeIcon, VolumeMutedIcon } from "../icons";
+import { useRef, useState } from "react";
 
 type VolumeControlProps = {
   volume: number;
@@ -11,18 +12,32 @@ export function VolumeControl({ volume, muted, onVolumeChange, onToggleMute }: V
   const handleVolumeChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     onVolumeChange(Number(event.target.value));
   };
+  const [active, setActive] = useState(false);
+  let timer: NodeJS.Timeout | null = null;
+
+  const handleMouseEnter = (): void => {
+    if (timer) clearTimeout(timer);
+    setActive(true);
+  };
+
+  const handleMouseLeave = (): void => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => setActive(false), 400);
+  };
 
   return (
-    <div className={`volume-control ${muted ? "is-muted" : ""}`}>
+    <div onMouseEnter={handleMouseEnter} onMouseLeave={handleMouseLeave} className={`volume-control ${muted ? "is-muted" : ""}`}>
       <button
         className="icon-button"
         onClick={onToggleMute}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={handleMouseLeave}
         title={muted ? "Unmute" : "Mute"}
         aria-label={muted ? "Unmute" : "Mute"}
       >
         {muted ? <VolumeMutedIcon /> : <VolumeIcon />}
       </button>
-      <div className="volume-popover">
+      {active && <div className={`volume-popover`}>
         <input
           type="range"
           min="0"
@@ -32,7 +47,7 @@ export function VolumeControl({ volume, muted, onVolumeChange, onToggleMute }: V
           onChange={handleVolumeChange}
           aria-label="Volume"
         />
-      </div>
+      </div>}
     </div>
   );
 }
