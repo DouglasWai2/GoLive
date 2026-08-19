@@ -1,0 +1,76 @@
+import { useEffect, useRef, useState } from "react";
+import type { Peer, SocketStatus } from "../types";
+import { RoomSession } from "../services/roomSession";
+
+export function useRoom(roomId: string, name: string) {
+  const [status, setStatus] = useState<SocketStatus>("connecting");
+  const [peers, setPeers] = useState<Peer[]>([]);
+  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+  const [isStartingShare, setIsStartingShare] = useState(false);
+  const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({});
+  const [connectionStates, setConnectionStates] = useState<Record<string, RTCPeerConnectionState>>({});
+  const [error, setError] = useState("");
+
+  const sessionRef = useRef<RoomSession | null>(null);
+
+  useEffect(() => {
+    const session = new RoomSession({
+      onStatus: setStatus,
+      onPeers: setPeers,
+      onLocalStream: setLocalStream,
+      onIsStartingShare: setIsStartingShare,
+      onRemoteStream: (peerId, stream) => {
+        setRemoteStreams((current) => {
+          const next = { ...current };
+
+          if (stream) {
+            next[peerId] = stream;
+          } else {
+            delete next[peerId];
+          }
+
+          return next;
+        });
+      },
+      onConnectionState: (peerId, state) => {
+        setConnectionStates((current) => {
+          const next = { ...current };
+
+          if (state) {
+            next[peerId] = state;
+          } else {
+            delete next[peerId];
+          }
+
+          return next;
+        });
+      },
+      onError: setError,
+    });
+
+    sessionRef.current = session;
+
+    session.start(roomId, name);
+
+    return () => {
+      session.stop();
+      sessionRef.current = null;
+    };
+  }, [roomId, name]);
+
+  const startSharing = () => sessionRef.current?.startSharing();
+  const stopSharing = () => sessionRef.current?.stopSharing();
+
+  return {
+    status,
+    peers,
+    localStream,
+    isStartingShare,
+    remoteStreams,
+    connectionStates,
+    error,
+    setError,
+    startSharing,
+    stopSharing,
+  };
+}

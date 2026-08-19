@@ -13,7 +13,7 @@ await app.register(websocket, {
   options: { maxPayload: 1024 * 1024 },
 });
 await app.register(cors, {
-  origin: 'https://go-live-web.vercel.app',
+  origin: process.env.ORIGIN,
 });
 await registerSignaling(app);
 
