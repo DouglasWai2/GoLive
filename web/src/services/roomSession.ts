@@ -10,7 +10,7 @@ import { fallbackIceServers, getIceServers, websocketUrl } from "../utils/signal
 import {
   computeInboundVideoStats,
   configureVideoSender,
-  getInboundVideoSample,
+  getPeerMediaStats,
   logSelectedIceRoute,
   type InboundVideoSample,
 } from "../utils/webrtc";
@@ -598,9 +598,9 @@ export class RoomSession {
 
     void (async () => {
       try {
-        const sample = await getInboundVideoSample(connection);
+        const { inbound, iceRoute } = await getPeerMediaStats(connection);
 
-        if (!sample) {
+        if (!inbound) {
           this.statsSamples.delete(peerId);
           this.callbacks.onRemoteStats(peerId, null);
           return;
@@ -608,9 +608,9 @@ export class RoomSession {
 
         const previous = this.statsSamples.get(peerId) ?? null;
 
-        this.statsSamples.set(peerId, sample);
+        this.statsSamples.set(peerId, inbound);
 
-        const stats = computeInboundVideoStats(sample, previous);
+        const stats = computeInboundVideoStats(inbound, previous);
 
         if (stats.width && stats.height && stats.fps) {
           this.callbacks.onRemoteStats(peerId, {
@@ -618,6 +618,8 @@ export class RoomSession {
             height: stats.height,
             fps: stats.fps,
             bitrateKbps: stats.bitrateKbps ?? 0,
+            codec: inbound.codecMimeType,
+            route: iceRoute?.route ?? null,
           });
         } else {
           this.callbacks.onRemoteStats(peerId, null);

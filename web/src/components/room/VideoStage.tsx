@@ -1,6 +1,10 @@
-import { ScreenIcon, UsersIcon } from "../icons";
+import { useEffect, useRef, useState } from "react";
+import { FullscreenExitIcon, FullscreenIcon, ScreenIcon, StatsIcon, UsersIcon } from "../icons";
 import { VideoTile } from "../VideoTile";
+import { StreamStats } from "./StreamStats";
 import type { Peer, RemoteVideoStats } from "../../types";
+import { exitFullscreen, getFullscreenElement, requestFullscreen } from "../../utils/fullscreen";
+import StatsButton from "./StatsButton";
 
 type VideoStageProps = {
   localStream: MediaStream | null;
@@ -12,9 +16,106 @@ type VideoStageProps = {
   localName: string;
 };
 
+const STATS_STORAGE_KEY = "golive.stats.enabled";
+
 export function VideoStage({ localStream, peers, remoteStreams, connectionStates, remoteStats, localQuality, localName }: VideoStageProps) {
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [showCinemaControls, setShowCinemaControls] = useState(false);
+  const [statsEnabled, setStatsEnabled] = useState(() => {
+    try {
+      return localStorage.getItem(STATS_STORAGE_KEY) !== "0";
+    } catch {
+      return true;
+    }
+  });
+  const cinemaRef = useRef<HTMLDivElement>(null);
+  const cinemaVideoRef = useRef<HTMLVideoElement>(null);
+  const cinemaControlsTimer = useRef<number | null>(null);
+
   const activeSharer = peers.find((peer) => peer.sharing);
   const remoteTiles = peers.filter((peer) => remoteStreams[peer.id]);
+
+  const cinemaPeer = remoteTiles[0];
+  const cinemaStream = cinemaPeer ? remoteStreams[cinemaPeer.id]! : null;
+  const cinemaName = cinemaPeer?.name ?? "";
+  const cinemaStats = cinemaPeer ? remoteStats[cinemaPeer.id] ?? null : null;
+
+  const clearCinemaControlsTimer = () => {
+    if (cinemaControlsTimer.current !== null) {
+      window.clearTimeout(cinemaControlsTimer.current);
+      cinemaControlsTimer.current = null;
+    }
+  };
+
+  const revealCinemaControls = () => {
+    setShowCinemaControls(true);
+    clearCinemaControlsTimer();
+    cinemaControlsTimer.current = window.setTimeout(() => {
+      setShowCinemaControls(false);
+    }, 2500);
+  };
+
+  useEffect(() => {
+    const onChange = () => {
+      setIsFullscreen(Boolean(getFullscreenElement()));
+    };
+
+    document.addEventListener("fullscreenchange", onChange);
+    document.addEventListener("webkitfullscreenchange", onChange);
+
+    return () => {
+      document.removeEventListener("fullscreenchange", onChange);
+      document.removeEventListener("webkitfullscreenchange", onChange);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isFullscreen) {
+      clearCinemaControlsTimer();
+      setShowCinemaControls(false);
+      return;
+    }
+
+    revealCinemaControls();
+
+    return () => clearCinemaControlsTimer();
+  }, [isFullscreen]);
+
+  useEffect(() => {
+    if (cinemaVideoRef.current) cinemaVideoRef.current.srcObject = cinemaStream;
+    return () => {
+      if (cinemaVideoRef.current) cinemaVideoRef.current.srcObject = null;
+    };
+  }, [cinemaStream]);
+
+  const toggleFullscreen = async () => {
+    if (getFullscreenElement()) {
+      await exitFullscreen();
+      return;
+    }
+
+    if (!cinemaRef.current) return;
+
+    try {
+      await requestFullscreen(cinemaRef.current);
+    } catch (caught) {
+      console.warn("Could not enter fullscreen video mode", caught);
+    }
+  };
+
+  const toggleStats = () => {
+    setStatsEnabled((current) => {
+      const next = !current;
+
+      try {
+        localStorage.setItem(STATS_STORAGE_KEY, next ? "1" : "0");
+      } catch {
+        /* Ignore storage failures. */
+      }
+
+      return next;
+    });
+  };
 
   return (
     <section className="stage">
@@ -23,7 +124,18 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
           <p className="eyebrow"><span /> Live room</p>
           <h1>{localStream ? "You are presenting" : activeSharer ? `${activeSharer.name} is presenting` : "Ready when you are"}</h1>
         </div>
-        <div className="people-count"><UsersIcon /><strong>{peers.length + 1}</strong> in room</div>
+        <div className="stage-actions">
+          <div className="people-count"><UsersIcon /><strong>{peers.length + 1}</strong> in room</div>
+          {cinemaStream && (
+            <>
+              <StatsButton statsEnabled={statsEnabled} toggleStats={toggleStats} />
+              <button className="icon-button" onClick={toggleFullscreen}>
+                {isFullscreen ? <FullscreenExitIcon /> : <FullscreenIcon />}
+                {isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       <div className={`video-grid ${localStream || remoteTiles.length ? "has-video" : ""}`}>
@@ -34,7 +146,7 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
             stream={remoteStreams[peer.id]!}
             name={peer.name}
             state={connectionStates[peer.id]}
-            stats={remoteStats[peer.id] ?? null}
+            stats={statsEnabled ? remoteStats[peer.id] ?? null : null}
           />
         ))}
         {!localStream && remoteTiles.length === 0 && (
@@ -44,6 +156,26 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
             <p>{activeSharer ? "A secure peer-to-peer connection is being established." : "Share this room link, then choose a window or display to begin."}</p>
           </div>
         )}
+      </div>
+
+      <div
+        className={`cinema ${isFullscreen && !showCinemaControls ? "controls-hidden" : ""}`}
+        ref={cinemaRef}
+        onMouseMove={revealCinemaControls}
+      >
+        <video ref={cinemaVideoRef} autoPlay playsInline />
+        <div className="cinema-meta">
+          <span className="live-dot" />
+          <strong>{cinemaName ? `${cinemaName}'s screen` : "Screen"}</strong>
+          <small>Press Esc to exit</small>
+        </div>
+        {statsEnabled && cinemaStats && <StreamStats stats={cinemaStats} />}
+        <div className="cinema-controls">
+          <StatsButton statsEnabled={statsEnabled} toggleStats={toggleStats} />
+          <button className="icon-button" onClick={() => void exitFullscreen()} title="Exit fullscreen">
+            <FullscreenExitIcon /> Exit fullscreen
+          </button>
+        </div>
       </div>
     </section>
   );

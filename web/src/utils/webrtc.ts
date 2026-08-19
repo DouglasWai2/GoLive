@@ -1,6 +1,14 @@
-export async function logSelectedIceRoute(peerId: string, connection: RTCPeerConnection) {
-  const stats = await connection.getStats();
+export type IceRoute = {
+  route: "TURN relay" | "Direct P2P via STUN" | "Direct P2P";
+  localType: string | null;
+  remoteType: string | null;
+  protocol: string | null;
+  localAddress: string | null;
+  remoteAddress: string | null;
+  rtt: number | null;
+};
 
+function extractIceRoute(stats: RTCStatsReport): IceRoute | null {
   let selectedPair: any = null;
 
   /*
@@ -30,15 +38,14 @@ export async function logSelectedIceRoute(peerId: string, connection: RTCPeerCon
   }
 
   if (!selectedPair) {
-    console.warn(`[${peerId}] No selected ICE pair found`);
-    return;
+    return null;
   }
 
   const localCandidate = stats.get(selectedPair.localCandidateId) as any;
   const remoteCandidate = stats.get(selectedPair.remoteCandidateId) as any;
 
-  const localType = localCandidate?.candidateType;
-  const remoteType = remoteCandidate?.candidateType;
+  const localType = localCandidate?.candidateType ?? null;
+  const remoteType = remoteCandidate?.candidateType ?? null;
 
   const usingTurn = localType === "relay" || remoteType === "relay";
 
@@ -51,13 +58,44 @@ export async function logSelectedIceRoute(peerId: string, connection: RTCPeerCon
       ? "Direct P2P via STUN"
       : "Direct P2P";
 
-  console.log(`[${peerId}] ICE ROUTE: ${route}`, {
+  return {
+    route,
     localType,
     remoteType,
-    protocol: localCandidate?.protocol,
-    localAddress: localCandidate?.address,
-    remoteAddress: remoteCandidate?.address,
-    rtt: selectedPair.currentRoundTripTime,
+    protocol: localCandidate?.protocol ?? null,
+    localAddress: localCandidate?.address ?? null,
+    remoteAddress: remoteCandidate?.address ?? null,
+    rtt: typeof selectedPair.currentRoundTripTime === "number"
+      ? selectedPair.currentRoundTripTime
+      : null,
+  };
+}
+
+export async function getSelectedIceRoute(
+  connection: RTCPeerConnection,
+): Promise<IceRoute | null> {
+  const stats = await connection.getStats();
+  return extractIceRoute(stats);
+}
+
+export async function logSelectedIceRoute(
+  peerId: string,
+  connection: RTCPeerConnection,
+) {
+  const route = await getSelectedIceRoute(connection);
+
+  if (!route) {
+    console.warn(`[${peerId}] No selected ICE pair found`);
+    return;
+  }
+
+  console.log(`[${peerId}] ICE ROUTE: ${route.route}`, {
+    localType: route.localType,
+    remoteType: route.remoteType,
+    protocol: route.protocol,
+    localAddress: route.localAddress,
+    remoteAddress: route.remoteAddress,
+    rtt: route.rtt,
   });
 }
 
@@ -67,6 +105,7 @@ export type InboundVideoSample = {
   height: number | null;
   fps: number | null;
   bytes: number;
+  codecMimeType: string | null;
 };
 
 export type InboundVideoStats = {
@@ -76,11 +115,12 @@ export type InboundVideoStats = {
   bitrateKbps: number | null;
 };
 
-export async function getInboundVideoSample(
-  connection: RTCPeerConnection,
-): Promise<InboundVideoSample | null> {
-  const stats = await connection.getStats();
+export type PeerMediaStats = {
+  inbound: InboundVideoSample | null;
+  iceRoute: IceRoute | null;
+};
 
+function extractInboundVideo(stats: RTCStatsReport): InboundVideoSample | null {
   let sample: InboundVideoSample | null = null;
 
   stats.forEach((report) => {
@@ -90,17 +130,42 @@ export async function getInboundVideoSample(
       report.type === "inbound-rtp" &&
       rtp.kind === "video"
     ) {
+      let codecMimeType: string | null = null;
+
+      if (typeof rtp.codecId === "string") {
+        const codecReport = stats.get(rtp.codecId) as any;
+        codecMimeType = typeof codecReport?.mimeType === "string"
+          ? codecReport.mimeType
+          : null;
+      }
+
       sample = {
         timestamp: Date.now(),
         width: typeof rtp.frameWidth === "number" ? rtp.frameWidth : null,
         height: typeof rtp.frameHeight === "number" ? rtp.frameHeight : null,
         fps: typeof rtp.framesPerSecond === "number" ? rtp.framesPerSecond : null,
         bytes: typeof rtp.bytesReceived === "number" ? rtp.bytesReceived : 0,
+        codecMimeType,
       };
     }
   });
 
   return sample;
+}
+
+/*
+ * One getStats() pass that returns both the received video
+ * sample and the selected ICE route.
+ */
+export async function getPeerMediaStats(
+  connection: RTCPeerConnection,
+): Promise<PeerMediaStats> {
+  const stats = await connection.getStats();
+
+  return {
+    inbound: extractInboundVideo(stats),
+    iceRoute: extractIceRoute(stats),
+  };
 }
 
 export function computeInboundVideoStats(

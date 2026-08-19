@@ -93,6 +93,7 @@ button { cursor: pointer; }
 .stage-heading { display: flex; justify-content: space-between; align-items: end; margin-bottom: 25px; }
 .stage-heading .eyebrow { margin-bottom: 9px; }.stage-heading h1 { margin: 0; font-size: clamp(27px, 3vw, 45px); letter-spacing: -.055em; }
 .people-count { color: #85857d; display: flex; align-items: center; gap: 8px; font-size: 12px; }.people-count strong { color: var(--paper); }
+.stage-actions { display: flex; align-items: center; gap: 12px; }
 .video-grid { flex: 1; min-height: 380px; border: 1px solid #32322d; background-color: #171715; background-image: linear-gradient(#1d1d1a 1px, transparent 1px), linear-gradient(90deg, #1d1d1a 1px, transparent 1px); background-size: 34px 34px; display: grid; place-items: stretch; padding: 14px; gap: 14px; }
 .video-grid.has-video { grid-template-columns: repeat(auto-fit, minmax(min(440px, 100%), 1fr)); }
 .video-tile { min-width: 0; min-height: 0; background: #080808; position: relative; overflow: hidden; display: grid; place-items: center; border: 1px solid #2d2d29; }
@@ -105,6 +106,34 @@ button { cursor: pointer; }
 .scan-line { position: absolute; left: 0; right: 0; height: 1px; background: var(--acid); opacity: .45; animation: scan 3s infinite ease-in-out; }
 @keyframes scan { 0%,100% { top: 14%; opacity: 0; } 20%,80% { opacity: .5; } 50% { top: 86%; } }
 .empty-stage h2 { margin: 0 0 10px; font-size: 20px; }.empty-stage p { margin: 0; color: #7e7e76; line-height: 1.55; font-size: 13px; }
+
+button.active { 
+    border-color: var(--acid);
+    color: var(--acid);
+}
+
+button.active:hover {
+    border-color: var(--acid);
+    color: var(--acid);
+    opacity: .85;
+}
+.cinema { position: fixed; inset: 0; z-index: 1; background: #000; display: grid; place-items: center; opacity: 0; pointer-events: none; }
+.cinema video { width: 100%; height: 100%; object-fit: contain; }
+.cinema:fullscreen, .cinema:-webkit-full-screen { opacity: 1; pointer-events: auto; }
+.cinema.controls-hidden { cursor: none; }
+.cinema-meta { position: absolute; left: 18px; bottom: 18px; background: rgba(16,16,14,.88); backdrop-filter: blur(8px); min-height: 38px; padding: 0 13px; display: flex; align-items: center; gap: 9px; font-size: 11px; transition: opacity .2s; }
+.cinema-meta strong { font-size: 12px; }.cinema-meta small { color: #7e7e76; border-left: 1px solid #42423d; padding-left: 9px; font-family: ui-monospace, monospace; font-size: 9px; text-transform: uppercase; letter-spacing: .08em; }
+.cinema-controls { position: absolute; top: 18px; right: 18px; display: flex; gap: 10px; transition: opacity .2s; }
+.cinema-controls .icon-button { background: rgba(16,16,14,.88); backdrop-filter: blur(8px); }
+.cinema-controls .icon-button.muted { opacity: .55; }
+.stream-stats { display: flex; flex-wrap: wrap; gap: 22px; max-width: calc(100% - 24px); background: rgba(16,16,14,.9); backdrop-filter: blur(8px); border: 1px solid #3b3b36; border-radius: 6px; padding: 14px 18px; transition: opacity .2s; }
+.cinema .stream-stats { position: absolute; left: 18px; bottom: 66px; }
+.video-tile .stream-stats { position: absolute; left: 12px; bottom: 56px; gap: 14px; padding: 10px 14px; }
+.stream-stats-item { display: flex; flex-direction: column; gap: 4px; }
+.stream-stats-item small { color: var(--muted); font-size: 9px; text-transform: uppercase; letter-spacing: .1em; font-family: ui-monospace, monospace; }
+.stream-stats-item strong { font-family: ui-monospace, monospace; font-size: 16px; font-weight: 600; color: var(--paper); letter-spacing: -.01em; }
+.video-tile .stream-stats-item strong { font-size: 13px; }
+.cinema.controls-hidden .cinema-meta, .cinema.controls-hidden .cinema-controls, .cinema.controls-hidden .stream-stats { opacity: 0; pointer-events: none; }
 
 .control-dock { height: 80px; position: fixed; z-index: 5; left: 4vw; right: 4vw; bottom: 20px; background: rgba(28,28,25,.94); backdrop-filter: blur(18px); border: 1px solid #3b3b36; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; padding: 0 17px; box-shadow: 0 18px 45px rgba(0,0,0,.3); }
 .you-chip { display: flex; align-items: center; gap: 10px; }.you-chip > span { width: 37px; height: 37px; display: grid; place-items: center; border-radius: 50%; background: #34342f; color: #c2c1b8; font-size: 13px; }.you-chip small, .you-chip strong { display: block; }.you-chip small { color: #66665f; font-size: 8px; letter-spacing: .13em; margin-bottom: 3px; }.you-chip strong { font-size: 12px; }

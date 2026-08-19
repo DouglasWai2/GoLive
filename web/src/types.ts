@@ -16,6 +16,8 @@ export type RemoteVideoStats = {
   height: number;
   fps: number;
   bitrateKbps: number;
+  codec: string | null;
+  route: string | null;
 };
 
 export type ServerMessage =

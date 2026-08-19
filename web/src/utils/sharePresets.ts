@@ -56,3 +56,20 @@ export function formatResolution(width: number, height: number): string {
     (option) => option.width === width && option.height === height,
   )?.label ?? `${width}×${height}`;
 }
+
+export function formatKbps(kbps: number): string {
+  if (kbps >= 1000) return `${(kbps / 1000).toFixed(1)} Mbps`;
+  return `${Math.round(kbps)} kbps`;
+}
+
+export function formatCodec(mimeType: string | null): string {
+  if (!mimeType) return "—";
+  return mimeType.replace(/^video\//, "").toUpperCase();
+}
+
+export function formatConnectionRoute(route: string | null): string {
+  if (route === "TURN relay") return "TURN";
+  if (route === "Direct P2P via STUN") return "STUN";
+  if (route === "Direct P2P") return "P2P";
+  return "…";
+}
