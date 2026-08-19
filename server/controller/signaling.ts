@@ -7,7 +7,7 @@ import {
   removeClient,
   toPeer,
   type Client,
-} from "./rooms.js";
+} from "../utils/rooms.js";
 
 type Membership = {
   roomId: string;

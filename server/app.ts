@@ -1,8 +1,9 @@
 import websocket from "@fastify/websocket";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
-import { registerSignaling } from "./signaling.js";
+import { registerSignaling } from "./controller/signaling.js";
 import dotenv from "dotenv";
+import { getCachedCloudflareTurnUsage, getCloudflareTurnUsage } from "./utils/cloudflare.js";
 
 dotenv.config();
 
@@ -63,6 +64,43 @@ app.get("/turn-credentials", async (_request, reply) => {
 
   return data;
 });
+
+app.get(
+  "/turn-usage",
+  async (_request, reply) => {
+    try {
+      const now = new Date();
+
+      const startOfMonth = new Date(
+        Date.UTC(
+          now.getUTCFullYear(),
+          now.getUTCMonth(),
+          1,
+        ),
+      );
+
+      const usage =
+        await getCachedCloudflareTurnUsage(
+          startOfMonth,
+          now,
+        );
+
+      return usage;
+    } catch (error) {
+      app.log.error(
+        error,
+        "Failed to get Cloudflare TURN usage",
+      );
+
+      return reply.code(500).send({
+        error:
+          error instanceof Error
+            ? error.message
+            : "Unknown error",
+      });
+    }
+  },
+);
 
 const port = Number(process.env.PORT ?? 3000);
 const host = process.env.HOST ?? "0.0.0.0";

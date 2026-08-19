@@ -9,5 +9,5 @@
     "noUncheckedIndexedAccess": true,
     "skipLibCheck": true
   },
-  "include": ["src"]
+  "include": ["src", "utils", "controller/signaling.ts", "utils/rooms.ts", "app.ts"]
 }
