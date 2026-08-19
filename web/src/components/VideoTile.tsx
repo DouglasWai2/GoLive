@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { RemoteVideoStats } from "../types";
 import { StreamStats } from "./room/StreamStats";
+import { VolumeControl } from "./room/VolumeControl";
 
 type VideoTileProps = {
   stream: MediaStream;
@@ -9,9 +10,13 @@ type VideoTileProps = {
   state?: RTCPeerConnectionState;
   qualityLabel?: string | null;
   stats?: RemoteVideoStats | null;
+  volume?: number;
+  muted?: boolean;
+  onVolumeChange?: (volume: number) => void;
+  onToggleMute?: () => void;
 };
 
-export function VideoTile({ stream, name, local = false, state, qualityLabel, stats }: VideoTileProps) {
+export function VideoTile({ stream, name, local = false, state, qualityLabel, stats, volume = 1, muted = false, onVolumeChange, onToggleMute }: VideoTileProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
@@ -20,6 +25,12 @@ export function VideoTile({ stream, name, local = false, state, qualityLabel, st
       if (videoRef.current) videoRef.current.srcObject = null;
     };
   }, [stream]);
+
+  useEffect(() => {
+    if (local || !videoRef.current) return;
+    videoRef.current.volume = volume;
+    videoRef.current.muted = muted;
+  }, [local, volume, muted]);
 
   return (
     <article className="video-tile">
@@ -31,6 +42,14 @@ export function VideoTile({ stream, name, local = false, state, qualityLabel, st
         {state && <span className="peer-state">{state}</span>}
       </div>
       {!local && stats && <StreamStats stats={stats} />}
+      {!local && onVolumeChange && onToggleMute && (
+        <VolumeControl
+          volume={volume}
+          muted={muted}
+          onVolumeChange={onVolumeChange}
+          onToggleMute={onToggleMute}
+        />
+      )}
     </article>
   );
 }

@@ -5,6 +5,7 @@ import { StreamStats } from "./StreamStats";
 import type { Peer, RemoteVideoStats } from "../../types";
 import { exitFullscreen, getFullscreenElement, requestFullscreen } from "../../utils/fullscreen";
 import StatsButton from "./StatsButton";
+import { VolumeControl } from "./VolumeControl";
 
 type VideoStageProps = {
   localStream: MediaStream | null;
@@ -17,6 +18,8 @@ type VideoStageProps = {
 };
 
 const STATS_STORAGE_KEY = "golive.stats.enabled";
+const VOLUME_STORAGE_KEY = "golive.volume";
+const MUTED_STORAGE_KEY = "golive.muted";
 
 export function VideoStage({ localStream, peers, remoteStreams, connectionStates, remoteStats, localQuality, localName }: VideoStageProps) {
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -26,6 +29,21 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
       return localStorage.getItem(STATS_STORAGE_KEY) !== "0";
     } catch {
       return true;
+    }
+  });
+  const [volume, setVolume] = useState(() => {
+    try {
+      const stored = Number(localStorage.getItem(VOLUME_STORAGE_KEY));
+      return Number.isFinite(stored) && stored >= 0 && stored <= 1 ? stored : 1;
+    } catch {
+      return 1;
+    }
+  });
+  const [muted, setMuted] = useState(() => {
+    try {
+      return localStorage.getItem(MUTED_STORAGE_KEY) === "1";
+    } catch {
+      return false;
     }
   });
   const cinemaRef = useRef<HTMLDivElement>(null);
@@ -88,6 +106,13 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
     };
   }, [cinemaStream]);
 
+  useEffect(() => {
+    if (cinemaVideoRef.current) {
+      cinemaVideoRef.current.volume = volume;
+      cinemaVideoRef.current.muted = muted;
+    }
+  }, [volume, muted]);
+
   const toggleFullscreen = async () => {
     if (getFullscreenElement()) {
       await exitFullscreen();
@@ -109,6 +134,40 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
 
       try {
         localStorage.setItem(STATS_STORAGE_KEY, next ? "1" : "0");
+      } catch {
+        /* Ignore storage failures. */
+      }
+
+      return next;
+    });
+  };
+
+  const changeVolume = (next: number) => {
+    setVolume(next);
+
+    try {
+      localStorage.setItem(VOLUME_STORAGE_KEY, String(next));
+    } catch {
+      /* Ignore storage failures. */
+    }
+
+    if (next > 0) {
+      setMuted(false);
+
+      try {
+        localStorage.setItem(MUTED_STORAGE_KEY, "0");
+      } catch {
+        /* Ignore storage failures. */
+      }
+    }
+  };
+
+  const toggleMute = () => {
+    setMuted((current) => {
+      const next = !current;
+
+      try {
+        localStorage.setItem(MUTED_STORAGE_KEY, next ? "1" : "0");
       } catch {
         /* Ignore storage failures. */
       }
@@ -147,6 +206,10 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
             name={peer.name}
             state={connectionStates[peer.id]}
             stats={statsEnabled ? remoteStats[peer.id] ?? null : null}
+            volume={volume}
+            muted={muted}
+            onVolumeChange={changeVolume}
+            onToggleMute={toggleMute}
           />
         ))}
         {!localStream && remoteTiles.length === 0 && (
@@ -176,6 +239,12 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
             <FullscreenExitIcon /> Exit fullscreen
           </button>
         </div>
+        <VolumeControl
+          volume={volume}
+          muted={muted}
+          onVolumeChange={changeVolume}
+          onToggleMute={toggleMute}
+        />
       </div>
     </section>
   );
