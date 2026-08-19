@@ -21,6 +21,7 @@ export type RemoteVideoStats = {
 };
 
 export type ServerMessage =
+  | { type: "authenticated" }
   | { type: "room-state"; selfId: string; peers: Peer[] }
   | { type: "peer-joined"; peer: Peer }
   | { type: "peer-left"; peerId: string }

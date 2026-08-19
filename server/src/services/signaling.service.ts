@@ -5,14 +5,36 @@ import type { RoomToken } from "../types/room.js";
 import { send } from "../utils/ws.js";
 import { RoomService } from "./room.service.js";
 
+const MAX_CONNECTIONS_PER_IP = 20;
+const MAX_MESSAGES_PER_WINDOW = 120;
+const MESSAGE_WINDOW_MS = 10_000;
+const MAX_PEERS_PER_ROOM = 10;
+const AUTH_TIMEOUT_MS = 10_000;
+
+const connectionsByIp = new Map<string, number>();
+
 export class SignalingService {
   constructor(
     private readonly rooms: RoomService,
     private readonly verifyRoomToken: (token: string) => RoomToken | null,
   ) {}
 
-  handleConnection(socket: WebSocket): void {
+  handleConnection(socket: WebSocket, ip: string): void {
+    const connectionCount = connectionsByIp.get(ip) ?? 0;
+    if (connectionCount >= MAX_CONNECTIONS_PER_IP) {
+      socket.close(1008, "Too many connections");
+      return;
+    }
+    connectionsByIp.set(ip, connectionCount + 1);
+
+    let session: RoomToken | undefined;
     let membership: Membership | undefined;
+
+    const authTimeout = setTimeout(() => {
+      socket.close(1008, "Authentication timeout");
+    }, AUTH_TIMEOUT_MS);
+
+    const messageTimestamps: number[] = [];
 
     const leaveRoom = () => {
       if (!membership) return;
@@ -23,16 +45,65 @@ export class SignalingService {
       membership = undefined;
     };
 
+    let cleanedUp = false;
+
+    const cleanup = () => {
+      if (cleanedUp) return;
+      cleanedUp = true;
+
+      clearTimeout(authTimeout);
+      leaveRoom();
+
+      const count = connectionsByIp.get(ip) ?? 0;
+      if (count <= 1) connectionsByIp.delete(ip);
+      else connectionsByIp.set(ip, count - 1);
+    };
+
     socket.on("message", (raw) => {
+      const now = Date.now();
+      messageTimestamps.push(now);
+      while ((messageTimestamps[0] ?? 0) < now - MESSAGE_WINDOW_MS) {
+        messageTimestamps.shift();
+      }
+      if (messageTimestamps.length > MAX_MESSAGES_PER_WINDOW) {
+        socket.close(1008, "Rate limit exceeded");
+        return;
+      }
+
       const message = parseMessage(raw);
       if (!message) {
         send(socket, { type: "error", message: "Invalid message." });
         return;
       }
 
+      /*
+       * AUTH MUST COME FIRST
+       */
+      if (!session) {
+        if (message.type !== "auth") {
+          socket.close(1008, "Authentication required");
+          return;
+        }
+
+        const verified = this.verifyRoomToken(message.token);
+        if (!verified) {
+          socket.close(1008, "Invalid session");
+          return;
+        }
+
+        session = verified;
+        clearTimeout(authTimeout);
+        send(socket, { type: "authenticated" });
+        return;
+      }
+
       if (message.type === "join") {
-        const joined = this.handleJoin(socket, message, leaveRoom);
+        const joined = this.handleJoin(socket, message, session, leaveRoom);
         if (joined) membership = joined;
+        return;
+      }
+
+      if (message.type === "auth") {
         return;
       }
 
@@ -44,26 +115,21 @@ export class SignalingService {
       this.handleMessage(socket, message, membership);
     });
 
-    socket.on("close", leaveRoom);
-    socket.on("error", leaveRoom);
+    socket.on("close", cleanup);
+    socket.on("error", cleanup);
   }
 
   private handleJoin(
     socket: WebSocket,
     message: Extract<ClientMessage, { type: "join" }>,
+    session: RoomToken,
     leaveRoom: () => void,
   ): Membership | undefined {
     const roomId = message.room.trim();
     const name = message.name.trim();
 
-    const token = this.verifyRoomToken(message.token);
-
-    if (!token || token.roomId !== roomId || token.name !== name) {
-      send(socket, {
-        type: "error",
-        code: "UNAUTHORIZED",
-        message: "Invalid session token.",
-      });
+    if (message.room !== session.roomId || message.name !== session.name) {
+      socket.close(1008, "Session mismatch");
       return;
     }
 
@@ -83,6 +149,17 @@ export class SignalingService {
     leaveRoom();
 
     const room = this.rooms.getRoom(roomId);
+
+    if (room.size >= MAX_PEERS_PER_ROOM) {
+      send(socket, {
+        type: "error",
+        code: "ROOM_FULL",
+        message: "This room is full.",
+      });
+      socket.close(1008, "Room full");
+      return;
+    }
+
     const client = {
       id: randomUUID(),
       name,
@@ -105,7 +182,7 @@ export class SignalingService {
 
   private handleMessage(
     socket: WebSocket,
-    message: Exclude<ClientMessage, { type: "join" }>,
+    message: Exclude<ClientMessage, { type: "join" } | { type: "auth" }>,
     membership: Membership,
   ): void {
     const { roomId, client } = membership;
@@ -122,8 +199,12 @@ export class SignalingService {
         return;
       }
 
+      /*
+       * The target is resolved from the sender's own room,
+       * so sender.roomId === target.roomId by construction.
+       */
       const target = room.get(message.target);
-      if (target) {
+      if (target && target.id !== client.id) {
         send(target.socket, {
           type: "signal",
           from: client.id,
@@ -173,13 +254,16 @@ function parseMessage(raw: Buffer | ArrayBuffer | Buffer[]): ClientMessage | nul
   try {
     const message = JSON.parse(raw.toString()) as Record<string, unknown>;
 
+    if (message.type === "auth" && typeof message.token === "string") {
+      return { type: "auth", token: message.token };
+    }
+
     if (
       message.type === "join" &&
       typeof message.room === "string" &&
-      typeof message.name === "string" &&
-      typeof message.token === "string"
+      typeof message.name === "string"
     ) {
-      return { type: "join", room: message.room, name: message.name, token: message.token };
+      return { type: "join", room: message.room, name: message.name };
     }
 
     if (

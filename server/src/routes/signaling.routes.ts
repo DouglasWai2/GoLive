@@ -8,7 +8,7 @@ export function registerSignalingRoutes(
 ): void {
   const controller = createSignalingController(signalingService);
 
-  app.get("/ws", { websocket: true }, (socket) => {
-    controller.handleConnection(socket);
+  app.get("/ws", { websocket: true }, (socket, request) => {
+    controller.handleConnection(socket, request.ip);
   });
 }

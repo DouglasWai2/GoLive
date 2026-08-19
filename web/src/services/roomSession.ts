@@ -381,15 +381,12 @@ export class RoomSession {
       this.callbacks.onStatus("connected");
 
       /*
-       * Use this exact WebSocket instead of `send()`
-       * for the initial join, preventing any stale
-       * socket race.
+       * Authenticate with the room token first. The join
+       * message is only accepted after authentication.
        */
       ws.send(
         JSON.stringify({
-          type: "join",
-          room: this.roomId,
-          name: this.name,
+          type: "auth",
           token: this.token,
         }),
       );
@@ -891,6 +888,16 @@ export class RoomSession {
       message = JSON.parse(event.data as string) as ServerMessage;
     } catch (caught) {
       console.warn("Ignoring invalid signaling message", caught);
+      return;
+    }
+
+    if (message.type === "authenticated") {
+      this.send({
+        type: "join",
+        room: this.roomId,
+        name: this.name,
+      });
+
       return;
     }
 
