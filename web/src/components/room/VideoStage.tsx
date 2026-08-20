@@ -130,6 +130,43 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
   }, [cinemaStream]);
 
   useEffect(() => {
+    const video = cinemaVideoRef.current;
+    const container = cinemaRef.current;
+    if (!video || !container) return;
+
+    const fit = () => {
+      const videoWidth = video.videoWidth;
+      const videoHeight = video.videoHeight;
+      if (!videoWidth || !videoHeight) return;
+
+      const containerWidth = container.clientWidth;
+      const containerHeight = container.clientHeight;
+      if (!containerWidth || !containerHeight) return;
+
+      const scale = Math.min(containerWidth / videoWidth, containerHeight / videoHeight);
+      video.style.width = `${Math.max(1, Math.floor(videoWidth * scale))}px`;
+      video.style.height = `${Math.max(1, Math.floor(videoHeight * scale))}px`;
+    };
+
+    const fitNextFrame = () => window.requestAnimationFrame(fit);
+
+    fit();
+    video.addEventListener("resize", fit);
+    video.addEventListener("loadedmetadata", fit);
+    window.addEventListener("resize", fit);
+    document.addEventListener("fullscreenchange", fitNextFrame);
+
+    return () => {
+      video.style.width = "";
+      video.style.height = "";
+      video.removeEventListener("resize", fit);
+      video.removeEventListener("loadedmetadata", fit);
+      window.removeEventListener("resize", fit);
+      document.removeEventListener("fullscreenchange", fitNextFrame);
+    };
+  }, [cinemaStream]);
+
+  useEffect(() => {
     if (cinemaVideoRef.current) {
       cinemaVideoRef.current.volume = volume;
       cinemaVideoRef.current.muted = muted;
