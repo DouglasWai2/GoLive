@@ -21,7 +21,6 @@ export function registerRoutes(app: FastifyInstance): void {
   };
 
   const signalingService = new SignalingService(roomService, verifyRoomToken);
-  const turnService = new TurnService();
 
   registerHealthRoutes(app);
   registerSignalingRoutes(app, signalingService);

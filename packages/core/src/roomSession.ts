@@ -88,6 +88,8 @@ export class RoomSession {
   private token = "";
   private authenticated = false;
 
+  private heartbeatInterval: number | undefined | null;
+
   constructor(callbacks: RoomSessionCallbacks, deps: RoomSessionDeps) {
     this.callbacks = callbacks;
     this.deps = deps;
@@ -119,6 +121,8 @@ export class RoomSession {
     for (const timer of this.statsTimers.values()) {
       clearInterval(timer);
     }
+
+    this.clearPingTimer();
 
     this.statsTimers.clear();
     this.statsSamples.clear();
@@ -419,6 +423,20 @@ export class RoomSession {
           token: this.token,
         }),
       );
+
+      // Send heartbeat every 60 seconds
+      this.heartbeatInterval = window.setInterval(() => {
+        if (ws.readyState !== WebSocket.OPEN) {
+          return;
+        }
+    
+        ws.send(
+          JSON.stringify({
+            type: "ping",
+            timestamp: Date.now(),
+          }),
+        );
+      }, 60_000);
     };
 
     ws.onmessage = this.handleSocketMessage;
@@ -1054,6 +1072,15 @@ export class RoomSession {
       }
     }
   };
+
+  private clearPingTimer() {
+    const timer = this.heartbeatInterval
+
+    if (timer != null) {
+      clearInterval(timer);
+      this.heartbeatInterval = null;
+    }
+  }
 
   private closePeer(peerId: string) {
     const connection = this.peerConnections.get(peerId);

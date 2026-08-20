@@ -314,6 +314,10 @@ function parseMessage(raw: Buffer | ArrayBuffer | Buffer[]): ClientMessage | nul
       return { type: "sharing", sharing: message.sharing };
     }
 
+    if (message.type === "ping" && typeof message.timestamp === "number") {
+      return { type: "ping", timestamp: message.timestamp };
+    }
+
     return null;
   } catch {
     return null;
