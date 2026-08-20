@@ -7,6 +7,7 @@ export type Peer = {
 };
 
 export type Client = Peer & {
+  sessionId: string;
   socket: WebSocket;
 };
 

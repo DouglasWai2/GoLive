@@ -13,10 +13,18 @@ type RoomProps = {
   token: string;
   onLeave: () => void;
   onSessionRejected?: () => void;
+  onSessionReplaced?: () => void;
 };
 
-export function Room({ roomId, name, token, onLeave, onSessionRejected }: RoomProps) {
-  const room = useRoom(roomId, name, token, onSessionRejected);
+export function Room({
+  roomId,
+  name,
+  token,
+  onLeave,
+  onSessionRejected,
+  onSessionReplaced,
+}: RoomProps) {
+  const room = useRoom(roomId, name, token, onSessionRejected, onSessionReplaced);
   const [shareSettings, setShareSettings] = useState<ShareSettings | null>(null);
 
   const startShare = (settings: ShareSettings) => {

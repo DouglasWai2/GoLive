@@ -77,6 +77,7 @@ button { cursor: pointer; }
 .name-card .primary-button { width: 100%; }
 .name-card > small { display: block; text-align: center; color: #6f6f68; margin-top: 20px; }
 .gate-error { color: #ff6b5e; font-size: 13px; margin: -6px 0 14px; }
+.replaced-note { color: #9c9c93; font-size: 14px; line-height: 1.5; margin: -22px 0 28px; }
 
 .room-shell { display: flex; flex-direction: column; background: #10100e; }
 .room-header { padding: 0 4vw; display: grid; grid-template-columns: 1fr auto 1fr; flex: 0 0 auto; }

@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import type { WebSocket } from "ws";
 import type { ClientMessage, Membership } from "../types/message.js";
 import type { RoomToken } from "../types/room.js";
@@ -10,6 +9,7 @@ const MAX_MESSAGES_PER_WINDOW = 120;
 const MESSAGE_WINDOW_MS = 10_000;
 const MAX_PEERS_PER_ROOM = 10;
 const AUTH_TIMEOUT_MS = 10_000;
+const SESSION_REPLACED_CODE = 4001;
 
 const connectionsByIp = new Map<string, number>();
 
@@ -40,8 +40,17 @@ export class SignalingService {
       if (!membership) return;
 
       const { roomId, client } = membership;
-      this.rooms.removeClient(roomId, client.id);
-      this.broadcast(roomId, { type: "peer-left", peerId: client.id });
+
+      /*
+       * Only remove the room entry if it still points at this socket.
+       * A replaced session (opened in another tab) must not delete the
+       * new active connection when its old socket closes.
+       */
+      if (this.rooms.getClient(roomId, client.id)?.socket === client.socket) {
+        this.rooms.removeClient(roomId, client.id);
+        this.broadcast(roomId, { type: "peer-left", peerId: client.id });
+      }
+
       membership = undefined;
     };
 
@@ -150,7 +159,31 @@ export class SignalingService {
 
     const room = this.rooms.getRoom(roomId);
 
-    if (room.size >= MAX_PEERS_PER_ROOM) {
+    /*
+     * The peer id is the session id, so a session reconnecting
+     * (reload, or a new tab) maps to the same peer.
+     */
+    const peerId = session.sessionId;
+
+    const existing = room.get(peerId);
+
+    if (existing && existing.socket !== socket) {
+      /*
+       * Another tab is using the same session. Evict it so the room
+       * keeps exactly one peer per session.
+       */
+      existing.socket.close(SESSION_REPLACED_CODE, "Session opened in another tab");
+
+      if (existing.sharing) {
+        this.broadcast(
+          roomId,
+          { type: "peer-updated", peer: { id: peerId, name, sharing: false } },
+          peerId,
+        );
+      }
+    }
+
+    if (!existing && room.size >= MAX_PEERS_PER_ROOM) {
       send(socket, {
         type: "error",
         code: "ROOM_FULL",
@@ -161,13 +194,16 @@ export class SignalingService {
     }
 
     const client = {
-      id: randomUUID(),
+      id: peerId,
+      sessionId: peerId,
       name,
       sharing: false,
       socket,
     };
 
-    const peers = [...room.values()].map((peer) => this.rooms.toPeer(peer));
+    const peers = [...room.values()]
+      .filter((peer) => peer.id !== peerId)
+      .map((peer) => this.rooms.toPeer(peer));
     room.set(client.id, client);
 
     send(socket, { type: "room-state", selfId: client.id, peers });

@@ -30,6 +30,10 @@ export class RoomService {
     return this.rooms.get(roomId);
   }
 
+  getClient(roomId: string, peerId: string): Client | undefined {
+    return this.rooms.get(roomId)?.get(peerId);
+  }
+
   removeClient(roomId: string, peerId: string): void {
     const room = this.rooms.get(roomId);
     if (!room) return;

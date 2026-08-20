@@ -25,6 +25,7 @@ export type RoomSessionCallbacks = {
   onRemoteStats: (peerId: string, stats: RemoteVideoStats | null) => void;
   onError: (message: string) => void;
   onSessionRejected?: () => void;
+  onSessionReplaced?: () => void;
 };
 
 /*
@@ -412,6 +413,17 @@ export class RoomSession {
        */
       if (event.code === 1008 && !this.authenticated) {
         this.callbacks.onSessionRejected?.();
+        return;
+      }
+
+      /*
+       * The server closes with 4001 when the same session was
+       * opened in another tab. The other tab is now the active
+       * connection, so this one stops but keeps the stored session.
+       */
+      if (event.code === 4001) {
+        this.stopSharing();
+        this.callbacks.onSessionReplaced?.();
         return;
       }
 

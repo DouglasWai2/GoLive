@@ -10,11 +10,11 @@ function sessionKey(roomId: string): string {
 }
 
 export function saveSession(roomId: string, name: string, token: string): void {
-  sessionStorage.setItem(sessionKey(roomId), JSON.stringify({ name, token }));
+  localStorage.setItem(sessionKey(roomId), JSON.stringify({ name, token }));
 }
 
 export function loadSession(roomId: string): StoredSession | null {
-  const raw = sessionStorage.getItem(sessionKey(roomId));
+  const raw = localStorage.getItem(sessionKey(roomId));
 
   if (!raw) return null;
 
@@ -37,7 +37,7 @@ export function loadSession(roomId: string): StoredSession | null {
 }
 
 export function clearSession(roomId: string): void {
-  sessionStorage.removeItem(sessionKey(roomId));
+  localStorage.removeItem(sessionKey(roomId));
 }
 
 export function isTokenExpired(token: string): boolean {

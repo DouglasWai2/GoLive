@@ -7,6 +7,7 @@ export function useRoom(
   name: string,
   token: string,
   onSessionRejected?: () => void,
+  onSessionReplaced?: () => void,
 ) {
   const [status, setStatus] = useState<SocketStatus>("connecting");
   const [peers, setPeers] = useState<Peer[]>([]);
@@ -66,6 +67,7 @@ export function useRoom(
       },
       onError: setError,
       onSessionRejected,
+      onSessionReplaced,
     });
 
     sessionRef.current = session;

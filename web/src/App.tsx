@@ -3,6 +3,7 @@ import { roomFromPath } from "./utils/room";
 import { Landing } from "./components/Landing";
 import { NameGate } from "./components/NameGate";
 import { Room } from "./components/Room";
+import { SessionReplaced } from "./components/SessionReplaced";
 import { clearSession, loadSession } from "./utils/session";
 
 type Join = {
@@ -19,14 +20,36 @@ export default function App() {
 
     return stored ? { name: stored.name, token: stored.token } : null;
   });
+  const [replaced, setReplaced] = useState(false);
 
   if (!roomId) return <Landing />;
-  if (!join) return <NameGate roomId={roomId} onJoin={(name, token) => setJoin({ name, token })} />;
 
   const rejectSession = () => {
     clearSession(roomId);
     setJoin(null);
+    setReplaced(false);
   };
+
+  if (replaced && join) {
+    return (
+      <SessionReplaced
+        roomId={roomId}
+        onReconnect={() => {
+          const stored = loadSession(roomId);
+
+          if (!stored) {
+            setJoin(null);
+            setReplaced(false);
+            return;
+          }
+
+          setReplaced(false);
+        }}
+      />
+    );
+  }
+
+  if (!join) return <NameGate roomId={roomId} onJoin={(name, token) => setJoin({ name, token })} />;
 
   return (
     <Room
@@ -35,6 +58,7 @@ export default function App() {
       token={join.token}
       onLeave={rejectSession}
       onSessionRejected={rejectSession}
+      onSessionReplaced={() => setReplaced(true)}
     />
   );
 }
