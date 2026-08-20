@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import type { RemoteVideoStats } from "../types";
+import type { PeerConnectionState, RemoteVideoStats } from "@golive/core";
 import { FullscreenIcon } from "./icons";
 import { StreamStats } from "./room/StreamStats";
 import StatsButton from "./room/StatsButton";
@@ -9,7 +9,7 @@ type VideoTileProps = {
   stream: MediaStream;
   name: string;
   local?: boolean;
-  state?: RTCPeerConnectionState;
+  state?: PeerConnectionState;
   qualityLabel?: string | null;
   stats?: RemoteVideoStats | null;
   volume?: number;

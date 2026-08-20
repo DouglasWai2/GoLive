@@ -9,6 +9,7 @@
     "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {
+    "@golive/core": "0.1.0",
     "@vitejs/plugin-react": "^5.0.2",
     "vite": "^7.1.7",
     "react": "^19.1.1",

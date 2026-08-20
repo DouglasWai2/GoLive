@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { FullscreenExitIcon, ScreenIcon, UsersIcon } from "../icons";
 import { VideoTile } from "../VideoTile";
 import { StreamStats } from "./StreamStats";
-import type { Peer, RemoteVideoStats } from "../../types";
+import type { Peer, PeerConnectionState, RemoteVideoStats } from "../../types";
 import { exitFullscreen, getFullscreenElement, requestFullscreen } from "../../utils/fullscreen";
 import StatsButton from "./StatsButton";
 import { VolumeControl } from "./VolumeControl";
@@ -11,7 +11,7 @@ type VideoStageProps = {
   localStream: MediaStream | null;
   peers: Peer[];
   remoteStreams: Record<string, MediaStream>;
-  connectionStates: Record<string, RTCPeerConnectionState>;
+  connectionStates: Record<string, PeerConnectionState>;
   remoteStats: Record<string, RemoteVideoStats | null>;
   localQuality: string | null;
   localName: string;

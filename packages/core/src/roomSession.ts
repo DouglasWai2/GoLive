@@ -1,19 +1,30 @@
 import type {
+  IceServer,
+  MediaStream,
   Peer,
+  PeerConnectionState,
   RemoteVideoStats,
+  RTCPeerConnection,
   ServerMessage,
   ShareSettings,
   SignalData,
   SocketStatus,
-} from "../types";
-import { fallbackIceServers, getIceServers, websocketUrl } from "../utils/signaling";
+  WebSocketLike,
+} from "./types";
+import { fallbackIceServers, getIceServers, websocketUrl } from "./signaling";
 import {
   computeInboundVideoStats,
   configureVideoSender,
   getPeerMediaStats,
   logSelectedIceRoute,
   type InboundVideoSample,
-} from "../utils/webrtc";
+} from "./webrtc";
+import type { PlatformAdapter } from "./adapter";
+
+export type RoomSessionDeps = {
+  baseUrl: string;
+  adapter: PlatformAdapter;
+};
 
 export type RoomSessionCallbacks = {
   onStatus: (status: SocketStatus) => void;
@@ -21,12 +32,21 @@ export type RoomSessionCallbacks = {
   onLocalStream: (stream: MediaStream | null) => void;
   onIsStartingShare: (isStarting: boolean) => void;
   onRemoteStream: (peerId: string, stream: MediaStream | null) => void;
-  onConnectionState: (peerId: string, state: RTCPeerConnectionState | null) => void;
+  onConnectionState: (peerId: string, state: PeerConnectionState | null) => void;
   onRemoteStats: (peerId: string, stats: RemoteVideoStats | null) => void;
   onError: (message: string) => void;
   onSessionRejected?: () => void;
   onSessionReplaced?: () => void;
 };
+
+const SOCKET_OPEN = 1;
+
+/*
+ * setTimeout/setInterval resolve to `number` in browsers and to a Timeout
+ * object when @types/node is present. The four functions stay consistent
+ * within a given environment, so a single handle type works everywhere.
+ */
+type TimerHandle = ReturnType<typeof setTimeout>;
 
 /*
  * Owns the entire WebSocket + WebRTC lifecycle for one room session.
@@ -39,10 +59,11 @@ export type RoomSessionCallbacks = {
  */
 export class RoomSession {
   private callbacks: RoomSessionCallbacks;
+  private deps: RoomSessionDeps;
 
   private active = false;
-  private socket: WebSocket | null = null;
-  private iceServers: RTCIceServer[] = fallbackIceServers;
+  private socket: WebSocketLike | null = null;
+  private iceServers: IceServer[] = fallbackIceServers;
 
   private peers: Peer[] = [];
   private localStream: MediaStream | null = null;
@@ -51,11 +72,11 @@ export class RoomSession {
   private scaleResolutionDownBy = 1;
 
   private peerConnections = new Map<string, RTCPeerConnection>();
-  private pendingCandidates = new Map<string, RTCIceCandidateInit[]>();
+  private pendingCandidates = new Map<string, unknown[]>();
   private pendingOffers = new Set<string>();
   private signalQueues = new Map<string, Promise<void>>();
 
-  private statsTimers = new Map<string, number>();
+  private statsTimers = new Map<string, TimerHandle>();
   private statsSamples = new Map<string, InboundVideoSample | null>();
 
   private sharingRequest: ((accepted: boolean) => void) | null = null;
@@ -67,8 +88,9 @@ export class RoomSession {
   private token = "";
   private authenticated = false;
 
-  constructor(callbacks: RoomSessionCallbacks) {
+  constructor(callbacks: RoomSessionCallbacks, deps: RoomSessionDeps) {
     this.callbacks = callbacks;
+    this.deps = deps;
   }
 
   start(roomId: string, name: string, token: string) {
@@ -95,7 +117,7 @@ export class RoomSession {
     this.signalQueues.clear();
 
     for (const timer of this.statsTimers.values()) {
-      window.clearInterval(timer);
+      clearInterval(timer);
     }
 
     this.statsTimers.clear();
@@ -135,7 +157,7 @@ export class RoomSession {
       this.startingShare ||
       this.localStream ||
       this.peers.some((peer) => peer.sharing) ||
-      this.socket?.readyState !== WebSocket.OPEN
+      this.socket?.readyState !== SOCKET_OPEN
     ) {
       return;
     }
@@ -151,7 +173,7 @@ export class RoomSession {
     let stream: MediaStream | null = null;
 
     try {
-      stream = await navigator.mediaDevices.getDisplayMedia({
+      stream = await this.deps.adapter.getDisplayMedia({
         video: {
           width: {
             ideal: settings.width,
@@ -180,28 +202,30 @@ export class RoomSession {
       const videoTrack = stream.getVideoTracks()[0];
 
       if (videoTrack) {
-        try {
-          await videoTrack.applyConstraints({
-            width: {
-              ideal: settings.width,
-              max: settings.width,
-            },
-            height: {
-              ideal: settings.height,
-              max: settings.height,
-            },
-            frameRate: {
-              ideal: settings.frameRate,
-              max: settings.frameRate,
-            },
-          });
-        } catch {
-          /* Some browsers reject post-capture constraints; the sender encoding caps output anyway. */
+        if (videoTrack.applyConstraints) {
+          try {
+            await videoTrack.applyConstraints({
+              width: {
+                ideal: settings.width,
+                max: settings.width,
+              },
+              height: {
+                ideal: settings.height,
+                max: settings.height,
+              },
+              frameRate: {
+                ideal: settings.frameRate,
+                max: settings.frameRate,
+              },
+            });
+          } catch {
+            /* Some platforms reject post-capture constraints; the sender encoding caps output anyway. */
+          }
         }
 
-        const trackSettings = videoTrack.getSettings();
-        const trackWidth = trackSettings.width;
-        const trackHeight = trackSettings.height;
+        const trackSettings = videoTrack.getSettings?.();
+        const trackWidth = trackSettings?.width;
+        const trackHeight = trackSettings?.height;
 
         if (typeof trackWidth === "number" && typeof trackHeight === "number") {
           this.scaleResolutionDownBy = Math.max(
@@ -219,7 +243,7 @@ export class RoomSession {
        * allowed to become this room's sharer.
        */
       const accepted = await new Promise<boolean>((resolve) => {
-        const timeout = window.setTimeout(() => {
+        const timeout = setTimeout(() => {
           this.sharingRequest = null;
 
           this.callbacks.onError(
@@ -230,7 +254,7 @@ export class RoomSession {
         }, 5000);
 
         this.sharingRequest = (granted) => {
-          window.clearTimeout(timeout);
+          clearTimeout(timeout);
           resolve(granted);
         };
 
@@ -259,7 +283,8 @@ export class RoomSession {
       this.callbacks.onLocalStream(stream);
 
       /*
-       * Browser's native "Stop sharing" button.
+       * Platform's native "Stop sharing" control (browser button,
+       * Android MediaProjection system UI).
        */
       stream
         .getVideoTracks()[0]
@@ -283,7 +308,7 @@ export class RoomSession {
         await this.createOffer(peer.id);
       }
     } catch (caught) {
-      if (caught instanceof DOMException && caught.name === "NotAllowedError") {
+      if (this.deps.adapter.isCaptureRejected(caught)) {
         return;
       }
 
@@ -347,10 +372,10 @@ export class RoomSession {
    * available from the beginning.
    */
   private async initialize() {
-    let resolvedIceServers: RTCIceServer[];
+    let resolvedIceServers: IceServer[];
 
     try {
-      resolvedIceServers = await getIceServers(this.token);
+      resolvedIceServers = await getIceServers(this.deps.baseUrl, this.token);
     } catch (caught) {
       console.warn(
         "Could not load TURN credentials. Falling back to STUN only.",
@@ -366,7 +391,7 @@ export class RoomSession {
 
     this.iceServers = resolvedIceServers;
 
-    const ws = new WebSocket(websocketUrl());
+    const ws = this.createSocket();
 
     if (!this.active) {
       ws.close();
@@ -441,6 +466,18 @@ export class RoomSession {
     };
   }
 
+  private createSocket(): WebSocketLike {
+    const Ctor = (
+      globalThis as { WebSocket?: new (url: string) => WebSocketLike }
+    ).WebSocket;
+
+    if (!Ctor) {
+      throw new Error("WebSocket is not available");
+    }
+
+    return new Ctor(websocketUrl(this.deps.baseUrl));
+  }
+
   private createPeerConnection(peerId: string): RTCPeerConnection {
     const existing = this.peerConnections.get(peerId);
 
@@ -452,8 +489,7 @@ export class RoomSession {
       this.peerConnections.delete(peerId);
     }
 
-
-    const connection = new RTCPeerConnection({
+    const connection = this.deps.adapter.createPeerConnection({
       iceServers: this.iceServers,
     });
 
@@ -483,18 +519,21 @@ export class RoomSession {
         return;
       }
 
-      console.log(`[${peerId}] ICE candidate`, {
-        type: event.candidate.type,
-        protocol: event.candidate.protocol,
-        address: event.candidate.address,
-        port: event.candidate.port,
-      });
+      /*
+       * Log the serialized form: react-native-webrtc's RTCIceCandidate
+       * does not expose structured fields (address/port/protocol/type),
+       * so the raw object would print undefined on Android.
+       */
+      console.log(
+        `[${peerId}] ICE candidate`,
+        this.deps.adapter.serializeCandidate(event.candidate),
+      );
 
       this.send({
         type: "signal",
         target: peerId,
         data: {
-          candidate: event.candidate.toJSON(),
+          candidate: this.deps.adapter.serializeCandidate(event.candidate),
         },
       });
     };
@@ -506,12 +545,20 @@ export class RoomSession {
      * mean the entire connection failed if IPv4 succeeds.
      */
     connection.onicecandidateerror = (event) => {
+      const candidateError = event as {
+        url?: string;
+        address?: string;
+        port?: number;
+        errorCode?: number;
+        errorText?: string;
+      };
+
       console.warn(`[${peerId}] ICE candidate error`, {
-        url: event.url,
-        address: event.address,
-        port: event.port,
-        errorCode: event.errorCode,
-        errorText: event.errorText,
+        url: candidateError.url,
+        address: candidateError.address,
+        port: candidateError.port,
+        errorCode: candidateError.errorCode,
+        errorText: candidateError.errorText,
       });
     };
 
@@ -571,7 +618,7 @@ export class RoomSession {
       }
     };
 
-    const timer = window.setInterval(() => {
+    const timer = setInterval(() => {
       this.pollPeerStats(peerId, connection);
     }, 1000);
 
@@ -658,7 +705,7 @@ export class RoomSession {
   private async addOrQueueCandidate(
     peerId: string,
     connection: RTCPeerConnection,
-    candidate: RTCIceCandidateInit,
+    candidate: unknown,
   ) {
     if (connection.signalingState === "closed") {
       return;
@@ -666,7 +713,7 @@ export class RoomSession {
 
     if (connection.remoteDescription) {
       try {
-        await connection.addIceCandidate(candidate);
+        await connection.addIceCandidate(candidate as never);
       } catch (caught) {
         console.error(`[${peerId}] addIceCandidate failed`, caught);
       }
@@ -692,7 +739,7 @@ export class RoomSession {
       }
 
       try {
-        await connection.addIceCandidate(candidate);
+        await connection.addIceCandidate(candidate as never);
       } catch (caught) {
         console.error(`[${peerId}] Queued addIceCandidate failed`, caught);
       }
@@ -728,10 +775,16 @@ export class RoomSession {
 
       await this.applySenderSettings(connection);
 
-      const offer = await connection.createOffer();
+      let offer = await connection.createOffer();
 
       if (!this.active || generation !== this.sharingGeneration || !this.localStream) {
         return;
+      }
+
+      const munge = this.deps.adapter.mungeOffer;
+
+      if (munge && offer.sdp) {
+        offer = { ...offer, sdp: munge(offer.sdp) };
       }
 
       await connection.setLocalDescription(offer);
@@ -901,7 +954,7 @@ export class RoomSession {
   /*
    * WebSocket messages from Fastify.
    */
-  private handleSocketMessage = (event: MessageEvent) => {
+  private handleSocketMessage = (event: { data: unknown }) => {
     if (!this.active) {
       return;
     }
@@ -1024,7 +1077,7 @@ export class RoomSession {
     const timer = this.statsTimers.get(peerId);
 
     if (timer) {
-      window.clearInterval(timer);
+      clearInterval(timer);
       this.statsTimers.delete(peerId);
     }
 
@@ -1036,7 +1089,7 @@ export class RoomSession {
   }
 
   private send(message: unknown) {
-    if (this.socket?.readyState !== WebSocket.OPEN) {
+    if (this.socket?.readyState !== SOCKET_OPEN) {
       return;
     }
 

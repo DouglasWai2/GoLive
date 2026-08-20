@@ -1,5 +1,5 @@
 import type { RemoteVideoStats } from "../../types";
-import { formatCodec, formatConnectionRoute, formatKbps } from "../../utils/sharePresets";
+import { formatCodec, formatConnectionRoute, formatKbps } from "@golive/core";
 
 type StreamStatsProps = {
   stats: RemoteVideoStats;

@@ -3,13 +3,16 @@
   "private": true,
   "workspaces": [
     "server",
-    "web"
+    "web",
+    "packages/core",
+    "mobile"
   ],
   "scripts": {
     "dev": "concurrently -n server,web -c cyan,green \"npm run dev -w server\" \"npm run dev -w web\"",
-    "build": "npm run build -w server && npm run build -w web",
-    "typecheck": "npm run typecheck -w server && npm run typecheck -w web",
-    "start": "npm run start -w server"
+    "build": "npm run build -w @golive/core && npm run build -w server && npm run build -w web",
+    "typecheck": "npm run typecheck -w @golive/core && npm run typecheck -w server && npm run typecheck -w web && npm run typecheck -w @golive/mobile",
+    "start": "npm run start -w server",
+    "dev:mobile": "npm run start -w @golive/mobile"
   },
   "devDependencies": {
     "concurrently": "^9.2.1"

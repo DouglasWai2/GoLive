@@ -1,6 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import type { Peer, RemoteVideoStats, ShareSettings, SocketStatus } from "../types";
-import { RoomSession } from "../services/roomSession";
+import { RoomSession } from "@golive/core";
+import type {
+  Peer,
+  PeerConnectionState,
+  RemoteVideoStats,
+  ShareSettings,
+  SocketStatus,
+} from "@golive/core";
+import { createSessionDeps } from "../services/sessionDeps";
 
 export function useRoom(
   roomId: string,
@@ -14,61 +21,66 @@ export function useRoom(
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [isStartingShare, setIsStartingShare] = useState(false);
   const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({});
-  const [connectionStates, setConnectionStates] = useState<Record<string, RTCPeerConnectionState>>({});
+  const [connectionStates, setConnectionStates] = useState<Record<string, PeerConnectionState>>({});
   const [remoteStats, setRemoteStats] = useState<Record<string, RemoteVideoStats | null>>({});
   const [error, setError] = useState("");
 
   const sessionRef = useRef<RoomSession | null>(null);
 
   useEffect(() => {
-    const session = new RoomSession({
-      onStatus: setStatus,
-      onPeers: setPeers,
-      onLocalStream: setLocalStream,
-      onIsStartingShare: setIsStartingShare,
-      onRemoteStream: (peerId, stream) => {
-        setRemoteStreams((current) => {
-          const next = { ...current };
+    const session = new RoomSession(
+      {
+        onStatus: setStatus,
+        onPeers: setPeers,
+        onLocalStream: (stream) => {
+          setLocalStream(stream as MediaStream | null);
+        },
+        onIsStartingShare: setIsStartingShare,
+        onRemoteStream: (peerId, stream) => {
+          setRemoteStreams((current) => {
+            const next = { ...current };
 
-          if (stream) {
-            next[peerId] = stream;
-          } else {
-            delete next[peerId];
-          }
+            if (stream) {
+              next[peerId] = stream as MediaStream;
+            } else {
+              delete next[peerId];
+            }
 
-          return next;
-        });
+            return next;
+          });
+        },
+        onConnectionState: (peerId, state) => {
+          setConnectionStates((current) => {
+            const next = { ...current };
+
+            if (state) {
+              next[peerId] = state;
+            } else {
+              delete next[peerId];
+            }
+
+            return next;
+          });
+        },
+        onRemoteStats: (peerId, stats) => {
+          setRemoteStats((current) => {
+            const next = { ...current };
+
+            if (stats) {
+              next[peerId] = stats;
+            } else {
+              delete next[peerId];
+            }
+
+            return next;
+          });
+        },
+        onError: setError,
+        onSessionRejected,
+        onSessionReplaced,
       },
-      onConnectionState: (peerId, state) => {
-        setConnectionStates((current) => {
-          const next = { ...current };
-
-          if (state) {
-            next[peerId] = state;
-          } else {
-            delete next[peerId];
-          }
-
-          return next;
-        });
-      },
-      onRemoteStats: (peerId, stats) => {
-        setRemoteStats((current) => {
-          const next = { ...current };
-
-          if (stats) {
-            next[peerId] = stats;
-          } else {
-            delete next[peerId];
-          }
-
-          return next;
-        });
-      },
-      onError: setError,
-      onSessionRejected,
-      onSessionReplaced,
-    });
+      createSessionDeps(),
+    );
 
     sessionRef.current = session;
 

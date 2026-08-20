@@ -1,3 +1,5 @@
+import type { RTCPeerConnection, RTCRtpSender, StatsReportLike } from "./types";
+
 export type IceRoute = {
   route: "TURN relay" | "Direct P2P via STUN" | "Direct P2P";
   localType: string | null;
@@ -8,31 +10,40 @@ export type IceRoute = {
   rtt: number | null;
 };
 
-function extractIceRoute(stats: RTCStatsReport): IceRoute | null {
-  let selectedPair: any = null;
+type AnyStat = Record<string, unknown>;
+
+function extractIceRoute(stats: StatsReportLike): IceRoute | null {
+  let selectedPair: AnyStat | null = null;
 
   /*
    * Preferred modern method:
    * transport -> selectedCandidatePairId
    */
   stats.forEach((report) => {
-    if (report.type === "transport" && report.selectedCandidatePairId) {
-      selectedPair = stats.get(report.selectedCandidatePairId);
+    const current = report as AnyStat;
+
+    if (
+      current.type === "transport" &&
+      typeof current.selectedCandidatePairId === "string"
+    ) {
+      selectedPair = stats.get(current.selectedCandidatePairId) ?? null;
     }
   });
 
   /*
-   * Fallback for browsers where the transport
+   * Fallback for platforms where the transport
    * stat doesn't expose selectedCandidatePairId.
    */
   if (!selectedPair) {
     stats.forEach((report) => {
+      const current = report as AnyStat;
+
       if (
-        report.type === "candidate-pair" &&
-        report.state === "succeeded" &&
-        report.nominated
+        current.type === "candidate-pair" &&
+        current.state === "succeeded" &&
+        current.nominated
       ) {
-        selectedPair = report;
+        selectedPair = current;
       }
     });
   }
@@ -41,11 +52,25 @@ function extractIceRoute(stats: RTCStatsReport): IceRoute | null {
     return null;
   }
 
-  const localCandidate = stats.get(selectedPair.localCandidateId) as any;
-  const remoteCandidate = stats.get(selectedPair.remoteCandidateId) as any;
+  const pair = selectedPair as AnyStat;
 
-  const localType = localCandidate?.candidateType ?? null;
-  const remoteType = remoteCandidate?.candidateType ?? null;
+  const localCandidate =
+    typeof pair.localCandidateId === "string"
+      ? stats.get(pair.localCandidateId)
+      : undefined;
+  const remoteCandidate =
+    typeof pair.remoteCandidateId === "string"
+      ? stats.get(pair.remoteCandidateId)
+      : undefined;
+
+  const localType =
+    typeof localCandidate?.candidateType === "string"
+      ? localCandidate.candidateType
+      : null;
+  const remoteType =
+    typeof remoteCandidate?.candidateType === "string"
+      ? remoteCandidate.candidateType
+      : null;
 
   const usingTurn = localType === "relay" || remoteType === "relay";
 
@@ -62,12 +87,20 @@ function extractIceRoute(stats: RTCStatsReport): IceRoute | null {
     route,
     localType,
     remoteType,
-    protocol: localCandidate?.protocol ?? null,
-    localAddress: localCandidate?.address ?? null,
-    remoteAddress: remoteCandidate?.address ?? null,
-    rtt: typeof selectedPair.currentRoundTripTime === "number"
-      ? selectedPair.currentRoundTripTime
-      : null,
+    protocol:
+      typeof pair.protocol === "string" ? pair.protocol : null,
+    localAddress:
+      typeof localCandidate?.address === "string"
+        ? localCandidate.address
+        : null,
+    remoteAddress:
+      typeof remoteCandidate?.address === "string"
+        ? remoteCandidate.address
+        : null,
+    rtt:
+      typeof pair.currentRoundTripTime === "number"
+        ? (pair.currentRoundTripTime as number)
+        : null,
   };
 }
 
@@ -120,31 +153,31 @@ export type PeerMediaStats = {
   iceRoute: IceRoute | null;
 };
 
-function extractInboundVideo(stats: RTCStatsReport): InboundVideoSample | null {
+function extractInboundVideo(
+  stats: StatsReportLike,
+): InboundVideoSample | null {
   let sample: InboundVideoSample | null = null;
 
   stats.forEach((report) => {
-    const rtp = report as any;
+    const rtp = report as AnyStat;
 
-    if (
-      report.type === "inbound-rtp" &&
-      rtp.kind === "video"
-    ) {
+    if (rtp.type === "inbound-rtp" && rtp.kind === "video") {
       let codecMimeType: string | null = null;
 
       if (typeof rtp.codecId === "string") {
-        const codecReport = stats.get(rtp.codecId) as any;
-        codecMimeType = typeof codecReport?.mimeType === "string"
-          ? codecReport.mimeType
-          : null;
+        const codecReport = stats.get(rtp.codecId);
+        codecMimeType =
+          typeof codecReport?.mimeType === "string"
+            ? (codecReport.mimeType as string)
+            : null;
       }
 
       sample = {
         timestamp: Date.now(),
-        width: typeof rtp.frameWidth === "number" ? rtp.frameWidth : null,
-        height: typeof rtp.frameHeight === "number" ? rtp.frameHeight : null,
-        fps: typeof rtp.framesPerSecond === "number" ? rtp.framesPerSecond : null,
-        bytes: typeof rtp.bytesReceived === "number" ? rtp.bytesReceived : 0,
+        width: typeof rtp.frameWidth === "number" ? (rtp.frameWidth as number) : null,
+        height: typeof rtp.frameHeight === "number" ? (rtp.frameHeight as number) : null,
+        fps: typeof rtp.framesPerSecond === "number" ? (rtp.framesPerSecond as number) : null,
+        bytes: typeof rtp.bytesReceived === "number" ? (rtp.bytesReceived as number) : 0,
         codecMimeType,
       };
     }
@@ -205,7 +238,7 @@ export async function configureVideoSender(
 ) {
   const parameters = sender.getParameters();
 
-  if (!parameters.encodings.length) {
+  if (!parameters.encodings?.length) {
     console.warn("Video sender has no encodings yet");
     return;
   }

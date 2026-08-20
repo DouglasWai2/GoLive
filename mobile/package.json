@@ -1,0 +1,27 @@
+{
+  "name": "@golive/mobile",
+  "version": "0.1.0",
+  "private": true,
+  "main": "index.ts",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@config-plugins/react-native-webrtc": "^15.0.2",
+    "@golive/core": "0.1.0",
+    "@react-native-async-storage/async-storage": "2.2.0",
+    "base-64": "^1.0.0",
+    "expo": "~57.0.14",
+    "expo-build-properties": "~57.0.12",
+    "expo-dev-client": "~57.0.13",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "react-native": "0.86.2",
+    "react-native-webrtc": "^124.0.8"
+  },
+  "devDependencies": {
+    "@types/base-64": "^1.0.2"
+  }
+}

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { ScreenIcon } from "../icons";
 import type { Peer, ShareSettings, SocketStatus } from "../../types";
-import { formatBitrate, formatResolution } from "../../utils/sharePresets";
+import { formatBitrate, formatResolution } from "@golive/core";
 import { ShareSettingsPanel } from "./ShareSettingsPanel";
 
 type ControlDockProps = {

@@ -5,7 +5,7 @@ import {
   DEFAULT_SHARE_SETTINGS,
   frameRateOptions,
   resolutionOptions,
-} from "../../utils/sharePresets";
+} from "@golive/core";
 import { ScreenIcon } from "../icons";
 
 type ShareSettingsPanelProps = {

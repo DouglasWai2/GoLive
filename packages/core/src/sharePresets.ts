@@ -1,4 +1,4 @@
-import type { ShareSettings } from "../types";
+import type { ShareSettings } from "./types";
 
 export type ResolutionOption = {
   label: string;

@@ -1,0 +1,39 @@
+{
+  "expo": {
+    "name": "GoLive",
+    "slug": "golive-mobile",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "plugins": [
+      [
+        "@config-plugins/react-native-webrtc",
+        {
+          "cameraPermission": "Allow GoLive to use your camera.",
+          "microphonePermission": "Allow GoLive to use your microphone."
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "minSdkVersion": 24,
+            "usesCleartextTraffic": true
+          }
+        }
+      ],
+      "./plugins/withWebRTCMediaProjection"
+    ],
+    "android": {
+      "package": "com.golive.mobile",
+      "permissions": [
+        "android.permission.INTERNET",
+        "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION"
+      ]
+    }
+  }
+}

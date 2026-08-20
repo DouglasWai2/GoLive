@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useRoom } from "../hooks/useRoom";
-import type { ShareSettings } from "../types";
-import { formatBitrate, formatResolution } from "../utils/sharePresets";
+import type { ShareSettings } from "@golive/core";
+import { formatBitrate, formatResolution } from "@golive/core";
 import { RoomHeader } from "./room/RoomHeader";
 import { ErrorBanner } from "./room/ErrorBanner";
 import { VideoStage } from "./room/VideoStage";

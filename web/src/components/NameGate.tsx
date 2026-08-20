@@ -1,6 +1,7 @@
 import { FormEvent, useState } from "react";
 import { Brand } from "./Brand";
-import { joinRoom } from "../utils/signaling";
+import { joinRoom } from "@golive/core";
+import { configuredBaseUrl } from "../services/sessionDeps";
 import { saveSession } from "../utils/session";
 
 type NameGateProps = {
@@ -22,7 +23,7 @@ export function NameGate({ roomId, onJoin }: NameGateProps) {
     setError("");
 
     try {
-      const { token } = await joinRoom(roomId, trimmed);
+      const { token } = await joinRoom(configuredBaseUrl(), roomId, trimmed);
       localStorage.setItem("golive-name", trimmed);
       saveSession(roomId, trimmed, token);
       onJoin(trimmed, token);

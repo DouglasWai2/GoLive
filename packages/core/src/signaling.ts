@@ -1,4 +1,6 @@
-export const fallbackIceServers: RTCIceServer[] = [
+import type { IceServer } from "./types";
+
+export const fallbackIceServers: IceServer[] = [
   {
     urls: [
       "stun:stun.cloudflare.com:3478",
@@ -7,12 +9,10 @@ export const fallbackIceServers: RTCIceServer[] = [
   },
 ];
 
-function signalingHttpUrl(path: string): string {
-  const configuredUrl = import.meta.env.VITE_SIGNALING_URL as string | undefined;
+export function signalingHttpUrl(baseUrl: string, path: string): string {
+  const url = new URL(baseUrl);
 
-  const url = new URL(configuredUrl ?? window.location.origin);
-
-  // In case VITE_SIGNALING_URL was configured as ws/wss.
+  // In case the configured URL was provided as ws/wss.
   if (url.protocol === "ws:") {
     url.protocol = "http:";
   }
@@ -28,8 +28,8 @@ function signalingHttpUrl(path: string): string {
   return url.toString();
 }
 
-export function websocketUrl(): string {
-  const url = new URL(signalingHttpUrl("/ws"));
+export function websocketUrl(baseUrl: string): string {
+  const url = new URL(signalingHttpUrl(baseUrl, "/ws"));
 
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
 
@@ -47,10 +47,11 @@ export type JoinRoomResult = {
 };
 
 export async function joinRoom(
+  baseUrl: string,
   roomId: string,
   name: string,
 ): Promise<JoinRoomResult> {
-  const response = await fetch(signalingHttpUrl("/room"), {
+  const response = await fetch(signalingHttpUrl(baseUrl, "/room"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -65,8 +66,11 @@ export async function joinRoom(
   return (await response.json()) as JoinRoomResult;
 }
 
-export async function getIceServers(token: string): Promise<RTCIceServer[]> {
-  const response = await fetch(signalingHttpUrl("/turn-credentials"), {
+export async function getIceServers(
+  baseUrl: string,
+  token: string,
+): Promise<IceServer[]> {
+  const response = await fetch(signalingHttpUrl(baseUrl, "/turn-credentials"), {
     headers: {
       Authorization: `Bearer ${token}`,
     },
@@ -76,7 +80,7 @@ export async function getIceServers(token: string): Promise<RTCIceServer[]> {
     throw new Error(`Failed to get TURN credentials: ${response.status}`);
   }
 
-  const data = (await response.json()) as { iceServers?: RTCIceServer[] };
+  const data = (await response.json()) as { iceServers?: IceServer[] };
 
   if (!Array.isArray(data.iceServers)) {
     throw new Error("TURN credentials response did not contain iceServers");
