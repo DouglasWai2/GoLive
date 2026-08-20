@@ -124,14 +124,12 @@ button.active:hover {
 .cinema.controls-hidden { cursor: none; }
 .cinema-meta { position: absolute; left: 18px; bottom: 18px; background: rgba(16,16,14,.88); backdrop-filter: blur(8px); min-height: 38px; padding: 0 13px; display: flex; align-items: center; gap: 9px; font-size: 11px; transition: opacity .2s; }
 .cinema-meta strong { font-size: 12px; }.cinema-meta small { color: #7e7e76; border-left: 1px solid #42423d; padding-left: 9px; font-family: ui-monospace, monospace; font-size: 9px; text-transform: uppercase; letter-spacing: .08em; }
-.cinema-controls { position: absolute; top: 18px; right: 18px; display: flex; gap: 10px; transition: opacity .2s; }
-.cinema-controls .icon-button { background: rgba(16,16,14,.88); backdrop-filter: blur(8px); }
-.cinema-controls .icon-button.muted { opacity: .55; }
+.cinema-controls { position: absolute; right: 18px; bottom: 18px; display: flex; align-items: center; gap: 10px; transition: opacity .2s; }
+.cinema-controls .icon-button, .tile-controls .icon-button { background: rgba(16,16,14,.88); backdrop-filter: blur(8px); }
+.cinema-controls .icon-button.muted, .tile-controls .icon-button.muted { opacity: .55; }
+.tile-controls { position: absolute; right: 12px; bottom: 12px; display: flex; align-items: center; gap: 10px; }
 .volume-control { position: relative; display: inline-flex; }
 .volume-control.is-muted .icon-button { opacity: .55; }
-.video-tile .volume-control, .cinema .volume-control { position: absolute; right: 12px; bottom: 12px; }
-.video-tile .volume-control .icon-button, .cinema .volume-control .icon-button { background: rgba(16,16,14,.88); backdrop-filter: blur(8px); }
-.cinema .volume-control { right: 18px; bottom: 18px; }
 .volume-popover { position: absolute; top: calc(100% + 8px); right: 0; display: block; background: rgba(16,16,14,.94); backdrop-filter: blur(8px); border: 1px solid #3b3b36; border-radius: 6px; padding: 10px 12px; box-shadow: 0 18px 45px rgba(0,0,0,.45); z-index: 20; }
 .video-tile .volume-popover, .cinema .volume-popover { top: auto; bottom: calc(100% + 8px); }
 .volume-popover input[type="range"] { width: 130px; margin: 0; accent-color: var(--acid); cursor: pointer; }

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { FullscreenExitIcon, FullscreenIcon, ScreenIcon, StatsIcon, UsersIcon } from "../icons";
+import { FullscreenExitIcon, ScreenIcon, UsersIcon } from "../icons";
 import { VideoTile } from "../VideoTile";
 import { StreamStats } from "./StreamStats";
 import type { Peer, RemoteVideoStats } from "../../types";
@@ -222,15 +222,6 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
         </div>
         <div className="stage-actions">
           <div className="people-count"><UsersIcon /><strong>{peers.length + 1}</strong> in room</div>
-          {cinemaStream && (
-            <>
-              <StatsButton statsEnabled={statsEnabled} toggleStats={toggleStats} />
-              <button className="icon-button" onClick={toggleFullscreen}>
-                {isFullscreen ? <FullscreenExitIcon /> : <FullscreenIcon />}
-                {isFullscreen ? "Exit fullscreen" : "Fullscreen"}
-              </button>
-            </>
-          )}
         </div>
       </div>
 
@@ -245,8 +236,11 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
             stats={statsEnabled ? remoteStats[peer.id] ?? null : null}
             volume={volume}
             muted={muted}
+            statsEnabled={statsEnabled}
             onVolumeChange={changeVolume}
             onToggleMute={toggleMute}
+            onToggleStats={toggleStats}
+            onFullscreen={() => void toggleFullscreen()}
           />
         ))}
         {!localStream && remoteTiles.length === 0 && (
@@ -272,16 +266,16 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
         {statsEnabled && cinemaStats && <StreamStats stats={cinemaStats} />}
         <div className="cinema-controls">
           <StatsButton statsEnabled={statsEnabled} toggleStats={toggleStats} />
+          <VolumeControl
+            volume={volume}
+            muted={muted}
+            onVolumeChange={changeVolume}
+            onToggleMute={toggleMute}
+          />
           <button className="icon-button" onClick={() => void exitFullscreen(videoFullscreenRef.current ? cinemaVideoRef.current ?? undefined : undefined)} title="Exit fullscreen">
             <FullscreenExitIcon /> Exit fullscreen
           </button>
         </div>
-        <VolumeControl
-          volume={volume}
-          muted={muted}
-          onVolumeChange={changeVolume}
-          onToggleMute={toggleMute}
-        />
       </div>
     </section>
   );
