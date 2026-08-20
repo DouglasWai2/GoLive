@@ -17,8 +17,6 @@ export async function buildApp() {
       perMessageDeflate: false,
     },
   });
-  console.log(env.origin);
-
   await app.register(cors, {
     origin: env.origin,
   });

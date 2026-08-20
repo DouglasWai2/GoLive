@@ -1,12 +1,18 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Pressable, ScrollView, Share, StyleSheet, Text, View } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { buildInviteUrl, createInvite } from "@golive/core";
 import type { ShareSettings } from "@golive/core";
 import { useRoom } from "../hooks/useRoom";
 import { VideoTile } from "../components/VideoTile";
 import { ShareSheet } from "../components/ShareSheet";
 import { ControlDock } from "../components/ControlDock";
+import { FullscreenView } from "../components/FullscreenView";
 import { INVITE_BASE_URL, SIGNALING_URL } from "../config";
+
+const STATS_STORAGE_KEY = "golive.stats.enabled";
+const VOLUME_STORAGE_KEY = "golive.volume";
+const MUTED_STORAGE_KEY = "golive.muted";
 
 type RoomScreenProps = {
   roomId: string;
@@ -27,6 +33,10 @@ export function RoomScreen({
 }: RoomScreenProps) {
   const [shareVisible, setShareVisible] = useState(false);
   const [isInviting, setIsInviting] = useState(false);
+  const [volume, setVolume] = useState(1);
+  const [muted, setMuted] = useState(false);
+  const [statsEnabled, setStatsEnabled] = useState(true);
+  const [fullscreenPeerId, setFullscreenPeerId] = useState<string | null>(null);
 
   const {
     status,
@@ -34,12 +44,58 @@ export function RoomScreen({
     localStream,
     isStartingShare,
     remoteStreams,
+    remoteStats,
     connectionStates,
     error,
     setError,
     startSharing,
     stopSharing,
   } = useRoom(roomId, name, token, onSessionRejected, onSessionReplaced);
+
+  useEffect(() => {
+    void (async () => {
+      const [statsRaw, volumeRaw, mutedRaw] = await Promise.all([
+        AsyncStorage.getItem(STATS_STORAGE_KEY),
+        AsyncStorage.getItem(VOLUME_STORAGE_KEY),
+        AsyncStorage.getItem(MUTED_STORAGE_KEY),
+      ]);
+
+      if (statsRaw !== null) setStatsEnabled(statsRaw !== "0");
+
+      const storedVolume = Number(volumeRaw);
+      if (Number.isFinite(storedVolume) && storedVolume >= 0 && storedVolume <= 1) {
+        setVolume(storedVolume);
+      }
+
+      if (mutedRaw !== null) setMuted(mutedRaw === "1");
+    })();
+  }, []);
+
+  const changeVolume = (next: number) => {
+    setVolume(next);
+    AsyncStorage.setItem(VOLUME_STORAGE_KEY, String(next)).catch(() => {});
+
+    if (next > 0) {
+      setMuted(false);
+      AsyncStorage.setItem(MUTED_STORAGE_KEY, "0").catch(() => {});
+    }
+  };
+
+  const toggleMute = () => {
+    setMuted((current) => {
+      const next = !current;
+      AsyncStorage.setItem(MUTED_STORAGE_KEY, next ? "1" : "0").catch(() => {});
+      return next;
+    });
+  };
+
+  const toggleStats = () => {
+    setStatsEnabled((current) => {
+      const next = !current;
+      AsyncStorage.setItem(STATS_STORAGE_KEY, next ? "1" : "0").catch(() => {});
+      return next;
+    });
+  };
 
   const viewerEntries = Object.entries(remoteStreams);
 
@@ -123,11 +179,19 @@ export function RoomScreen({
               peers.find((peer) => peer.id === peerId)?.name ?? peerId.slice(0, 4)
             }
             state={connectionStates[peerId] ?? null}
+            stats={remoteStats[peerId] ?? null}
+            statsEnabled={statsEnabled}
+            volume={volume}
+            muted={muted}
+            onVolumeChange={changeVolume}
+            onToggleMute={toggleMute}
+            onToggleStats={toggleStats}
+            onFullscreen={() => setFullscreenPeerId(peerId)}
           />
         ))}
 
         {localStream ? (
-          <VideoTile stream={localStream} name={name} small={viewerEntries.length > 0} />
+          <VideoTile stream={localStream} name={name} local small={viewerEntries.length > 0} />
         ) : null}
       </ScrollView>
 
@@ -146,6 +210,24 @@ export function RoomScreen({
         isStarting={isStartingShare}
         onStart={handleStart}
         onCancel={() => setShareVisible(false)}
+      />
+
+      <FullscreenView
+        visible={fullscreenPeerId !== null}
+        stream={fullscreenPeerId ? remoteStreams[fullscreenPeerId] ?? null : null}
+        name={
+          peers.find((peer) => peer.id === fullscreenPeerId)?.name ??
+          fullscreenPeerId?.slice(0, 4) ??
+          ""
+        }
+        stats={fullscreenPeerId ? remoteStats[fullscreenPeerId] ?? null : null}
+        statsEnabled={statsEnabled}
+        volume={volume}
+        muted={muted}
+        onVolumeChange={changeVolume}
+        onToggleMute={toggleMute}
+        onToggleStats={toggleStats}
+        onClose={() => setFullscreenPeerId(null)}
       />
     </View>
   );

@@ -8,7 +8,7 @@ export const env = {
   },
 
   get origin(): string | undefined {
-    return process.env.ORIGIN;
+    return process.env.ORIGIN ?? "http://localhost:3000";
   },
 
   get turnKeyId(): string | undefined {

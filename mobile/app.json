@@ -24,6 +24,12 @@
           }
         }
       ],
+      [
+        "expo-screen-orientation",
+        {
+          "initialOrientation": "PORTRAIT_UP"
+        }
+      ],
       "./plugins/withWebRTCMediaProjection"
     ],
     "android": {

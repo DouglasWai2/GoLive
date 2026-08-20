@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { createRoomController } from "../controllers/room.controller.js";
 import { RoomService } from "../services/room.service.js";
+import { env } from "../config/env.js";
 
 export function registerRoomRoutes(app: FastifyInstance, roomService: RoomService): void {
   const controller = createRoomController(roomService, app);
