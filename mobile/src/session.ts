@@ -4,6 +4,7 @@ import { decode as decodeBase64 } from "base-64";
 export type StoredSession = {
   name: string;
   token: string;
+  inviteToken?: string;
 };
 
 const PREFIX = "golive-session:";
@@ -16,8 +17,11 @@ export async function saveSession(
   roomId: string,
   name: string,
   token: string,
+  inviteToken?: string,
 ): Promise<void> {
-  await AsyncStorage.setItem(sessionKey(roomId), JSON.stringify({ name, token }));
+  const session: StoredSession = inviteToken ? { name, token, inviteToken } : { name, token };
+
+  await AsyncStorage.setItem(sessionKey(roomId), JSON.stringify(session));
 }
 
 export async function loadSession(roomId: string): Promise<StoredSession | null> {
@@ -37,7 +41,12 @@ export async function loadSession(roomId: string): Promise<StoredSession | null>
       return null;
     }
 
-    return { name: parsed.name, token: parsed.token };
+    const inviteToken =
+      typeof parsed.inviteToken === "string" && !isTokenExpired(parsed.inviteToken)
+        ? parsed.inviteToken
+        : undefined;
+
+    return { name: parsed.name, token: parsed.token, inviteToken };
   } catch {
     return null;
   }

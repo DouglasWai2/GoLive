@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { roomFromPath } from "./utils/room";
+import { useEffect, useState } from "react";
+import { roomFromPath, inviteTokenFromUrl, clearInviteTokenFromUrl } from "./utils/room";
 import { Landing } from "./components/Landing";
 import { NameGate } from "./components/NameGate";
 import { Room } from "./components/Room";
@@ -13,6 +13,11 @@ type Join = {
 
 export default function App() {
   const roomId = roomFromPath();
+  const [inviteToken, setInviteToken] = useState<string | null>(() => {
+    if (!roomId) return null;
+
+    return loadSession(roomId)?.inviteToken ?? inviteTokenFromUrl();
+  });
   const [join, setJoin] = useState<Join | null>(() => {
     if (!roomId) return null;
 
@@ -22,12 +27,20 @@ export default function App() {
   });
   const [replaced, setReplaced] = useState(false);
 
+  useEffect(() => {
+    if (join) clearInviteTokenFromUrl();
+  }, [join]);
+
   if (!roomId) return <Landing />;
 
   const rejectSession = () => {
     clearSession(roomId);
     setJoin(null);
     setReplaced(false);
+  };
+
+  const handleJoin = (name: string, token: string) => {
+    setJoin({ name, token });
   };
 
   if (replaced && join) {
@@ -49,7 +62,14 @@ export default function App() {
     );
   }
 
-  if (!join) return <NameGate roomId={roomId} onJoin={(name, token) => setJoin({ name, token })} />;
+  if (!join)
+    return (
+      <NameGate
+        roomId={roomId}
+        inviteToken={inviteToken}
+        onJoin={handleJoin}
+      />
+    );
 
   return (
     <Room

@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { parseInviteUrl } from "@golive/core";
 import { createRoomId } from "../utils/roomId";
 
 type LandingScreenProps = {
-  onJoinRoom: (roomId: string) => void;
+  onJoinRoom: (roomId: string, inviteToken?: string) => void;
 };
 
 export function LandingScreen({ onJoinRoom }: LandingScreenProps) {
@@ -11,18 +12,15 @@ export function LandingScreen({ onJoinRoom }: LandingScreenProps) {
   const [error, setError] = useState("");
 
   const join = () => {
-    const trimmed = input.trim();
-    const match = trimmed.match(/(?:\/room\/)([a-zA-Z0-9_-]{1,64})/);
+    const invite = parseInviteUrl(input.trim());
 
-    const roomId = match ? match[1] : /^[a-zA-Z0-9_-]{1,64}$/.test(trimmed) ? trimmed : null;
-
-    if (!roomId) {
-      setError("Enter a room code or a GoLive link.");
+    if (!invite) {
+      setError("Paste a full GoLive invite link.");
       return;
     }
 
     setError("");
-    onJoinRoom(roomId);
+    onJoinRoom(invite.roomId, invite.inviteToken);
   };
 
   return (
@@ -41,7 +39,7 @@ export function LandingScreen({ onJoinRoom }: LandingScreenProps) {
           style={styles.input}
           value={input}
           onChangeText={setInput}
-          placeholder="Room code or invite link"
+          placeholder="Paste a GoLive invite link"
           placeholderTextColor="#6f6f68"
           autoCapitalize="none"
           autoCorrect={false}

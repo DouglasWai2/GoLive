@@ -22,6 +22,14 @@ export default defineConfig({
                     }
                 },
             },
+            "/invite": {
+                target: "http://localhost:3000",
+                bypass: function (req) {
+                    if (req.method !== "POST") {
+                        return req.url;
+                    }
+                },
+            },
             "/turn-credentials": {
                 target: "http://localhost:3000",
             },

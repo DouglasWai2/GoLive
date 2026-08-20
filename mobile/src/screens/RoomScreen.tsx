@@ -1,10 +1,12 @@
 import { useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable, ScrollView, Share, StyleSheet, Text, View } from "react-native";
+import { buildInviteUrl, createInvite } from "@golive/core";
 import type { ShareSettings } from "@golive/core";
 import { useRoom } from "../hooks/useRoom";
 import { VideoTile } from "../components/VideoTile";
 import { ShareSheet } from "../components/ShareSheet";
 import { ControlDock } from "../components/ControlDock";
+import { INVITE_BASE_URL, SIGNALING_URL } from "../config";
 
 type RoomScreenProps = {
   roomId: string;
@@ -24,6 +26,7 @@ export function RoomScreen({
   onSessionReplaced,
 }: RoomScreenProps) {
   const [shareVisible, setShareVisible] = useState(false);
+  const [isInviting, setIsInviting] = useState(false);
 
   const {
     status,
@@ -49,6 +52,21 @@ export function RoomScreen({
     stopSharing();
   };
 
+  const handleInvite = async () => {
+    setIsInviting(true);
+    setError("");
+
+    try {
+      const inviteToken = await createInvite(SIGNALING_URL, roomId, token);
+      const link = buildInviteUrl(INVITE_BASE_URL, roomId, inviteToken);
+      await Share.share({ message: link });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not create an invite link.");
+    } finally {
+      setIsInviting(false);
+    }
+  };
+
   return (
     <View style={styles.shell}>
       <View style={styles.header}>
@@ -61,6 +79,13 @@ export function RoomScreen({
           <Text style={styles.statusText}>
             {status === "connected" ? "connected" : status === "connecting" ? "connecting" : status}
           </Text>
+          <Pressable
+            style={[styles.inviteButton, isInviting && styles.inviteButtonDisabled]}
+            disabled={isInviting}
+            onPress={handleInvite}
+          >
+            <Text style={styles.inviteText}>{isInviting ? "..." : "Invite"}</Text>
+          </Pressable>
           <Pressable style={styles.leaveButton} onPress={onLeave}>
             <Text style={styles.leaveText}>Leave</Text>
           </Pressable>
@@ -184,6 +209,21 @@ const styles = StyleSheet.create({
   leaveText: {
     color: "#d5d4cd",
     fontSize: 13,
+  },
+  inviteButton: {
+    borderWidth: 1,
+    borderColor: "#3d3d36",
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  inviteButtonDisabled: {
+    opacity: 0.5,
+  },
+  inviteText: {
+    color: "#ffb13b",
+    fontSize: 13,
+    fontWeight: "600",
   },
   errorBanner: {
     flexDirection: "row",

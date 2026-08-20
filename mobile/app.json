@@ -6,6 +6,7 @@
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "newArchEnabled": true,
+    "scheme": "golive",
     "plugins": [
       [
         "@config-plugins/react-native-webrtc",
@@ -33,6 +34,14 @@
         "android.permission.RECORD_AUDIO",
         "android.permission.FOREGROUND_SERVICE",
         "android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION"
+      ],
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "category": ["DEFAULT", "BROWSABLE"],
+          "data": [{ "scheme": "https", "host": "golive.example" }]
+        }
       ]
     }
   }

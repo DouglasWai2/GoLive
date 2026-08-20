@@ -44,7 +44,7 @@ export function Room({
 
   return (
     <main className="room-shell">
-      <RoomHeader roomId={roomId} status={room.status} onLeave={onLeave} />
+      <RoomHeader roomId={roomId} token={token} status={room.status} onLeave={onLeave} />
 
       {room.error && (
         <ErrorBanner message={room.error} onDismiss={() => room.setError("")} />

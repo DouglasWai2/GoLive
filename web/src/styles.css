@@ -67,6 +67,7 @@ button { cursor: pointer; }
 .join-strip input { flex: 1; border-right: 0; }.join-strip input:focus, .name-card input:focus { border-color: #84847a; }
 .join-strip button { border: 0; background: var(--paper); color: var(--ink); padding: 0 20px; font-weight: 700; }
 .join-strip button span { color: #707069; margin-left: 14px; }
+.join-hint { color: #ff6b5e; font-size: 12px; margin: 12px 0 0; }
 
 .gate-shell { display: grid; place-items: center; padding: 30px; position: relative; background: radial-gradient(circle at 50% 45%, #1c1c18, var(--ink) 47%); }
 .gate-shell > .brand { position: absolute; left: 5vw; top: 29px; }
@@ -90,6 +91,7 @@ button { cursor: pointer; }
 .icon-button:hover { border-color: #5f5f57; color: var(--paper); }
 .leave-button { color: #ffb0a7; background: transparent; border: 1px solid rgba(255,93,74,.35); border-radius: 4px; height: 38px; padding: 0 13px; font-size: 12px; }
 .leave-button:hover { border-color: rgba(255,93,74,.65); color: #ffcfc9; }
+.invite-error { color: #ff6b5e; font-size: 12px; }
 .error-banner { margin: 14px 4vw 0; padding: 12px 15px; border: 1px solid rgba(255,93,74,.35); background: rgba(255,93,74,.08); color: #ffb0a7; font-size: 13px; display: flex; justify-content: space-between; }
 .error-banner button { border: 0; background: none; color: inherit; font-size: 18px; }
 

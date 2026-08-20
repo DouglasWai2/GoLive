@@ -26,8 +26,12 @@ export {
   websocketUrl,
   joinRoom,
   getIceServers,
+  createInvite,
+  verifyInvite,
+  buildInviteUrl,
+  parseInviteUrl,
 } from "./signaling";
-export type { JoinRoomResult } from "./signaling";
+export type { JoinRoomResult, InviteLink } from "./signaling";
 export {
   getSelectedIceRoute,
   logSelectedIceRoute,

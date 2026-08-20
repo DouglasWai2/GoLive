@@ -9,18 +9,25 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { joinRoom } from "@golive/core";
+import { joinRoom, verifyInvite } from "@golive/core";
 import { SIGNALING_URL } from "../config";
 import { saveSession } from "../session";
 
 type NameGateScreenProps = {
   roomId: string;
+  inviteToken?: string;
   initialName: string;
   onBack: () => void;
   onJoined: (name: string, token: string) => void;
 };
 
-export function NameGateScreen({ roomId, initialName, onBack, onJoined }: NameGateScreenProps) {
+export function NameGateScreen({
+  roomId,
+  inviteToken,
+  initialName,
+  onBack,
+  onJoined,
+}: NameGateScreenProps) {
   const [name, setName] = useState(initialName);
   const [isJoining, setIsJoining] = useState(false);
   const [error, setError] = useState("");
@@ -37,8 +44,11 @@ export function NameGateScreen({ roomId, initialName, onBack, onJoined }: NameGa
     setError("");
 
     try {
-      const { token } = await joinRoom(SIGNALING_URL, roomId, trimmed);
-      await saveSession(roomId, trimmed, token);
+      const { token } = inviteToken
+        ? await verifyInvite(SIGNALING_URL, roomId, trimmed, inviteToken)
+        : await joinRoom(SIGNALING_URL, roomId, trimmed);
+
+      await saveSession(roomId, trimmed, token, inviteToken);
       onJoined(trimmed, token);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not join the room.");

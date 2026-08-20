@@ -1,15 +1,16 @@
 import { FormEvent, useState } from "react";
 import { Brand } from "./Brand";
-import { joinRoom } from "@golive/core";
+import { joinRoom, verifyInvite } from "@golive/core";
 import { configuredBaseUrl } from "../services/sessionDeps";
 import { saveSession } from "../utils/session";
 
 type NameGateProps = {
   roomId: string;
+  inviteToken?: string | null;
   onJoin: (name: string, token: string) => void;
 };
 
-export function NameGate({ roomId, onJoin }: NameGateProps) {
+export function NameGate({ roomId, inviteToken = null, onJoin }: NameGateProps) {
   const [name, setName] = useState(() => localStorage.getItem("golive-name") ?? "");
   const [error, setError] = useState("");
   const [joining, setJoining] = useState(false);
@@ -23,12 +24,18 @@ export function NameGate({ roomId, onJoin }: NameGateProps) {
     setError("");
 
     try {
-      const { token } = await joinRoom(configuredBaseUrl(), roomId, trimmed);
+      const { token } = inviteToken
+        ? await verifyInvite(configuredBaseUrl(), roomId, trimmed, inviteToken)
+        : await joinRoom(configuredBaseUrl(), roomId, trimmed);
       localStorage.setItem("golive-name", trimmed);
-      saveSession(roomId, trimmed, token);
+      saveSession(roomId, trimmed, token, inviteToken ?? undefined);
       onJoin(trimmed, token);
     } catch (caught) {
-      setError("Could not enter the room. Try again.");
+      setError(
+        inviteToken
+          ? "This invite is invalid or has expired."
+          : "This room requires an invite link to join.",
+      );
     } finally {
       setJoining(false);
     }

@@ -4,7 +4,8 @@ import { Brand } from "./Brand";
 import { createRoomId, goToRoom, roomTargetFromInput } from "../utils/room";
 
 export function Landing() {
-  const [roomCode, setRoomCode] = useState("");
+  const [inviteLink, setInviteLink] = useState("");
+  const [hint, setHint] = useState("");
 
   const createRoom = () => {
     goToRoom(createRoomId());
@@ -12,8 +13,9 @@ export function Landing() {
 
   const joinRoom = (event: FormEvent) => {
     event.preventDefault();
-    const target = roomTargetFromInput(roomCode);
+    const target = roomTargetFromInput(inviteLink);
     if (target) window.location.assign(target);
+    else setHint("Paste a full invite link to join a room.");
   };
 
   return (
@@ -63,17 +65,18 @@ export function Landing() {
       <section className="join-strip">
         <div>
           <span className="step-number">02</span>
-          <div><strong>Already invited?</strong><small>Paste a room code or invite link.</small></div>
+          <div><strong>Already invited?</strong><small>Paste an invite link to join a room.</small></div>
         </div>
         <form onSubmit={joinRoom}>
           <input
-            value={roomCode}
-            onChange={(event) => setRoomCode(event.target.value)}
-            placeholder="Room code"
-            aria-label="Room code or invite link"
+            value={inviteLink}
+            onChange={(event) => setInviteLink(event.target.value)}
+            placeholder="Invite link"
+            aria-label="Invite link"
           />
           <button type="submit">Join room <span>→</span></button>
         </form>
+        {hint && <p className="join-hint">{hint}</p>}
       </section>
     </main>
   );

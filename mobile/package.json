@@ -16,6 +16,7 @@
     "expo": "~57.0.14",
     "expo-build-properties": "~57.0.12",
     "expo-dev-client": "~57.0.13",
+    "expo-linking": "~57.0.7",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native": "0.86.2",

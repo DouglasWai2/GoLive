@@ -1,6 +1,7 @@
 export type StoredSession = {
   name: string;
   token: string;
+  inviteToken?: string;
 };
 
 const PREFIX = "golive-session:";
@@ -9,8 +10,17 @@ function sessionKey(roomId: string): string {
   return `${PREFIX}${roomId}`;
 }
 
-export function saveSession(roomId: string, name: string, token: string): void {
-  localStorage.setItem(sessionKey(roomId), JSON.stringify({ name, token }));
+export function saveSession(
+  roomId: string,
+  name: string,
+  token: string,
+  inviteToken?: string,
+): void {
+  const session: StoredSession = inviteToken
+    ? { name, token, inviteToken }
+    : { name, token };
+
+  localStorage.setItem(sessionKey(roomId), JSON.stringify(session));
 }
 
 export function loadSession(roomId: string): StoredSession | null {
@@ -30,7 +40,12 @@ export function loadSession(roomId: string): StoredSession | null {
       return null;
     }
 
-    return { name: parsed.name, token: parsed.token };
+    const inviteToken =
+      typeof parsed.inviteToken === "string" && !isTokenExpired(parsed.inviteToken)
+        ? parsed.inviteToken
+        : undefined;
+
+    return { name: parsed.name, token: parsed.token, inviteToken };
   } catch {
     return null;
   }
