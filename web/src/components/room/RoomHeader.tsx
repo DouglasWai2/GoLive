@@ -6,9 +6,10 @@ import type { SocketStatus } from "../../types";
 type RoomHeaderProps = {
   roomId: string;
   status: SocketStatus;
+  onLeave: () => void;
 };
 
-export function RoomHeader({ roomId, status }: RoomHeaderProps) {
+export function RoomHeader({ roomId, status, onLeave }: RoomHeaderProps) {
   const [copied, setCopied] = useState(false);
 
   const copyInvite = async () => {
@@ -29,6 +30,9 @@ export function RoomHeader({ roomId, status }: RoomHeaderProps) {
         <span className={`socket-state ${status}`}><i />{status}</span>
         <button className="icon-button" onClick={copyInvite}>
           <CopyIcon /> {copied ? "Copied" : "Copy invite"}
+        </button>
+        <button className="leave-button" onClick={onLeave}>
+          Leave
         </button>
       </div>
     </header>

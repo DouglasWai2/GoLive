@@ -1,6 +1,7 @@
 import { FormEvent, useState } from "react";
 import { Brand } from "./Brand";
 import { joinRoom } from "../utils/signaling";
+import { saveSession } from "../utils/session";
 
 type NameGateProps = {
   roomId: string;
@@ -23,6 +24,7 @@ export function NameGate({ roomId, onJoin }: NameGateProps) {
     try {
       const { token } = await joinRoom(roomId, trimmed);
       localStorage.setItem("golive-name", trimmed);
+      saveSession(roomId, trimmed, token);
       onJoin(trimmed, token);
     } catch (caught) {
       setError("Could not enter the room. Try again.");

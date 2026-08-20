@@ -24,6 +24,7 @@ export type RoomSessionCallbacks = {
   onConnectionState: (peerId: string, state: RTCPeerConnectionState | null) => void;
   onRemoteStats: (peerId: string, stats: RemoteVideoStats | null) => void;
   onError: (message: string) => void;
+  onSessionRejected?: () => void;
 };
 
 /*
@@ -63,6 +64,7 @@ export class RoomSession {
   private roomId = "";
   private name = "";
   private token = "";
+  private authenticated = false;
 
   constructor(callbacks: RoomSessionCallbacks) {
     this.callbacks = callbacks;
@@ -82,6 +84,7 @@ export class RoomSession {
 
   stop() {
     this.active = false;
+    this.authenticated = false;
 
     this.sharingGeneration += 1;
 
@@ -394,7 +397,7 @@ export class RoomSession {
 
     ws.onmessage = this.handleSocketMessage;
 
-    ws.onclose = () => {
+    ws.onclose = (event) => {
       if (!this.active) {
         return;
       }
@@ -402,6 +405,15 @@ export class RoomSession {
       console.log("Signaling WebSocket disconnected");
 
       this.callbacks.onStatus("disconnected");
+
+      /*
+       * The server closes with 1008 when the room token is
+       * rejected (e.g. expired or signed with a different secret).
+       */
+      if (event.code === 1008 && !this.authenticated) {
+        this.callbacks.onSessionRejected?.();
+        return;
+      }
 
       this.stopSharing();
     };
@@ -892,6 +904,8 @@ export class RoomSession {
     }
 
     if (message.type === "authenticated") {
+      this.authenticated = true;
+
       this.send({
         type: "join",
         room: this.roomId,

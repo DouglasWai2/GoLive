@@ -2,7 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import type { Peer, RemoteVideoStats, ShareSettings, SocketStatus } from "../types";
 import { RoomSession } from "../services/roomSession";
 
-export function useRoom(roomId: string, name: string, token: string) {
+export function useRoom(
+  roomId: string,
+  name: string,
+  token: string,
+  onSessionRejected?: () => void,
+) {
   const [status, setStatus] = useState<SocketStatus>("connecting");
   const [peers, setPeers] = useState<Peer[]>([]);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
@@ -60,6 +65,7 @@ export function useRoom(roomId: string, name: string, token: string) {
         });
       },
       onError: setError,
+      onSessionRejected,
     });
 
     sessionRef.current = session;

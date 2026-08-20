@@ -11,10 +11,12 @@ type RoomProps = {
   roomId: string;
   name: string;
   token: string;
+  onLeave: () => void;
+  onSessionRejected?: () => void;
 };
 
-export function Room({ roomId, name, token }: RoomProps) {
-  const room = useRoom(roomId, name, token);
+export function Room({ roomId, name, token, onLeave, onSessionRejected }: RoomProps) {
+  const room = useRoom(roomId, name, token, onSessionRejected);
   const [shareSettings, setShareSettings] = useState<ShareSettings | null>(null);
 
   const startShare = (settings: ShareSettings) => {
@@ -34,7 +36,7 @@ export function Room({ roomId, name, token }: RoomProps) {
 
   return (
     <main className="room-shell">
-      <RoomHeader roomId={roomId} status={room.status} />
+      <RoomHeader roomId={roomId} status={room.status} onLeave={onLeave} />
 
       {room.error && (
         <ErrorBanner message={room.error} onDismiss={() => room.setError("")} />

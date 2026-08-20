@@ -87,6 +87,8 @@ button { cursor: pointer; }
 .socket-state i { width: 6px; height: 6px; border-radius: 50%; background: #77776f; }.socket-state.connected i { background: var(--acid); box-shadow: 0 0 8px rgba(201,255,66,.5); }.socket-state.disconnected i { background: var(--red); }
 .icon-button { color: #b5b5ad; background: transparent; border: 1px solid #373732; border-radius: 4px; height: 38px; padding: 0 13px; display: flex; align-items: center; gap: 8px; font-size: 12px; }
 .icon-button:hover { border-color: #5f5f57; color: var(--paper); }
+.leave-button { color: #ffb0a7; background: transparent; border: 1px solid rgba(255,93,74,.35); border-radius: 4px; height: 38px; padding: 0 13px; font-size: 12px; }
+.leave-button:hover { border-color: rgba(255,93,74,.65); color: #ffcfc9; }
 .error-banner { margin: 14px 4vw 0; padding: 12px 15px; border: 1px solid rgba(255,93,74,.35); background: rgba(255,93,74,.08); color: #ffb0a7; font-size: 13px; display: flex; justify-content: space-between; }
 .error-banner button { border: 0; background: none; color: inherit; font-size: 18px; }
 
