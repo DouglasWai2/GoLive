@@ -3,6 +3,7 @@ import { registerHealthRoutes } from "./health.routes.js";
 import { registerSignalingRoutes } from "./signaling.routes.js";
 import { registerTurnRoutes } from "./turn.routes.js";
 import { registerRoomRoutes } from "./room.routes.js";
+import { registerInviteRoutes } from "./invite.routes.js";
 import { RoomService } from "../services/room.service.js";
 import { SignalingService } from "../services/signaling.service.js";
 import { TurnService } from "../services/turn.service.js";
@@ -26,4 +27,5 @@ export function registerRoutes(app: FastifyInstance): void {
   registerSignalingRoutes(app, signalingService);
   registerTurnRoutes(app);
   registerRoomRoutes(app, roomService);
+  registerInviteRoutes(app, roomService);
 }

@@ -1,9 +1,11 @@
 # GoLive
 
-Minimal browser-to-browser screen sharing. Fastify and WebSocket handle room
+Minimal screen sharing for web and mobile. Fastify and WebSocket handle room
 membership and WebRTC signaling; screen video and audio travel directly between
-browsers. Optional Cloudflare TURN provides relaying for connections that
-cannot establish a peer-to-peer link.
+peers. Web and mobile clients share a framework-agnostic core package
+(`@golive/core`) that implements signaling and WebRTC room sessions. Optional
+Cloudflare TURN provides relaying for connections that cannot establish a
+peer-to-peer link.
 
 ## Run locally
 
@@ -23,18 +25,32 @@ select **Share screen** in either one.
 - Signaling server: `ws://localhost:3000/ws`
 - Health check: `http://localhost:3000/health`
 - TURN credentials: `http://localhost:3000/turn-credentials` (requires a room JWT)
+- Create invite: `http://localhost:3000/invite` (requires a room JWT)
+- Verify invite: `http://localhost:3000/invite/verify`
 
 In development the Vite server proxies `/ws` to the signaling server, so no
 configuration is required. Copy the `.env.example` files into `.env` in each
 workspace when you need to customize them (see [Environment variables](#environment-variables)).
 
+### Mobile
+
+Run the signaling server and web app as above, then start the Expo dev client
+for the mobile app. The mobile app defaults to the Android emulator alias for
+the host's `localhost`; point it at the host machine's LAN IP when using a
+physical device:
+
+```bash
+EXPO_PUBLIC_SIGNALING_URL=http://192.168.1.20:3000 npm run dev:mobile
+```
+
 ## Commands
 
 ```bash
-npm run dev        # run server and web app
-npm run typecheck  # check both workspaces
-npm run build      # compile server and production web assets
-npm start          # run the compiled signaling server
+npm run dev         # run server and web app
+npm run dev:mobile  # start the Expo dev client for the mobile app
+npm run typecheck   # check core, server, web, and mobile
+npm run build       # compile core, server, and production web assets
+npm start           # run the compiled signaling server
 ```
 
 ## Deploy
@@ -60,8 +76,10 @@ must use HTTPS and secure WebSocket (`wss://`).
 
 Server variables are read from `server/.env` (via `dotenv`) or the process
 environment. Web variables are read by Vite from `web/.env` and must use the
-`VITE_` prefix to be exposed to the browser. Both `.env` files are gitignored;
-use the committed `.env.example` files as templates.
+`VITE_` prefix to be exposed to the browser. Mobile variables are read by Expo
+from `mobile/.env` and must use the `EXPO_PUBLIC_` prefix to be inlined into the
+client bundle. The `.env` files are gitignored; use the committed `.env.example`
+files (server and web) as templates.
 
 ### Server (`server/.env`)
 
@@ -82,13 +100,30 @@ use the committed `.env.example` files as templates.
 | --- | --- | --- |
 | `VITE_SIGNALING_URL` | web app origin | Full signaling endpoint for WebSocket and TURN credential requests. Accepts `http`/`https`/`ws`/`wss`. |
 
+### Mobile (`mobile/.env`)
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `EXPO_PUBLIC_SIGNALING_URL` | `http://10.0.2.2:3000` | Full signaling endpoint for WebSocket and TURN credential requests (the Android emulator alias for the host's `localhost`). Set it to the host's LAN IP for a physical device. |
+
 ### TURN
 
-Room entry is gated by a signed JWT. On join, `POST /room` validates the name
-and room and returns a token bound to both. The web app sends it as
-`Authorization: Bearer <token>` when fetching ICE servers from
-`/turn-credentials` and includes it in the WebSocket join message, so only
-validated sessions can enter a room.
+Rooms are invite-only. The first person to join a room creates it and becomes
+its host: `POST /room` accepts a `roomId` and `name` and returns a room session
+JWT bound to both, but only works before a host exists.
+
+Guests enter through a shareable invite token:
+
+- `POST /invite` takes a `roomId` and an `Authorization: Bearer <room JWT>`
+  header. Any room member can mint an invite JWT for their own room; it expires
+  after 24 hours and is reusable.
+- `POST /invite/verify` takes `{ roomId, name, inviteToken }`. It validates the
+  invite and returns the same `{ session, token }` shape as `POST /room`, so
+  only holders of a valid invite can obtain a room session.
+
+The web app sends the room token as `Authorization: Bearer <token>` when
+fetching ICE servers from `/turn-credentials` and includes it in the WebSocket
+join message, so only validated sessions can enter a room.
 
 When `CLOUDFLARE_TURN_KEY_ID` and `CLOUDFLARE_TURN_API_TOKEN` are set, the web app
 fetches ICE servers from `/turn-credentials` before starting a peer connection.
@@ -104,9 +139,21 @@ connections, at the cost of relaying traffic through Cloudflare.
 
 ```
 .
-├── package.json            # npm workspaces: dev/build/typecheck/start scripts
+├── package.json            # npm workspaces: core, server, web, mobile scripts
 ├── LICENSE
 ├── README.md
+├── packages/
+│   └── core/               # @golive/core — shared signaling + WebRTC room session
+│       ├── package.json
+│       ├── tsconfig.json
+│       └── src/
+│           ├── index.ts        # public API surface (re-exports)
+│           ├── types.ts        # shared types (Peer, SignalData, RoomSessionDeps, ...)
+│           ├── signaling.ts    # join room + ICE server helpers
+│           ├── webrtc.ts       # stats, ice route, sender config helpers
+│           ├── sharePresets.ts # resolution/framerate/bitrate presets
+│           ├── adapter.ts      # PlatformAdapter abstraction over screen capture
+│           └── roomSession.ts  # RoomSession: WebSocket + WebRTC client logic
 ├── server/                 # @golive/server — Fastify signaling server
 │   ├── .env.example        # template for server environment variables
 │   ├── package.json
@@ -118,9 +165,11 @@ connections, at the cost of relaying traffic through Cloudflare.
 │       │   └── env.ts      # centralized environment variables
 │       ├── controllers/    # request/connection handlers
 │       │   ├── health.controller.ts
+│       │   ├── invite.controller.ts # invite token create/verify handlers
+│       │   ├── room.controller.ts
 │       │   ├── signaling.controller.ts
 │       │   └── turn.controller.ts
-│       ├── routes/         # route definitions (health, turn, /ws)
+│       ├── routes/         # route definitions (health, room, invite, turn, /ws)
 │       │   └── index.ts
 │       ├── services/       # business logic
 │       │   ├── room.service.ts      # in-memory room/peer store
@@ -131,27 +180,49 @@ connections, at the cost of relaying traffic through Cloudflare.
 │       ├── types/          # shared type definitions (room, message, turn)
 │       └── utils/
 │           └── ws.ts       # WebSocket send helper
-└── web/                    # @golive/web — React + Vite client
-    ├── .env.example        # template for web environment variables
-    ├── index.html
-    ├── package.json
-    ├── vercel.json         # rewrites /room/:path* to index.html
-    ├── vite.config.ts      # dev proxy: /ws -> ws://localhost:3000
+├── web/                    # @golive/web — React + Vite client (uses @golive/core)
+│   ├── .env.example        # template for web environment variables
+│   ├── index.html
+│   ├── package.json
+│   ├── vercel.json         # rewrites /room/:path* to index.html
+│   ├── vite.config.ts      # dev proxy: /ws -> ws://localhost:3000
+│   └── src/
+│       ├── App.tsx         # Landing -> NameGate -> Room flow
+│       ├── main.tsx
+│       ├── styles.css
+│       ├── types.ts
+│       ├── components/     # UI components (Landing, Room, VideoStage, ...)
+│       ├── components/room/# room-specific UI (ControlDock, ShareSettingsPanel, ...)
+│       ├── hooks/          # useRoom
+│       ├── platform/       # webAdapter — PlatformAdapter for getDisplayMedia
+│       ├── services/       # sessionDeps — wires RoomSession deps from @golive/core
+│       └── utils/          # fullscreen, session, room
+└── mobile/                 # @golive/mobile — React Native (Expo) client
+    ├── App.tsx             # Landing -> NameGate -> Room flow
+    ├── index.ts            # entry point: registerRootComponent
+    ├── app.json            # Expo config + permissions + config plugins
+    ├── babel.config.js
+    ├── metro.config.js
+    ├── plugins/
+    │   └── withWebRTCMediaProjection.js # Expo config plugin for screen capture
+    ├── android/            # native Android project (Expo prebuild output)
     └── src/
-        ├── App.tsx         # Landing -> NameGate -> Room flow
-        ├── main.tsx
-        ├── styles.css
-        ├── types.ts
-        ├── components/     # UI components (Landing, Room, VideoStage, ...)
-        ├── components/room/# room-specific UI (ControlDock, ShareSettingsPanel, ...)
+        ├── adapter.ts      # mobile PlatformAdapter (react-native-webrtc)
+        ├── config.ts       # SIGNALING_URL from EXPO_PUBLIC_SIGNALING_URL
+        ├── session.ts
+        ├── components/     # ControlDock, ShareSheet, VideoTile
         ├── hooks/          # useRoom
-        ├── services/       # roomSession — WebSocket + WebRTC client logic
-        └── utils/          # signaling, webrtc, sharePresets, fullscreen, room
+        ├── screens/        # LandingScreen, NameGateScreen, RoomScreen
+        └── utils/          # roomId
 ```
 
 ## MVP constraints
 
 - Rooms and peer state are in memory and disappear when the server restarts.
+- Host and invite state are also in memory: invite tokens are stateless JWTs,
+  but the host claim (and the 403 on `POST /room`) resets on restart.
+- The web and mobile clients do not mint or verify invites yet — they still
+  copy the plain `/room/<id>` link and join via `POST /room`.
 - One participant can share at a time; one peer connection is created per viewer.
 - The same captured screen stream is reused for every viewer.
 - STUN is always available; TURN works only when the Cloudflare credentials are

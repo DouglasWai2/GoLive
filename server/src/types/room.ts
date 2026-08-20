@@ -23,3 +23,8 @@ export type RoomToken = {
   roomId: string;
   name: string;
 };
+
+export type InviteToken = {
+  kind: "invite";
+  roomId: string;
+};

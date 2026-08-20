@@ -3,6 +3,18 @@ import type { Client, Peer, RoomSession } from "../types/room.js";
 
 export class RoomService {
   private readonly rooms = new Map<string, Map<string, Client>>();
+  private readonly hosts = new Map<string, string>();
+
+  hasHost(roomId: string): boolean {
+    return this.hosts.has(roomId);
+  }
+
+  claimHost(roomId: string, sessionId: string): boolean {
+    if (this.hosts.has(roomId)) return false;
+
+    this.hosts.set(roomId, sessionId);
+    return true;
+  }
 
   createSession(roomId: string, name: string): RoomSession {
     const session: RoomSession = {
@@ -39,7 +51,10 @@ export class RoomService {
     if (!room) return;
 
     room.delete(peerId);
-    if (room.size === 0) this.rooms.delete(roomId);
+    if (room.size === 0) {
+      this.rooms.delete(roomId);
+      this.hosts.delete(roomId);
+    }
   }
 
   toPeer(client: Client): Peer {

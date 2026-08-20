@@ -14,7 +14,14 @@ export function createRoomController(roomService: RoomService, app: FastifyInsta
   ): Promise<FastifyReply> => {
     const { roomId, name } = request.body as CreateRoomBody;
 
+    if (roomService.hasHost(roomId)) {
+      return reply.code(403).send({
+        error: "This room requires an invite to join.",
+      });
+    }
+
     const session = roomService.createSession(roomId, name);
+    roomService.claimHost(roomId, session.sessionId);
 
     const token = app.jwt.sign(
       { sessionId: session.sessionId, roomId, name },
