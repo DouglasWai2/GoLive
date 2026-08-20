@@ -1,5 +1,7 @@
 type FullscreenElement = HTMLElement & {
   webkitRequestFullscreen?: () => Promise<void> | void;
+  webkitEnterFullscreen?: () => void;
+  webkitExitFullscreen?: () => void;
 };
 
 type FullscreenDocument = Document & {
@@ -14,6 +16,11 @@ export function requestFullscreen(element: HTMLElement): Promise<void> {
     return candidate.requestFullscreen();
   }
 
+  if (candidate.webkitEnterFullscreen) {
+    candidate.webkitEnterFullscreen();
+    return Promise.resolve();
+  }
+
   if (candidate.webkitRequestFullscreen) {
     return Promise.resolve(candidate.webkitRequestFullscreen());
   }
@@ -21,8 +28,14 @@ export function requestFullscreen(element: HTMLElement): Promise<void> {
   return Promise.reject(new Error("Fullscreen is not supported."));
 }
 
-export function exitFullscreen(): Promise<void> {
+export function exitFullscreen(element?: HTMLElement): Promise<void> {
   const candidate = document as FullscreenDocument;
+  const video = element as FullscreenElement | undefined;
+
+  if (video?.webkitExitFullscreen) {
+    video.webkitExitFullscreen();
+    return Promise.resolve();
+  }
 
   if (candidate.exitFullscreen) {
     return candidate.exitFullscreen();

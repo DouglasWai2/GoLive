@@ -49,6 +49,7 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
   const cinemaRef = useRef<HTMLDivElement>(null);
   const cinemaVideoRef = useRef<HTMLVideoElement>(null);
   const cinemaControlsTimer = useRef<number | null>(null);
+  const videoFullscreenRef = useRef(false);
 
   const activeSharer = peers.find((peer) => peer.sharing);
   const remoteTiles = peers.filter((peer) => remoteStreams[peer.id]);
@@ -88,6 +89,28 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
   }, []);
 
   useEffect(() => {
+    const video = cinemaVideoRef.current;
+    if (!video) return;
+
+    const onBegin = () => {
+      videoFullscreenRef.current = true;
+      setIsFullscreen(true);
+    };
+    const onEnd = () => {
+      videoFullscreenRef.current = false;
+      setIsFullscreen(false);
+    };
+
+    video.addEventListener("webkitbeginfullscreen", onBegin);
+    video.addEventListener("webkitendfullscreen", onEnd);
+
+    return () => {
+      video.removeEventListener("webkitbeginfullscreen", onBegin);
+      video.removeEventListener("webkitendfullscreen", onEnd);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!isFullscreen) {
       clearCinemaControlsTimer();
       setShowCinemaControls(false);
@@ -115,16 +138,30 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
 
   const toggleFullscreen = async () => {
     if (getFullscreenElement()) {
-      await exitFullscreen();
+      await exitFullscreen(videoFullscreenRef.current ? cinemaVideoRef.current ?? undefined : undefined);
       return;
     }
 
     if (!cinemaRef.current) return;
 
     try {
+      videoFullscreenRef.current = false;
       await requestFullscreen(cinemaRef.current);
-    } catch (caught) {
-      console.warn("Could not enter fullscreen video mode", caught);
+    } catch {
+      const video = cinemaVideoRef.current;
+
+      if (!video) {
+        console.warn("Could not enter fullscreen video mode");
+        return;
+      }
+
+      try {
+        videoFullscreenRef.current = true;
+        await requestFullscreen(video);
+      } catch (caught) {
+        videoFullscreenRef.current = false;
+        console.warn("Could not enter fullscreen video mode", caught);
+      }
     }
   };
 
@@ -235,7 +272,7 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
         {statsEnabled && cinemaStats && <StreamStats stats={cinemaStats} />}
         <div className="cinema-controls">
           <StatsButton statsEnabled={statsEnabled} toggleStats={toggleStats} />
-          <button className="icon-button" onClick={() => void exitFullscreen()} title="Exit fullscreen">
+          <button className="icon-button" onClick={() => void exitFullscreen(videoFullscreenRef.current ? cinemaVideoRef.current ?? undefined : undefined)} title="Exit fullscreen">
             <FullscreenExitIcon /> Exit fullscreen
           </button>
         </div>

@@ -98,7 +98,7 @@ button { cursor: pointer; }
 .video-grid { flex: 1; min-height: 380px; border: 1px solid #32322d; background-color: #171715; background-image: linear-gradient(#1d1d1a 1px, transparent 1px), linear-gradient(90deg, #1d1d1a 1px, transparent 1px); background-size: 34px 34px; display: grid; place-items: stretch; padding: 14px; gap: 14px; }
 .video-grid.has-video { grid-template-columns: repeat(auto-fit, minmax(min(440px, 100%), 1fr)); }
 .video-tile { min-width: 0; min-height: 0; background: #080808; position: relative; overflow: hidden; display: grid; place-items: center; border: 1px solid #2d2d29; }
-.video-tile video { width: 100%; height: 100%; max-height: 68vh; object-fit: contain; }
+.video-tile video { max-width: 100%; max-height: 68vh; object-fit: contain; }
 .video-meta { position: absolute; left: 12px; bottom: 12px; background: rgba(16,16,14,.88); backdrop-filter: blur(8px); min-height: 34px; padding: 0 11px; display: flex; align-items: center; gap: 8px; font-size: 11px; }
 .live-dot { width: 6px; height: 6px; background: var(--red); border-radius: 50%; }.peer-state { color: #77776f; border-left: 1px solid #42423d; padding-left: 8px; font-family: ui-monospace, monospace; font-size: 9px; text-transform: uppercase; }
 .empty-stage { align-self: center; justify-self: center; text-align: center; max-width: 420px; padding: 50px 20px; }
@@ -118,8 +118,8 @@ button.active:hover {
     color: var(--acid);
     opacity: .85;
 }
-.cinema { position: fixed; inset: 0; z-index: 1; background: #000; display: grid; place-items: center; opacity: 0; pointer-events: none; }
-.cinema video { width: 100%; height: 100%; object-fit: contain; }
+.cinema { position: fixed; inset: 0; z-index: 1; background: #000; display: grid; grid-template: 1fr / 1fr; place-items: center; overflow: hidden; opacity: 0; pointer-events: none; }
+.cinema video { max-width: 100%; max-height: 100%; object-fit: contain; }
 .cinema:fullscreen, .cinema:-webkit-full-screen { opacity: 1; pointer-events: auto; }
 .cinema.controls-hidden { cursor: none; }
 .cinema-meta { position: absolute; left: 18px; bottom: 18px; background: rgba(16,16,14,.88); backdrop-filter: blur(8px); min-height: 38px; padding: 0 13px; display: flex; align-items: center; gap: 9px; font-size: 11px; transition: opacity .2s; }
