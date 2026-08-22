@@ -70,7 +70,7 @@ export async function getIceServers(
   baseUrl: string,
   token: string,
 ): Promise<IceServer[]> {
-  const response = await fetch(signalingHttpUrl(baseUrl, "/turn-credentials"), {
+  const response = await fetch(signalingHttpUrl(baseUrl, "/session"), {
     headers: {
       Authorization: `Bearer ${token}`,
     },

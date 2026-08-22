@@ -33,7 +33,7 @@ export default defineConfig({
           }
         },
       },
-      "/turn-credentials": {
+      "/session": {
         target: "http://localhost:3000",
       },
     },

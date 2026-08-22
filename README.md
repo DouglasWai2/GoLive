@@ -24,7 +24,7 @@ select **Share screen** in either one.
 - Web app: `http://localhost:5173`
 - Signaling server: `ws://localhost:3000/ws`
 - Health check: `http://localhost:3000/health`
-- TURN credentials: `http://localhost:3000/turn-credentials` (requires a room JWT)
+- TURN credentials: `http://localhost:3000/session` (requires a room JWT)
 - Create invite: `http://localhost:3000/invite` (requires a room JWT)
 - Verify invite: `http://localhost:3000/invite/verify`
 
@@ -88,9 +88,9 @@ files (server and web) as templates.
 | `PORT` | `3000` | Port the signaling server listens on. |
 | `HOST` | `0.0.0.0` | Address the signaling server binds to. |
 | `ORIGIN` | — | CORS allow-origin for the web app. Required when the web app and server are on different origins. |
-| `JWT_SECRET` | — | Secret used to sign room session JWTs. Authenticates `/turn-credentials` and WebSocket room joins. |
-| `CLOUDFLARE_TURN_KEY_ID` | — | Cloudflare TURN key ID, sent to `/turn-credentials`. |
-| `CLOUDFLARE_TURN_API_TOKEN` | — | Cloudflare TURN API token, sent to `/turn-credentials`. |
+| `JWT_SECRET` | — | Secret used to sign room session JWTs. Authenticates `/session` and WebSocket room joins. |
+| `CLOUDFLARE_TURN_KEY_ID` | — | Cloudflare TURN key ID, sent to `/session`. |
+| `CLOUDFLARE_TURN_API_TOKEN` | — | Cloudflare TURN API token, sent to `/session`. |
 | `CLOUDFLARE_ACCOUNT_ID` | — | Cloudflare account ID, queried for TURN usage. |
 | `CLOUDFLARE_ANALYTICS_API_TOKEN` | — | Cloudflare API token with analytics read access, used for TURN usage. |
 
@@ -122,11 +122,11 @@ Guests enter through a shareable invite token:
   only holders of a valid invite can obtain a room session.
 
 The web app sends the room token as `Authorization: Bearer <token>` when
-fetching ICE servers from `/turn-credentials` and includes it in the WebSocket
+fetching ICE servers from `/session` and includes it in the WebSocket
 join message, so only validated sessions can enter a room.
 
 When `CLOUDFLARE_TURN_KEY_ID` and `CLOUDFLARE_TURN_API_TOKEN` are set, the web app
-fetches ICE servers from `/turn-credentials` before starting a peer connection.
+fetches ICE servers from `/session` before starting a peer connection.
 Otherwise it falls back to STUN-only:
 
 - `stun:stun.cloudflare.com:3478`

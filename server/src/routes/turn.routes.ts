@@ -6,7 +6,7 @@ export function registerTurnRoutes(app: FastifyInstance): void {
   const controller = createTurnController(new TurnService());
 
   app.get(
-    "/turn-credentials",
+    "/session",
     {
       config: {
         rateLimit: {
