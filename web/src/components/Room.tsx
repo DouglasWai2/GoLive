@@ -59,6 +59,7 @@ export function Room({
         outboundStats={room.outboundStats}
         localQuality={localQuality}
         localName={name}
+        status={room.status}
       />
 
       <ControlDock

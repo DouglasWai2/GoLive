@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { AppState } from "react-native";
 import { RoomSession } from "@golive/core";
 import type {
   MediaStream,
@@ -104,7 +105,14 @@ export function useRoom(
 
     session.start(roomId, name, token);
 
+    const appStateSubscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") {
+        session.resume();
+      }
+    });
+
     return () => {
+      appStateSubscription.remove();
       session.stop();
       sessionRef.current = null;
     };

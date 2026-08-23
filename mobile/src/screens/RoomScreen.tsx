@@ -187,6 +187,7 @@ export function RoomScreen({
               <View style={[
                 styles.statusDot,
                 status === "connected" && styles.statusConnected,
+                status === "reconnecting" && styles.statusReconnecting,
                 status === "disconnected" && styles.statusDisconnected,
               ]} />
               {!compactHeader ? <Text style={styles.statusText}>{status}</Text> : null}
@@ -235,12 +236,24 @@ export function RoomScreen({
                 <View style={styles.scanLine} />
               </View>
               <Text style={styles.emptyTitle}>
-                {activeSharer ? "Connecting to the screen..." : status === "connected" ? "No screen on air" : "Connecting to the room..."}
+                {status === "reconnecting"
+                  ? "Reconnecting to the room..."
+                  : status === "disconnected"
+                    ? "Connection lost"
+                    : activeSharer
+                      ? "Connecting to the screen..."
+                      : status === "connected"
+                        ? "No screen on air"
+                        : "Connecting to the room..."}
               </Text>
               <Text style={styles.emptyBody}>
-                {activeSharer
-                  ? "A secure peer-to-peer connection is being established."
-                  : "Invite someone, then choose a window or display to begin."}
+                {status === "reconnecting"
+                  ? "Your session will resume automatically when the connection returns."
+                  : status === "disconnected"
+                    ? "Leave and rejoin the room to start a new session."
+                    : activeSharer
+                      ? "A secure peer-to-peer connection is being established."
+                      : "Invite someone, then choose a window or display to begin."}
               </Text>
             </View>
           ) : null}
@@ -328,6 +341,7 @@ const styles = StyleSheet.create({
   socketState: { flexDirection: "row", alignItems: "center", gap: 7 },
   statusDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#77776f" },
   statusConnected: { backgroundColor: colors.acid, shadowColor: colors.acid, shadowOpacity: 0.5, shadowRadius: 5 },
+  statusReconnecting: { backgroundColor: "#ffb13b" },
   statusDisconnected: { backgroundColor: colors.red },
   statusText: { ...technicalText, color: "#77776f", fontSize: 8 },
   peopleCompact: { flexDirection: "row", alignItems: "center", gap: 5 },

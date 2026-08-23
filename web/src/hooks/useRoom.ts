@@ -101,7 +101,19 @@ export function useRoom(
 
     session.start(roomId, name, token);
 
+    const resume = () => session.resume();
+    const resumeWhenVisible = () => {
+      if (document.visibilityState === "visible") {
+        session.resume();
+      }
+    };
+
+    window.addEventListener("online", resume);
+    document.addEventListener("visibilitychange", resumeWhenVisible);
+
     return () => {
+      window.removeEventListener("online", resume);
+      document.removeEventListener("visibilitychange", resumeWhenVisible);
       session.stop();
       sessionRef.current = null;
     };

@@ -106,6 +106,14 @@ export class SignalingService {
         return;
       }
 
+      if (
+        membership &&
+        this.rooms.getClient(membership.roomId, membership.client.id)?.socket !== socket
+      ) {
+        socket.close(SESSION_REPLACED_CODE, "Session opened in another tab");
+        return;
+      }
+
       if (message.type === "join") {
         const joined = this.handleJoin(socket, message, session, leaveRoom);
         if (joined) membership = joined;

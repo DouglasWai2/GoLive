@@ -46,7 +46,11 @@ export type OutboundVideoStats = {
   qualityLimitationReason: string | null;
 };
 
-export type SocketStatus = "connecting" | "connected" | "disconnected";
+export type SocketStatus =
+  | "connecting"
+  | "connected"
+  | "reconnecting"
+  | "disconnected";
 
 export type PeerConnectionState =
   | "new"
@@ -70,7 +74,8 @@ export type SessionDescriptionInit = {
 
 export type SignalData =
   | SessionDescriptionInit
-  | { candidate: IceCandidateInit };
+  | { candidate: IceCandidateInit }
+  | { restartRequest: true };
 
 export type IceServer = {
   urls: string | string[];
@@ -181,7 +186,7 @@ export type RTCPeerConnection = {
 
   addTrack(track: MediaTrack, stream: MediaStream): unknown;
   addIceCandidate(candidate: IceCandidateInit): Promise<void>;
-  createOffer(): Promise<SessionDescriptionInit>;
+  createOffer(options?: { iceRestart?: boolean }): Promise<SessionDescriptionInit>;
   createAnswer(): Promise<SessionDescriptionInit>;
   setLocalDescription(description: SessionDescriptionInit): Promise<void>;
   setRemoteDescription(description: SessionDescriptionInit): Promise<void>;

@@ -7,6 +7,7 @@ import type {
   Peer,
   PeerConnectionState,
   RemoteVideoStats,
+  SocketStatus,
 } from "../../types";
 import { exitFullscreen, getFullscreenElement, requestFullscreen } from "../../utils/fullscreen";
 import StatsButton from "./StatsButton";
@@ -21,13 +22,14 @@ type VideoStageProps = {
   outboundStats: Record<string, OutboundVideoStats>;
   localQuality: string | null;
   localName: string;
+  status: SocketStatus;
 };
 
 const STATS_STORAGE_KEY = "golive.stats.enabled";
 const VOLUME_STORAGE_KEY = "golive.volume";
 const MUTED_STORAGE_KEY = "golive.muted";
 
-export function VideoStage({ localStream, peers, remoteStreams, connectionStates, remoteStats, outboundStats, localQuality, localName }: VideoStageProps) {
+export function VideoStage({ localStream, peers, remoteStreams, connectionStates, remoteStats, outboundStats, localQuality, localName, status }: VideoStageProps) {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showCinemaControls, setShowCinemaControls] = useState(false);
   const [statsEnabled, setStatsEnabled] = useState(() => {
@@ -68,6 +70,22 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
     const stats = outboundStats[peer.id];
     return stats ? [{ peerId: peer.id, peerName: peer.name, stats }] : [];
   });
+  const emptyTitle =
+    status === "reconnecting"
+      ? "Reconnecting to the room..."
+      : status === "disconnected"
+        ? "Connection lost"
+        : activeSharer
+          ? "Connecting to the screen..."
+          : "No screen on air";
+  const emptyMessage =
+    status === "reconnecting"
+      ? "Your session will resume automatically when the connection returns."
+      : status === "disconnected"
+        ? "Leave and rejoin the room to start a new session."
+        : activeSharer
+          ? "A secure peer-to-peer connection is being established."
+          : "Share this room link, then choose a window or display to begin.";
 
   const clearCinemaControlsTimer = () => {
     if (cinemaControlsTimer.current !== null) {
@@ -315,8 +333,8 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
         {!localStream && remoteTiles.length === 0 && (
           <div className="empty-stage">
             <div className="screen-outline"><ScreenIcon size={38} /><span className="scan-line" /></div>
-            <h2>{activeSharer ? "Connecting to the screen..." : "No screen on air"}</h2>
-            <p>{activeSharer ? "A secure peer-to-peer connection is being established." : "Share this room link, then choose a window or display to begin."}</p>
+            <h2>{emptyTitle}</h2>
+            <p>{emptyMessage}</p>
           </div>
         )}
       </div>
