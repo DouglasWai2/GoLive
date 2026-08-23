@@ -8,6 +8,7 @@ export type IceRoute = {
   localAddress: string | null;
   remoteAddress: string | null;
   rtt: number | null;
+  availableOutgoingBitrate: number | null;
 };
 
 type AnyStat = Record<string, unknown>;
@@ -88,7 +89,11 @@ function extractIceRoute(stats: StatsReportLike): IceRoute | null {
     localType,
     remoteType,
     protocol:
-      typeof pair.protocol === "string" ? pair.protocol : null,
+      typeof localCandidate?.protocol === "string"
+        ? localCandidate.protocol
+        : typeof pair.protocol === "string"
+          ? pair.protocol
+          : null,
     localAddress:
       typeof localCandidate?.address === "string"
         ? localCandidate.address
@@ -100,6 +105,10 @@ function extractIceRoute(stats: StatsReportLike): IceRoute | null {
     rtt:
       typeof pair.currentRoundTripTime === "number"
         ? (pair.currentRoundTripTime as number)
+        : null,
+    availableOutgoingBitrate:
+      typeof pair.availableOutgoingBitrate === "number"
+        ? (pair.availableOutgoingBitrate as number)
         : null,
   };
 }
@@ -129,6 +138,7 @@ export async function logSelectedIceRoute(
     localAddress: route.localAddress,
     remoteAddress: route.remoteAddress,
     rtt: route.rtt,
+    availableOutgoingBitrate: route.availableOutgoingBitrate,
   });
 }
 
@@ -139,9 +149,33 @@ export type InboundVideoSample = {
   fps: number | null;
   bytes: number;
   codecMimeType: string | null;
+  packetsReceived: number | null;
+  packetsLost: number | null;
+  jitter: number | null;
+  framesDecoded: number | null;
+  framesDropped: number | null;
 };
 
 export type InboundVideoStats = {
+  width: number | null;
+  height: number | null;
+  fps: number | null;
+  bitrateKbps: number | null;
+  packetLossPercent: number | null;
+};
+
+export type OutboundVideoSample = {
+  timestamp: number;
+  width: number | null;
+  height: number | null;
+  fps: number | null;
+  bytes: number;
+  codecMimeType: string | null;
+  framesEncoded: number | null;
+  qualityLimitationReason: string | null;
+};
+
+export type ComputedOutboundVideoStats = {
   width: number | null;
   height: number | null;
   fps: number | null;
@@ -150,8 +184,34 @@ export type InboundVideoStats = {
 
 export type PeerMediaStats = {
   inbound: InboundVideoSample | null;
+  outbound: OutboundVideoSample | null;
   iceRoute: IceRoute | null;
 };
+
+function numberValue(value: unknown): number | null {
+  return typeof value === "number" ? value : null;
+}
+
+function codecMimeType(stats: StatsReportLike, codecId: unknown): string | null {
+  if (typeof codecId !== "string") {
+    return null;
+  }
+
+  const codecReport = stats.get(codecId);
+  return typeof codecReport?.mimeType === "string" ? codecReport.mimeType : null;
+}
+
+function isRepairCodec(mimeType: string | null) {
+  return mimeType !== null && /^video\/(?:rtx|red|ulpfec)$/i.test(mimeType);
+}
+
+function isVideoRtp(rtp: AnyStat, type: "inbound-rtp" | "outbound-rtp") {
+  return (
+    rtp.type === type &&
+    (rtp.kind === "video" || rtp.mediaType === "video") &&
+    !rtp.isRemote
+  );
+}
 
 function extractInboundVideo(
   stats: StatsReportLike,
@@ -161,24 +221,59 @@ function extractInboundVideo(
   stats.forEach((report) => {
     const rtp = report as AnyStat;
 
-    if (rtp.type === "inbound-rtp" && rtp.kind === "video") {
-      let codecMimeType: string | null = null;
+    if (isVideoRtp(rtp, "inbound-rtp")) {
+      const mimeType = codecMimeType(stats, rtp.codecId);
 
-      if (typeof rtp.codecId === "string") {
-        const codecReport = stats.get(rtp.codecId);
-        codecMimeType =
-          typeof codecReport?.mimeType === "string"
-            ? (codecReport.mimeType as string)
-            : null;
+      if (isRepairCodec(mimeType)) {
+        return;
       }
 
       sample = {
-        timestamp: Date.now(),
-        width: typeof rtp.frameWidth === "number" ? (rtp.frameWidth as number) : null,
-        height: typeof rtp.frameHeight === "number" ? (rtp.frameHeight as number) : null,
-        fps: typeof rtp.framesPerSecond === "number" ? (rtp.framesPerSecond as number) : null,
-        bytes: typeof rtp.bytesReceived === "number" ? (rtp.bytesReceived as number) : 0,
-        codecMimeType,
+        timestamp: numberValue(rtp.timestamp) ?? Date.now(),
+        width: numberValue(rtp.frameWidth),
+        height: numberValue(rtp.frameHeight),
+        fps: numberValue(rtp.framesPerSecond),
+        bytes: numberValue(rtp.bytesReceived) ?? 0,
+        codecMimeType: mimeType,
+        packetsReceived: numberValue(rtp.packetsReceived),
+        packetsLost: numberValue(rtp.packetsLost),
+        jitter: numberValue(rtp.jitter),
+        framesDecoded: numberValue(rtp.framesDecoded),
+        framesDropped: numberValue(rtp.framesDropped),
+      };
+    }
+  });
+
+  return sample;
+}
+
+function extractOutboundVideo(
+  stats: StatsReportLike,
+): OutboundVideoSample | null {
+  let sample: OutboundVideoSample | null = null;
+
+  stats.forEach((report) => {
+    const rtp = report as AnyStat;
+
+    if (isVideoRtp(rtp, "outbound-rtp")) {
+      const mimeType = codecMimeType(stats, rtp.codecId);
+
+      if (isRepairCodec(mimeType)) {
+        return;
+      }
+
+      sample = {
+        timestamp: numberValue(rtp.timestamp) ?? Date.now(),
+        width: numberValue(rtp.frameWidth),
+        height: numberValue(rtp.frameHeight),
+        fps: numberValue(rtp.framesPerSecond),
+        bytes: numberValue(rtp.bytesSent) ?? 0,
+        codecMimeType: mimeType,
+        framesEncoded: numberValue(rtp.framesEncoded),
+        qualityLimitationReason:
+          typeof rtp.qualityLimitationReason === "string"
+            ? rtp.qualityLimitationReason
+            : null,
       };
     }
   });
@@ -197,8 +292,22 @@ export async function getPeerMediaStats(
 
   return {
     inbound: extractInboundVideo(stats),
+    outbound: extractOutboundVideo(stats),
     iceRoute: extractIceRoute(stats),
   };
+}
+
+function computeRate(
+  current: number,
+  previous: number,
+  deltaSeconds: number,
+  multiplier = 1,
+): number | null {
+  if (current < previous || deltaSeconds <= 0) {
+    return null;
+  }
+
+  return ((current - previous) * multiplier) / deltaSeconds;
 }
 
 export function computeInboundVideoStats(
@@ -206,20 +315,66 @@ export function computeInboundVideoStats(
   previous: InboundVideoSample | null,
 ): InboundVideoStats {
   let bitrateKbps: number | null = null;
+  let packetLossPercent: number | null = null;
+  let fps = sample.fps;
 
-  if (previous && sample.bytes >= previous.bytes) {
-    const deltaBytes = sample.bytes - previous.bytes;
-    const deltaSeconds = (Date.now() - previous.timestamp) / 1000;
+  if (previous) {
+    const deltaSeconds = (sample.timestamp - previous.timestamp) / 1000;
+    const bitrate = computeRate(sample.bytes, previous.bytes, deltaSeconds, 8 / 1000);
 
-    if (deltaBytes > 0 && deltaSeconds > 0) {
-      bitrateKbps = (deltaBytes * 8) / deltaSeconds / 1000;
+    if (bitrate !== null) {
+      bitrateKbps = bitrate;
+    }
+
+    if (fps === null && sample.framesDecoded !== null && previous.framesDecoded !== null) {
+      fps = computeRate(sample.framesDecoded, previous.framesDecoded, deltaSeconds);
+    }
+
+    if (
+      sample.packetsReceived !== null &&
+      previous.packetsReceived !== null &&
+      sample.packetsLost !== null &&
+      previous.packetsLost !== null
+    ) {
+      const received = sample.packetsReceived - previous.packetsReceived;
+      const lost = sample.packetsLost - previous.packetsLost;
+      const total = received + lost;
+
+      if (received >= 0 && lost >= 0 && total > 0) {
+        packetLossPercent = (lost / total) * 100;
+      }
     }
   }
 
   return {
     width: sample.width,
     height: sample.height,
-    fps: sample.fps,
+    fps,
+    bitrateKbps,
+    packetLossPercent,
+  };
+}
+
+export function computeOutboundVideoStats(
+  sample: OutboundVideoSample,
+  previous: OutboundVideoSample | null,
+): ComputedOutboundVideoStats {
+  let bitrateKbps: number | null = null;
+  let fps = sample.fps;
+
+  if (previous) {
+    const deltaSeconds = (sample.timestamp - previous.timestamp) / 1000;
+    bitrateKbps = computeRate(sample.bytes, previous.bytes, deltaSeconds, 8 / 1000);
+
+    if (fps === null && sample.framesEncoded !== null && previous.framesEncoded !== null) {
+      fps = computeRate(sample.framesEncoded, previous.framesEncoded, deltaSeconds);
+    }
+  }
+
+  return {
+    width: sample.width,
+    height: sample.height,
+    fps,
     bitrateKbps,
   };
 }
@@ -249,5 +404,29 @@ export async function configureVideoSender(
     encoding.scaleResolutionDownBy = scaleResolutionDownBy;
   }
 
-  await sender.setParameters(parameters);
+  parameters.degradationPreference = "maintain-framerate";
+
+  try {
+    await sender.setParameters(parameters);
+  } catch (caught) {
+    console.warn(
+      "Sender does not support maintain-framerate; applying encoding caps only",
+      caught,
+    );
+
+    const fallback = sender.getParameters();
+
+    if (!fallback.encodings?.length) {
+      return;
+    }
+
+    for (const encoding of fallback.encodings) {
+      encoding.maxBitrate = maxBitrate;
+      encoding.maxFramerate = maxFramerate;
+      encoding.scaleResolutionDownBy = scaleResolutionDownBy;
+    }
+
+    delete fallback.degradationPreference;
+    await sender.setParameters(fallback);
+  }
 }

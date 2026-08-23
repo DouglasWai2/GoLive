@@ -21,12 +21,29 @@ export type ShareSettings = {
 };
 
 export type RemoteVideoStats = {
-  width: number;
-  height: number;
-  fps: number;
+  width: number | null;
+  height: number | null;
+  fps: number | null;
   bitrateKbps: number;
   codec: string | null;
   route: string | null;
+  rttMs: number | null;
+  packetLossPercent: number | null;
+  jitterMs: number | null;
+  framesDecoded: number | null;
+  framesDropped: number | null;
+};
+
+export type OutboundVideoStats = {
+  width: number | null;
+  height: number | null;
+  fps: number | null;
+  bitrateKbps: number;
+  codec: string | null;
+  route: string | null;
+  rttMs: number | null;
+  availableOutgoingBitrateKbps: number | null;
+  qualityLimitationReason: string | null;
 };
 
 export type SocketStatus = "connecting" | "connected" | "disconnected";
@@ -119,12 +136,19 @@ export type RTCRtpEncodingParameters = {
   [key: string]: unknown;
 };
 
+export type RTCRtpSendParameters = {
+  encodings?: RTCRtpEncodingParameters[];
+  degradationPreference?:
+    | "maintain-framerate"
+    | "maintain-resolution"
+    | "balanced";
+  [key: string]: unknown;
+};
+
 export type RTCRtpSender = {
   track: MediaTrack | null;
-  getParameters(): { encodings?: RTCRtpEncodingParameters[] };
-  setParameters(params: {
-    encodings?: RTCRtpEncodingParameters[];
-  }): Promise<void>;
+  getParameters(): RTCRtpSendParameters;
+  setParameters(params: RTCRtpSendParameters): Promise<void>;
 };
 
 /*

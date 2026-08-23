@@ -1,12 +1,15 @@
-import { useEffect } from "react";
-import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
+import { useEffect, useRef, useState } from "react";
+import { Modal, Pressable, StatusBar, StyleSheet, Text, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as ScreenOrientation from "expo-screen-orientation";
 import { RTCView } from "react-native-webrtc";
 import type { MediaStream as RNMediaStream } from "react-native-webrtc";
 import type { MediaStream, RemoteVideoStats } from "@golive/core";
+import { FullscreenExitIcon } from "./icons";
 import { StreamStats } from "./StreamStats";
 import { StatsButton } from "./StatsButton";
 import { VolumeControl } from "./VolumeControl";
+import { colors, radii } from "../theme";
 
 type FullscreenViewProps = {
   visible: boolean;
@@ -35,57 +38,78 @@ export function FullscreenView({
   onToggleStats,
   onClose,
 }: FullscreenViewProps) {
+  const [controlsVisible, setControlsVisible] = useState(true);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const insets = useSafeAreaInsets();
+
+  const clearTimer = () => {
+    if (timer.current) {
+      clearTimeout(timer.current);
+      timer.current = null;
+    }
+  };
+
+  const revealControls = () => {
+    setControlsVisible(true);
+    clearTimer();
+    timer.current = setTimeout(() => setControlsVisible(false), 2500);
+  };
+
   useEffect(() => {
     if (!visible) return;
 
+    StatusBar.setHidden(true, "fade");
     ScreenOrientation.unlockAsync().catch(() => {});
+    revealControls();
 
     return () => {
-      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(
-        () => {},
-      );
+      clearTimer();
+      StatusBar.setHidden(false, "fade");
+      StatusBar.setBarStyle("light-content", true);
+      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
     };
   }, [visible]);
 
   const rnStream = stream as unknown as RNMediaStream | null;
 
   return (
-    <Modal
-      visible={visible}
-      animationType="fade"
-      onRequestClose={onClose}
-      supportedOrientations={["portrait", "landscape"]}
-    >
+    <Modal visible={visible} animationType="fade" onRequestClose={onClose} supportedOrientations={["portrait", "landscape"]}>
       <View style={styles.shell}>
         {rnStream ? (
-          <RTCView
-            style={styles.video}
-            streamURL={rnStream.toURL()}
-            objectFit="contain"
-            mirror={false}
-          />
+          <RTCView style={styles.video} streamURL={rnStream.toURL()} objectFit="contain" mirror={false} />
         ) : null}
 
-        <View style={styles.meta}>
-          <View style={styles.liveDot} />
-          <Text style={styles.name} numberOfLines={1}>
-            {name}'s screen
-          </Text>
-        </View>
+        <Pressable
+          style={styles.revealTap}
+          onPress={() => controlsVisible ? setControlsVisible(false) : revealControls()}
+          accessibilityLabel={controlsVisible ? "Hide fullscreen controls" : "Show fullscreen controls"}
+        />
 
-        {statsEnabled && stats ? <StreamStats stats={stats} /> : null}
+        <View
+          pointerEvents={controlsVisible ? "box-none" : "none"}
+          accessibilityElementsHidden={!controlsVisible}
+          importantForAccessibility={controlsVisible ? "auto" : "no-hide-descendants"}
+          style={[styles.overlay, !controlsVisible && styles.overlayHidden]}
+        >
+          <View pointerEvents="none" style={[styles.meta, { left: Math.max(insets.left, 18), bottom: Math.max(insets.bottom, 18) }]}>
+            <View style={styles.liveDot} />
+            <Text style={styles.name} numberOfLines={1}>{name}'s screen</Text>
+          </View>
 
-        <View style={styles.controls}>
-          <StatsButton statsEnabled={statsEnabled} onToggle={onToggleStats} />
-          <VolumeControl
-            volume={volume}
-            muted={muted}
-            onVolumeChange={onVolumeChange}
-            onToggleMute={onToggleMute}
-          />
-          <Pressable style={styles.closeButton} onPress={onClose}>
-            <Text style={styles.closeText}>Exit fullscreen</Text>
-          </Pressable>
+          {statsEnabled && stats ? <StreamStats stats={stats} fullscreen /> : null}
+
+          <View
+            style={[styles.controls, { right: Math.max(insets.right, 18), bottom: Math.max(insets.bottom, 18) }]}
+            onTouchStart={clearTimer}
+            onTouchEnd={revealControls}
+            onTouchCancel={revealControls}
+          >
+            <StatsButton statsEnabled={statsEnabled} onToggle={onToggleStats} />
+            <VolumeControl volume={volume} muted={muted} onVolumeChange={onVolumeChange} onToggleMute={onToggleMute} />
+            <Pressable style={({ pressed }) => [styles.closeButton, pressed && styles.pressed]} onPress={onClose} accessibilityRole="button" accessibilityLabel="Exit fullscreen">
+              <FullscreenExitIcon color="#b5b5ad" />
+            </Pressable>
+          </View>
         </View>
       </View>
     </Modal>
@@ -93,62 +117,15 @@ export function FullscreenView({
 }
 
 const styles = StyleSheet.create({
-  shell: {
-    flex: 1,
-    backgroundColor: "#000",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  video: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: "#000",
-  },
-  meta: {
-    position: "absolute",
-    left: 18,
-    bottom: 18,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    backgroundColor: "rgba(16,16,14,0.88)",
-    borderRadius: 8,
-    paddingHorizontal: 11,
-    paddingVertical: 7,
-  },
-  liveDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: "#ff4433",
-  },
-  name: {
-    color: "#f2f1ec",
-    fontSize: 13,
-    fontWeight: "600",
-  },
-  controls: {
-    position: "absolute",
-    right: 18,
-    bottom: 18,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
-  closeButton: {
-    backgroundColor: "rgba(16,16,14,0.88)",
-    borderWidth: 1,
-    borderColor: "#3d3d36",
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  closeText: {
-    color: "#f2f1ec",
-    fontSize: 13,
-    fontWeight: "600",
-  },
+  shell: { flex: 1, backgroundColor: colors.black, alignItems: "center", justifyContent: "center" },
+  video: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, backgroundColor: colors.black },
+  revealTap: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0 },
+  overlay: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, opacity: 1 },
+  overlayHidden: { opacity: 0 },
+  meta: { position: "absolute", maxWidth: "45%", minHeight: 38, backgroundColor: "rgba(16,16,14,0.9)", paddingHorizontal: 13, flexDirection: "row", alignItems: "center", gap: 9 },
+  liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.red },
+  name: { color: colors.paper, fontSize: 12, fontWeight: "700", flexShrink: 1 },
+  controls: { position: "absolute", flexDirection: "row", alignItems: "center", gap: 9 },
+  closeButton: { width: 44, height: 44, backgroundColor: "rgba(16,16,14,0.9)", borderWidth: 1, borderColor: "#3d3d36", borderRadius: radii.control, alignItems: "center", justifyContent: "center" },
+  pressed: { opacity: 0.62 },
 });

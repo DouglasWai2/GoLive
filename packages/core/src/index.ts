@@ -2,6 +2,7 @@ export type {
   Peer,
   ShareSettings,
   RemoteVideoStats,
+  OutboundVideoStats,
   SocketStatus,
   PeerConnectionState,
   IceCandidateInit,
@@ -13,6 +14,7 @@ export type {
   MediaTrack,
   MediaStream,
   RTCRtpEncodingParameters,
+  RTCRtpSendParameters,
   RTCRtpSender,
   StatsReportLike,
   RTCPeerConnection,
@@ -36,12 +38,15 @@ export {
   getSelectedIceRoute,
   logSelectedIceRoute,
   computeInboundVideoStats,
+  computeOutboundVideoStats,
   configureVideoSender,
 } from "./webrtc";
 export type {
   IceRoute,
   InboundVideoSample,
   InboundVideoStats,
+  OutboundVideoSample,
+  ComputedOutboundVideoStats,
   PeerMediaStats,
 } from "./webrtc";
 export {

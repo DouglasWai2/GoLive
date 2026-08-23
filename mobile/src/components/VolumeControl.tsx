@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import SliderBase, { type SliderProps } from "@react-native-community/slider";
+import { VolumeIcon, VolumeMutedIcon } from "./icons";
+import { colors, controlShadow, radii, technicalText } from "../theme";
 
 const Slider = SliderBase as unknown as React.ComponentType<SliderProps>;
 
@@ -24,8 +26,20 @@ export function VolumeControl({
       {open ? (
         <View style={styles.popover}>
           <View style={styles.popoverRow}>
-            <Pressable style={styles.muteButton} onPress={onToggleMute}>
-              <Text style={styles.muteText}>{muted ? "Unmute" : "Mute"}</Text>
+            <Pressable
+              style={styles.muteButton}
+              onPress={onToggleMute}
+              accessibilityRole="button"
+              accessibilityLabel={muted ? "Unmute stream" : "Mute stream"}
+            >
+              {muted ? (
+                <VolumeMutedIcon size={17} color={colors.redText} />
+              ) : (
+                <VolumeIcon size={17} color={colors.acid} />
+              )}
+              <Text style={[styles.muteText, muted && styles.muteTextMuted]}>
+                {muted ? "Unmute" : "Mute"}
+              </Text>
             </Pressable>
             <Text style={styles.levelText}>{muted ? "0%" : `${Math.round(volume * 100)}%`}</Text>
           </View>
@@ -36,86 +50,40 @@ export function VolumeControl({
             step={0.05}
             value={muted ? 0 : volume}
             onValueChange={onVolumeChange}
-            minimumTrackTintColor="#ffb13b"
+            minimumTrackTintColor={colors.acid}
             maximumTrackTintColor="#3d3d36"
-            thumbTintColor="#ffb13b"
+            thumbTintColor={colors.acid}
+            accessibilityLabel="Stream volume"
           />
         </View>
       ) : null}
       <Pressable
-        style={[styles.button, muted && styles.buttonMuted]}
-        onPress={() => {
-          if (open) {
-            setOpen(false);
-          } else {
-            setOpen(true);
-          }
-        }}
+        style={({ pressed }) => [styles.button, muted && styles.buttonMuted, pressed && styles.pressed]}
+        onPress={() => setOpen((current) => !current)}
+        accessibilityRole="button"
+        accessibilityLabel={muted ? "Muted, open volume controls" : "Open volume controls"}
+        accessibilityState={{ expanded: open }}
       >
-        <Text style={[styles.buttonText, muted && styles.buttonTextMuted]}>
-          {muted ? "Muted" : "Vol"}
-        </Text>
+        {muted ? (
+          <VolumeMutedIcon color={colors.redText} />
+        ) : (
+          <VolumeIcon color="#b5b5ad" />
+        )}
       </Pressable>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: {
-    alignItems: "flex-end",
-  },
-  button: {
-    backgroundColor: "rgba(16,16,14,0.88)",
-    borderWidth: 1,
-    borderColor: "#3d3d36",
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  buttonMuted: {
-    opacity: 0.55,
-  },
-  buttonText: {
-    color: "#f2f1ec",
-    fontSize: 13,
-    fontWeight: "600",
-  },
-  buttonTextMuted: {
-    color: "#ff7766",
-  },
-  popover: {
-    position: "absolute",
-    right: 0,
-    bottom: "100%",
-    marginBottom: 8,
-    width: 220,
-    backgroundColor: "rgba(16,16,14,0.94)",
-    borderWidth: 1,
-    borderColor: "#3d3d36",
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
-  popoverRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 4,
-  },
-  muteButton: {
-    paddingVertical: 2,
-  },
-  muteText: {
-    color: "#ffb13b",
-    fontSize: 13,
-    fontWeight: "600",
-  },
-  levelText: {
-    color: "#9c9c93",
-    fontSize: 12,
-  },
-  slider: {
-    width: "100%",
-    height: 32,
-  },
+  wrap: { alignItems: "flex-end" },
+  button: { width: 44, height: 44, backgroundColor: "rgba(16,16,14,0.9)", borderWidth: 1, borderColor: "#3d3d36", borderRadius: radii.control, alignItems: "center", justifyContent: "center" },
+  buttonMuted: { opacity: 0.72 },
+  pressed: { opacity: 0.6 },
+  popover: { position: "absolute", right: 0, bottom: 52, width: 220, backgroundColor: "rgba(16,16,14,0.98)", borderWidth: 1, borderColor: "#3b3b36", borderRadius: radii.overlay, paddingHorizontal: 12, paddingVertical: 10, zIndex: 30, ...controlShadow },
+  popoverRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 2 },
+  muteButton: { minHeight: 38, flexDirection: "row", alignItems: "center", gap: 7 },
+  muteText: { color: colors.acid, fontSize: 12, fontWeight: "700" },
+  muteTextMuted: { color: colors.redText },
+  levelText: { ...technicalText, color: colors.muted, fontSize: 9 },
+  slider: { width: "100%", height: 32 },
 });

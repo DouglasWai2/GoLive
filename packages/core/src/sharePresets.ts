@@ -37,10 +37,10 @@ export const bitrateOptions: BitrateOption[] = [
 ];
 
 export const DEFAULT_SHARE_SETTINGS: ShareSettings = {
-  width: 1920,
-  height: 1080,
+  width: 1280,
+  height: 720,
   frameRate: 30,
-  maxBitrate: 5_000_000,
+  maxBitrate: 3_000_000,
 };
 
 export function formatBitrate(bps: number): string {

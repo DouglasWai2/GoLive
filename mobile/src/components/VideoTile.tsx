@@ -3,9 +3,11 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import { RTCView } from "react-native-webrtc";
 import type { MediaStream as RNMediaStream } from "react-native-webrtc";
 import type { MediaStream, PeerConnectionState, RemoteVideoStats } from "@golive/core";
-import { StreamStats } from "./StreamStats";
+import { StreamStats, type OutboundStatsEntry } from "./StreamStats";
 import { StatsButton } from "./StatsButton";
 import { VolumeControl } from "./VolumeControl";
+import { FullscreenIcon } from "./icons";
+import { colors, radii, technicalText } from "../theme";
 
 type VideoTileProps = {
   stream: MediaStream;
@@ -13,7 +15,9 @@ type VideoTileProps = {
   state?: PeerConnectionState | null;
   small?: boolean;
   local?: boolean;
+  qualityLabel?: string | null;
   stats?: RemoteVideoStats | null;
+  outboundStats?: OutboundStatsEntry[];
   statsEnabled?: boolean;
   volume?: number;
   muted?: boolean;
@@ -29,7 +33,9 @@ export function VideoTile({
   state,
   small = false,
   local = false,
+  qualityLabel,
   stats,
+  outboundStats = [],
   statsEnabled = true,
   volume = 1,
   muted = false,
@@ -48,7 +54,9 @@ export function VideoTile({
     }
   }, [local, volume, muted, stream]);
 
-  const showControls = !local && (onVolumeChange || onToggleStats || onFullscreen);
+  const showControls = local
+    ? Boolean(onToggleStats)
+    : Boolean(onVolumeChange || onToggleStats || onFullscreen);
 
   return (
     <View style={[styles.tile, small && styles.tileSmall]}>
@@ -63,9 +71,13 @@ export function VideoTile({
         <Text style={styles.name} numberOfLines={1}>
           {local ? "Your screen" : `${name}'s screen`}
         </Text>
+        {local && qualityLabel ? <Text style={styles.state} numberOfLines={1}>{qualityLabel}</Text> : null}
         {state ? <Text style={styles.state}>{state}</Text> : null}
       </View>
       {statsEnabled && stats ? <StreamStats stats={stats} /> : null}
+      {local && statsEnabled && outboundStats.length > 0 ? (
+        <StreamStats outbound={outboundStats} />
+      ) : null}
       {showControls ? (
         <View style={styles.controls}>
           {onToggleStats ? (
@@ -80,8 +92,13 @@ export function VideoTile({
             />
           ) : null}
           {onFullscreen ? (
-            <Pressable style={styles.button} onPress={onFullscreen}>
-              <Text style={styles.buttonText}>Fullscreen</Text>
+            <Pressable
+              style={({ pressed }) => [styles.button, pressed && styles.pressed]}
+              onPress={onFullscreen}
+              accessibilityRole="button"
+              accessibilityLabel="Fullscreen"
+            >
+              <FullscreenIcon color="#b5b5ad" />
             </Pressable>
           ) : null}
         </View>
@@ -94,13 +111,13 @@ const styles = StyleSheet.create({
   tile: {
     flex: 1,
     minHeight: 200,
-    backgroundColor: "#16160f",
-    borderRadius: 12,
+    backgroundColor: colors.video,
+    borderWidth: 1,
+    borderColor: "#2d2d29",
     overflow: "hidden",
   },
   tileSmall: {
     minHeight: 96,
-    borderRadius: 8,
   },
   video: {
     flex: 1,
@@ -108,37 +125,40 @@ const styles = StyleSheet.create({
   },
   meta: {
     position: "absolute",
-    left: 8,
-    bottom: 8,
+    left: 12,
+    bottom: 12,
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    backgroundColor: "rgba(16,16,14,0.75)",
-    borderRadius: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 5,
+    backgroundColor: "rgba(16,16,14,0.9)",
+    minHeight: 34,
+    paddingHorizontal: 10,
   },
   liveDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: "#ff4433",
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.red,
   },
   name: {
-    color: "#f2f1ec",
-    fontSize: 13,
+    color: colors.paper,
+    fontSize: 11,
     fontWeight: "600",
     flexShrink: 1,
   },
   state: {
-    color: "#9c9c93",
-    fontSize: 12,
-    textTransform: "capitalize",
+    ...technicalText,
+    color: "#77776f",
+    fontSize: 8,
+    borderLeftWidth: 1,
+    borderLeftColor: "#42423d",
+    paddingLeft: 7,
+    maxWidth: 155,
   },
   controls: {
     position: "absolute",
-    right: 8,
-    bottom: 8,
+    right: 12,
+    bottom: 12,
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
@@ -147,13 +167,11 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(16,16,14,0.88)",
     borderWidth: 1,
     borderColor: "#3d3d36",
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    borderRadius: radii.control,
+    width: 44,
+    height: 44,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  buttonText: {
-    color: "#f2f1ec",
-    fontSize: 13,
-    fontWeight: "600",
-  },
+  pressed: { opacity: 0.62 },
 });

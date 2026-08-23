@@ -1,6 +1,7 @@
 import type {
   IceServer,
   MediaStream,
+  OutboundVideoStats,
   Peer,
   PeerConnectionState,
   RemoteVideoStats,
@@ -14,10 +15,12 @@ import type {
 import { fallbackIceServers, getIceServers, websocketUrl } from "./signaling";
 import {
   computeInboundVideoStats,
+  computeOutboundVideoStats,
   configureVideoSender,
   getPeerMediaStats,
   logSelectedIceRoute,
   type InboundVideoSample,
+  type OutboundVideoSample,
 } from "./webrtc";
 import type { PlatformAdapter } from "./adapter";
 
@@ -34,6 +37,7 @@ export type RoomSessionCallbacks = {
   onRemoteStream: (peerId: string, stream: MediaStream | null) => void;
   onConnectionState: (peerId: string, state: PeerConnectionState | null) => void;
   onRemoteStats: (peerId: string, stats: RemoteVideoStats | null) => void;
+  onOutboundStats: (peerId: string, stats: OutboundVideoStats | null) => void;
   onError: (message: string) => void;
   onSessionRejected?: () => void;
   onSessionReplaced?: () => void;
@@ -77,7 +81,9 @@ export class RoomSession {
   private signalQueues = new Map<string, Promise<void>>();
 
   private statsTimers = new Map<string, TimerHandle>();
-  private statsSamples = new Map<string, InboundVideoSample | null>();
+  private inboundStatsSamples = new Map<string, InboundVideoSample>();
+  private outboundStatsSamples = new Map<string, OutboundVideoSample>();
+  private statsInFlight = new Set<string>();
 
   private sharingRequest: ((accepted: boolean) => void) | null = null;
   private startingShare = false;
@@ -125,7 +131,9 @@ export class RoomSession {
     this.clearPingTimer();
 
     this.statsTimers.clear();
-    this.statsSamples.clear();
+    this.inboundStatsSamples.clear();
+    this.outboundStatsSamples.clear();
+    this.statsInFlight.clear();
 
     if (this.socket) {
       this.socket.onopen = null;
@@ -672,31 +680,25 @@ export class RoomSession {
     });
   }
 
-  /*
-   * Sample inbound video stats for the receiver-quality badge.
-   */
+  /* Sample inbound and outbound video health for the debug overlays. */
   private pollPeerStats(peerId: string, connection: RTCPeerConnection) {
-    if (!this.active) {
+    if (!this.active || this.statsInFlight.has(peerId)) {
       return;
     }
 
+    this.statsInFlight.add(peerId);
+
     void (async () => {
       try {
-        const { inbound, iceRoute } = await getPeerMediaStats(connection);
+        const { inbound, outbound, iceRoute } = await getPeerMediaStats(connection);
 
-        if (!inbound) {
-          this.statsSamples.delete(peerId);
-          this.callbacks.onRemoteStats(peerId, null);
-          return;
-        }
+        if (inbound) {
+          const previous = this.inboundStatsSamples.get(peerId) ?? null;
 
-        const previous = this.statsSamples.get(peerId) ?? null;
+          this.inboundStatsSamples.set(peerId, inbound);
 
-        this.statsSamples.set(peerId, inbound);
+          const stats = computeInboundVideoStats(inbound, previous);
 
-        const stats = computeInboundVideoStats(inbound, previous);
-
-        if (stats.width && stats.height && stats.fps) {
           this.callbacks.onRemoteStats(peerId, {
             width: stats.width,
             height: stats.height,
@@ -704,12 +706,40 @@ export class RoomSession {
             bitrateKbps: stats.bitrateKbps ?? 0,
             codec: inbound.codecMimeType,
             route: iceRoute?.route ?? null,
+            rttMs: iceRoute?.rtt != null ? iceRoute.rtt * 1000 : null,
+            packetLossPercent: stats.packetLossPercent,
+            jitterMs: inbound.jitter != null ? inbound.jitter * 1000 : null,
+            framesDecoded: inbound.framesDecoded,
+            framesDropped: inbound.framesDropped,
           });
-        } else {
-          this.callbacks.onRemoteStats(peerId, null);
+        }
+
+        if (outbound) {
+          const previous = this.outboundStatsSamples.get(peerId) ?? null;
+
+          this.outboundStatsSamples.set(peerId, outbound);
+
+          const stats = computeOutboundVideoStats(outbound, previous);
+
+          this.callbacks.onOutboundStats(peerId, {
+            width: stats.width,
+            height: stats.height,
+            fps: stats.fps,
+            bitrateKbps: stats.bitrateKbps ?? 0,
+            codec: outbound.codecMimeType,
+            route: iceRoute?.route ?? null,
+            rttMs: iceRoute?.rtt != null ? iceRoute.rtt * 1000 : null,
+            availableOutgoingBitrateKbps:
+              iceRoute?.availableOutgoingBitrate != null
+                ? iceRoute.availableOutgoingBitrate / 1000
+                : null,
+            qualityLimitationReason: outbound.qualityLimitationReason,
+          });
         }
       } catch (caught) {
-        console.warn(`[${peerId}] Could not read receive stats`, caught);
+        console.warn(`[${peerId}] Could not read media stats`, caught);
+      } finally {
+        this.statsInFlight.delete(peerId);
       }
     })();
   }
@@ -1108,11 +1138,14 @@ export class RoomSession {
       this.statsTimers.delete(peerId);
     }
 
-    this.statsSamples.delete(peerId);
+    this.inboundStatsSamples.delete(peerId);
+    this.outboundStatsSamples.delete(peerId);
+    this.statsInFlight.delete(peerId);
 
     this.callbacks.onRemoteStream(peerId, null);
     this.callbacks.onConnectionState(peerId, null);
     this.callbacks.onRemoteStats(peerId, null);
+    this.callbacks.onOutboundStats(peerId, null);
   }
 
   private send(message: unknown) {

@@ -1,4 +1,6 @@
-import { Pressable, StyleSheet, Text } from "react-native";
+import { Pressable, StyleSheet } from "react-native";
+import { StatsIcon } from "./icons";
+import { colors, radii } from "../theme";
 
 type StatsButtonProps = {
   statsEnabled: boolean;
@@ -8,32 +10,32 @@ type StatsButtonProps = {
 export function StatsButton({ statsEnabled, onToggle }: StatsButtonProps) {
   return (
     <Pressable
-      style={[styles.button, !statsEnabled && styles.buttonInactive]}
+      style={({ pressed }) => [
+        styles.button,
+        statsEnabled && styles.buttonActive,
+        pressed && styles.pressed,
+      ]}
       onPress={onToggle}
+      accessibilityRole="switch"
+      accessibilityLabel="Stream statistics"
+      accessibilityState={{ checked: statsEnabled }}
     >
-      <Text style={[styles.text, !statsEnabled && styles.textInactive]}>Stats</Text>
+      <StatsIcon color={statsEnabled ? colors.acid : "#b5b5ad"} />
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
   button: {
-    backgroundColor: "rgba(16,16,14,0.88)",
+    width: 44,
+    height: 44,
+    backgroundColor: "rgba(16,16,14,0.9)",
     borderWidth: 1,
     borderColor: "#3d3d36",
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    borderRadius: radii.control,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  buttonInactive: {
-    opacity: 0.55,
-  },
-  text: {
-    color: "#f2f1ec",
-    fontSize: 13,
-    fontWeight: "600",
-  },
-  textInactive: {
-    color: "#ffb13b",
-  },
+  buttonActive: { borderColor: colors.acid },
+  pressed: { opacity: 0.68 },
 });

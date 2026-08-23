@@ -3,10 +3,16 @@
     "name": "GoLive",
     "slug": "golive-mobile",
     "version": "0.1.0",
-    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "orientation": "default",
     "userInterfaceStyle": "dark",
     "newArchEnabled": true,
     "scheme": "golive",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#11110f"
+    },
     "plugins": [
       [
         "@config-plugins/react-native-webrtc",
@@ -34,6 +40,10 @@
     ],
     "android": {
       "package": "com.golive.mobile",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#11110f"
+      },
       "permissions": [
         "android.permission.INTERNET",
         "android.permission.ACCESS_NETWORK_STATE",

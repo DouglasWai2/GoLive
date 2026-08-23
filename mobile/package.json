@@ -5,7 +5,9 @@
   "main": "index.ts",
   "scripts": {
     "start": "expo start",
+    "start:device": "REACT_NATIVE_PACKAGER_HOSTNAME=192.168.18.221 expo start --dev-client --lan",
     "android": "expo run:android",
+    "android:device": "REACT_NATIVE_PACKAGER_HOSTNAME=192.168.18.221 expo run:android --device",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -22,6 +24,8 @@
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native": "0.86.2",
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-svg": "15.15.4",
     "react-native-webrtc": "^124.0.8"
   },
   "devDependencies": {
