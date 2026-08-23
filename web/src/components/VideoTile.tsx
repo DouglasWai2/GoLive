@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { PeerConnectionState, RemoteVideoStats } from "@golive/core";
 import { FullscreenIcon } from "./icons";
-import { StreamStats } from "./room/StreamStats";
+import { StreamStats, type OutboundStatsEntry } from "./room/StreamStats";
 import StatsButton from "./room/StatsButton";
 import { VolumeControl } from "./room/VolumeControl";
 
@@ -12,6 +12,7 @@ type VideoTileProps = {
   state?: PeerConnectionState;
   qualityLabel?: string | null;
   stats?: RemoteVideoStats | null;
+  outboundStats?: OutboundStatsEntry[];
   volume?: number;
   muted?: boolean;
   statsEnabled?: boolean;
@@ -21,7 +22,7 @@ type VideoTileProps = {
   onFullscreen?: () => void;
 };
 
-export function VideoTile({ stream, name, local = false, state, qualityLabel, stats, volume = 1, muted = false, statsEnabled = true, onVolumeChange, onToggleMute, onToggleStats, onFullscreen }: VideoTileProps) {
+export function VideoTile({ stream, name, local = false, state, qualityLabel, stats, outboundStats = [], volume = 1, muted = false, statsEnabled = true, onVolumeChange, onToggleMute, onToggleStats, onFullscreen }: VideoTileProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
@@ -47,7 +48,11 @@ export function VideoTile({ stream, name, local = false, state, qualityLabel, st
         {state && <span className="peer-state">{state}</span>}
       </div>
       {!local && stats && <StreamStats stats={stats} />}
-      {!local && (onVolumeChange || onToggleStats || onFullscreen) && (
+      {local && statsEnabled && outboundStats.length > 0 && (
+        <StreamStats outbound={outboundStats} />
+      )}
+      {((local && onToggleStats) ||
+        (!local && (onVolumeChange || onToggleStats || onFullscreen))) && (
         <div className="tile-controls">
           {onToggleStats && <StatsButton statsEnabled={statsEnabled} toggleStats={onToggleStats} />}
           {onVolumeChange && onToggleMute && (

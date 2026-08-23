@@ -2,7 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import { FullscreenExitIcon, ScreenIcon, UsersIcon } from "../icons";
 import { VideoTile } from "../VideoTile";
 import { StreamStats } from "./StreamStats";
-import type { Peer, PeerConnectionState, RemoteVideoStats } from "../../types";
+import type {
+  OutboundVideoStats,
+  Peer,
+  PeerConnectionState,
+  RemoteVideoStats,
+} from "../../types";
 import { exitFullscreen, getFullscreenElement, requestFullscreen } from "../../utils/fullscreen";
 import StatsButton from "./StatsButton";
 import { VolumeControl } from "./VolumeControl";
@@ -13,6 +18,7 @@ type VideoStageProps = {
   remoteStreams: Record<string, MediaStream>;
   connectionStates: Record<string, PeerConnectionState>;
   remoteStats: Record<string, RemoteVideoStats | null>;
+  outboundStats: Record<string, OutboundVideoStats>;
   localQuality: string | null;
   localName: string;
 };
@@ -21,7 +27,7 @@ const STATS_STORAGE_KEY = "golive.stats.enabled";
 const VOLUME_STORAGE_KEY = "golive.volume";
 const MUTED_STORAGE_KEY = "golive.muted";
 
-export function VideoStage({ localStream, peers, remoteStreams, connectionStates, remoteStats, localQuality, localName }: VideoStageProps) {
+export function VideoStage({ localStream, peers, remoteStreams, connectionStates, remoteStats, outboundStats, localQuality, localName }: VideoStageProps) {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showCinemaControls, setShowCinemaControls] = useState(false);
   const [statsEnabled, setStatsEnabled] = useState(() => {
@@ -58,6 +64,10 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
   const cinemaStream = cinemaPeer ? remoteStreams[cinemaPeer.id]! : null;
   const cinemaName = cinemaPeer?.name ?? "";
   const cinemaStats = cinemaPeer ? remoteStats[cinemaPeer.id] ?? null : null;
+  const localOutboundStats = peers.flatMap((peer) => {
+    const stats = outboundStats[peer.id];
+    return stats ? [{ peerId: peer.id, peerName: peer.name, stats }] : [];
+  });
 
   const clearCinemaControlsTimer = () => {
     if (cinemaControlsTimer.current !== null) {
@@ -123,11 +133,16 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
   }, [isFullscreen]);
 
   useEffect(() => {
-    if (cinemaVideoRef.current) cinemaVideoRef.current.srcObject = cinemaStream;
+    const video = cinemaVideoRef.current;
+
+    if (!video) return;
+
+    video.srcObject = isFullscreen ? cinemaStream : null;
+
     return () => {
-      if (cinemaVideoRef.current) cinemaVideoRef.current.srcObject = null;
+      if (video.srcObject === cinemaStream) video.srcObject = null;
     };
-  }, [cinemaStream]);
+  }, [cinemaStream, isFullscreen]);
 
   useEffect(() => {
     const video = cinemaVideoRef.current;
@@ -181,6 +196,10 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
 
     if (!cinemaRef.current) return;
 
+    if (cinemaVideoRef.current) {
+      cinemaVideoRef.current.srcObject = cinemaStream;
+    }
+
     try {
       videoFullscreenRef.current = false;
       await requestFullscreen(cinemaRef.current);
@@ -197,6 +216,7 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
         await requestFullscreen(video);
       } catch (caught) {
         videoFullscreenRef.current = false;
+        video.srcObject = null;
         console.warn("Could not enter fullscreen video mode", caught);
       }
     }
@@ -263,8 +283,20 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
       </div>
 
       <div className={`video-grid ${localStream || remoteTiles.length ? "has-video" : ""}`}>
-        {localStream && <VideoTile stream={localStream} name={localName} local qualityLabel={localQuality} />}
-        {remoteTiles.map((peer) => (
+        {localStream && (
+          <VideoTile
+            stream={localStream}
+            name={localName}
+            local
+            qualityLabel={localQuality}
+            outboundStats={localOutboundStats}
+            statsEnabled={statsEnabled}
+            onToggleStats={toggleStats}
+          />
+        )}
+        {remoteTiles
+          .filter((peer) => !isFullscreen || peer.id !== cinemaPeer?.id)
+          .map((peer) => (
           <VideoTile
             key={peer.id}
             stream={remoteStreams[peer.id]!}
@@ -279,7 +311,7 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
             onToggleStats={toggleStats}
             onFullscreen={() => void toggleFullscreen()}
           />
-        ))}
+          ))}
         {!localStream && remoteTiles.length === 0 && (
           <div className="empty-stage">
             <div className="screen-outline"><ScreenIcon size={38} /><span className="scan-line" /></div>

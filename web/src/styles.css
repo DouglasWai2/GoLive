@@ -139,6 +139,9 @@ button.active:hover {
 .video-tile .volume-popover, .cinema .volume-popover { top: auto; bottom: calc(100% + 8px); }
 .volume-popover input[type="range"] { width: 130px; margin: 0; accent-color: var(--acid); cursor: pointer; }
 .stream-stats { display: flex; flex-wrap: wrap; gap: 22px; max-width: calc(100% - 24px); background: rgba(16,16,14,.9); backdrop-filter: blur(8px); border: 1px solid #3b3b36; border-radius: 6px; padding: 14px 18px; transition: opacity .2s; }
+.outbound-stream-stats { flex-direction: column; gap: 10px; }
+.outbound-stream-stats-row { display: flex; flex-direction: column !important; flex-wrap: wrap; gap: 14px; }
+.outbound-stream-stats-row + .outbound-stream-stats-row { border-top: 1px solid #3b3b36; padding-top: 10px; }
 .cinema .stream-stats { position: absolute; left: 18px; bottom: 66px; }
 .video-tile .stream-stats { position: absolute; left: 12px; bottom: 56px; gap: 14px; padding: 10px 14px; }
 .stream-stats-item { display: flex; flex-direction: column; gap: 4px; }

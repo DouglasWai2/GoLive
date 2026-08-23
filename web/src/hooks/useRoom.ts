@@ -3,6 +3,7 @@ import { RoomSession } from "@golive/core";
 import type {
   Peer,
   PeerConnectionState,
+  OutboundVideoStats,
   RemoteVideoStats,
   ShareSettings,
   SocketStatus,
@@ -23,6 +24,7 @@ export function useRoom(
   const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({});
   const [connectionStates, setConnectionStates] = useState<Record<string, PeerConnectionState>>({});
   const [remoteStats, setRemoteStats] = useState<Record<string, RemoteVideoStats | null>>({});
+  const [outboundStats, setOutboundStats] = useState<Record<string, OutboundVideoStats>>({});
   const [error, setError] = useState("");
 
   const sessionRef = useRef<RoomSession | null>(null);
@@ -75,6 +77,19 @@ export function useRoom(
             return next;
           });
         },
+        onOutboundStats: (peerId, stats) => {
+          setOutboundStats((current) => {
+            const next = { ...current };
+
+            if (stats) {
+              next[peerId] = stats;
+            } else {
+              delete next[peerId];
+            }
+
+            return next;
+          });
+        },
         onError: setError,
         onSessionRejected,
         onSessionReplaced,
@@ -103,6 +118,7 @@ export function useRoom(
     remoteStreams,
     connectionStates,
     remoteStats,
+    outboundStats,
     error,
     setError,
     startSharing,

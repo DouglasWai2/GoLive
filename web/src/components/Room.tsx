@@ -56,6 +56,7 @@ export function Room({
         remoteStreams={room.remoteStreams}
         connectionStates={room.connectionStates}
         remoteStats={room.remoteStats}
+        outboundStats={room.outboundStats}
         localQuality={localQuality}
         localName={name}
       />
