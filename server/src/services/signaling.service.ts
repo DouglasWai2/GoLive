@@ -273,6 +273,11 @@ export class SignalingService {
         client.id,
       );
     }
+
+    if (message.type === "ping" && typeof message.timestamp === "number") {
+      console.log("Ping received", message.timestamp);
+      send(socket, { type: "pong", timestamp: message.timestamp });
+    }
   }
 
   private broadcast(
