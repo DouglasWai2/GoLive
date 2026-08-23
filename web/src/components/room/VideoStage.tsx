@@ -9,7 +9,13 @@ import type {
   RemoteVideoStats,
   SocketStatus,
 } from "../../types";
-import { exitFullscreen, getFullscreenElement, requestFullscreen } from "../../utils/fullscreen";
+import {
+  exitFullscreen,
+  getFullscreenElement,
+  isElementFullscreenSupported,
+  requestFullscreen,
+  requestVideoFullscreen,
+} from "../../utils/fullscreen";
 import StatsButton from "./StatsButton";
 import { VolumeControl } from "./VolumeControl";
 
@@ -57,7 +63,6 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
   const cinemaRef = useRef<HTMLDivElement>(null);
   const cinemaVideoRef = useRef<HTMLVideoElement>(null);
   const cinemaControlsTimer = useRef<number | null>(null);
-  const videoFullscreenRef = useRef(false);
 
   const activeSharer = peers.find((peer) => peer.sharing);
   const remoteTiles = peers.filter((peer) => remoteStreams[peer.id]);
@@ -113,28 +118,6 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
     return () => {
       document.removeEventListener("fullscreenchange", onChange);
       document.removeEventListener("webkitfullscreenchange", onChange);
-    };
-  }, []);
-
-  useEffect(() => {
-    const video = cinemaVideoRef.current;
-    if (!video) return;
-
-    const onBegin = () => {
-      videoFullscreenRef.current = true;
-      setIsFullscreen(true);
-    };
-    const onEnd = () => {
-      videoFullscreenRef.current = false;
-      setIsFullscreen(false);
-    };
-
-    video.addEventListener("webkitbeginfullscreen", onBegin);
-    video.addEventListener("webkitendfullscreen", onEnd);
-
-    return () => {
-      video.removeEventListener("webkitbeginfullscreen", onBegin);
-      video.removeEventListener("webkitendfullscreen", onEnd);
     };
   }, []);
 
@@ -206,35 +189,35 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
     }
   }, [volume, muted]);
 
-  const toggleFullscreen = async () => {
+  const toggleFullscreen = async (sourceVideo: HTMLVideoElement) => {
     if (getFullscreenElement()) {
-      await exitFullscreen(videoFullscreenRef.current ? cinemaVideoRef.current ?? undefined : undefined);
+      await exitFullscreen();
       return;
     }
 
     if (!cinemaRef.current) return;
+
+    if (!isElementFullscreenSupported()) {
+      try {
+        await requestVideoFullscreen(sourceVideo);
+      } catch (caught) {
+        console.warn("Could not enter fullscreen video mode", caught);
+      }
+      return;
+    }
 
     if (cinemaVideoRef.current) {
       cinemaVideoRef.current.srcObject = cinemaStream;
     }
 
     try {
-      videoFullscreenRef.current = false;
       await requestFullscreen(cinemaRef.current);
     } catch {
-      const video = cinemaVideoRef.current;
-
-      if (!video) {
-        console.warn("Could not enter fullscreen video mode");
-        return;
-      }
+      if (cinemaVideoRef.current) cinemaVideoRef.current.srcObject = null;
 
       try {
-        videoFullscreenRef.current = true;
-        await requestFullscreen(video);
+        await requestVideoFullscreen(sourceVideo);
       } catch (caught) {
-        videoFullscreenRef.current = false;
-        video.srcObject = null;
         console.warn("Could not enter fullscreen video mode", caught);
       }
     }
@@ -327,7 +310,7 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
             onVolumeChange={changeVolume}
             onToggleMute={toggleMute}
             onToggleStats={toggleStats}
-            onFullscreen={() => void toggleFullscreen()}
+            onFullscreen={(video) => void toggleFullscreen(video)}
           />
           ))}
         {!localStream && remoteTiles.length === 0 && (
@@ -359,7 +342,7 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
             onVolumeChange={changeVolume}
             onToggleMute={toggleMute}
           />
-          <button className="icon-button" onClick={() => void exitFullscreen(videoFullscreenRef.current ? cinemaVideoRef.current ?? undefined : undefined)} title="Exit fullscreen">
+          <button className="icon-button" onClick={() => void exitFullscreen()} title="Exit fullscreen">
             <FullscreenExitIcon /> Exit fullscreen
           </button>
         </div>

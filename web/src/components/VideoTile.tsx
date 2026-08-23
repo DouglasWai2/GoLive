@@ -19,7 +19,7 @@ type VideoTileProps = {
   onVolumeChange?: (volume: number) => void;
   onToggleMute?: () => void;
   onToggleStats?: () => void;
-  onFullscreen?: () => void;
+  onFullscreen?: (video: HTMLVideoElement) => void;
 };
 
 export function VideoTile({ stream, name, local = false, state, qualityLabel, stats, outboundStats = [], volume = 1, muted = false, statsEnabled = true, onVolumeChange, onToggleMute, onToggleStats, onFullscreen }: VideoTileProps) {
@@ -64,7 +64,14 @@ export function VideoTile({ stream, name, local = false, state, qualityLabel, st
             />
           )}
           {onFullscreen && (
-            <button className="icon-button" onClick={onFullscreen} title="Fullscreen" aria-label="Fullscreen">
+            <button
+              className="icon-button"
+              onClick={() => {
+                if (videoRef.current) onFullscreen(videoRef.current);
+              }}
+              title="Fullscreen"
+              aria-label="Fullscreen"
+            >
               <FullscreenIcon />
             </button>
           )}
