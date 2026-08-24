@@ -10,6 +10,7 @@ const MESSAGE_WINDOW_MS = 10_000;
 const MAX_PEERS_PER_ROOM = 10;
 const AUTH_TIMEOUT_MS = 10_000;
 const SESSION_REPLACED_CODE = 4001;
+const SESSION_REJECTED_CODE = 4003;
 const HEARTBEAT_LEASE_MS = 150_000;
 
 const connectionsByIp = new Map<string, number>();
@@ -118,6 +119,14 @@ export class SignalingService {
           return;
         }
 
+        if (!this.rooms.isCurrentRoomInstance(
+          verified.roomId,
+          verified.roomInstanceId,
+        )) {
+          socket.close(SESSION_REJECTED_CODE, "Room session expired");
+          return;
+        }
+
         session = verified;
         clearTimeout(authTimeout);
         send(socket, { type: "authenticated" });
@@ -160,25 +169,25 @@ export class SignalingService {
     session: RoomToken,
     leaveRoom: () => void,
   ): Membership | undefined {
-    const roomId = message.room.trim();
-    const name = message.name.trim();
-
     if (message.room !== session.roomId || message.name !== session.name) {
       socket.close(1008, "Session mismatch");
       return;
     }
 
-    if (!roomId || !/^[a-zA-Z0-9_-]{1,64}$/.test(roomId)) {
-      send(socket, { type: "error", message: "Invalid room ID." });
+    if (!this.rooms.isCurrentRoomInstance(
+      session.roomId,
+      session.roomInstanceId,
+    )) {
+      socket.close(SESSION_REJECTED_CODE, "Room session expired");
       return;
     }
 
-    if (!name || name.length > 32) {
-      send(socket, {
-        type: "error",
-        message: "Enter a name up to 32 characters.",
-      });
-      return;
+    const roomId = session.roomId;
+    const name = session.name;
+    const currentClient = this.rooms.getClient(roomId, session.sessionId);
+
+    if (currentClient?.socket === socket) {
+      return { roomId, client: currentClient };
     }
 
     leaveRoom();
@@ -190,10 +199,6 @@ export class SignalingService {
      * (reload, or a new tab) maps to the same peer.
      */
     const peerId = session.sessionId;
-
-    if (session.host) {
-      this.rooms.claimHost(roomId, peerId);
-    }
 
     const existing = room.get(peerId);
     const previousHeartbeatOwnerId = this.rooms.getHeartbeatOwner(roomId);

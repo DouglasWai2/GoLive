@@ -9,6 +9,11 @@ import { registerErrorHandler } from "./middlewares/error-handler.js";
 import { registerRoutes } from "./routes/index.js";
 
 export async function buildApp() {
+  const jwtSecret = env.jwtSecret;
+  if (!jwtSecret) {
+    throw new Error("JWT_SECRET is required");
+  }
+
   const app = Fastify({ logger: true });
 
   await app.register(websocket, {
@@ -23,7 +28,14 @@ export async function buildApp() {
 
   await app.register(helmet);
   await app.register(jwt, {
-    secret: env.jwtSecret ?? "insecure-dev-secret",
+    secret: jwtSecret,
+    sign: {
+      algorithm: "HS256",
+    },
+    verify: {
+      algorithms: ["HS256"],
+      requiredClaims: ["iat", "exp"],
+    },
   });
 
   await app.register(rateLimit, {

@@ -67,7 +67,9 @@ VITE_SIGNALING_URL=wss://signal.example.com/ws npm run build -w web
 Set the server-side variables on the signaling server:
 
 - `ORIGIN=https://example.com` — the web app origin, so CORS permits it.
-- `JWT_SECRET` and `ADMIN_SECRET` — required to enable the admin dashboard.
+- `JWT_SECRET` — required for the signaling server to start. Use a
+  cryptographically random secret with at least 32 bytes of entropy.
+- `ADMIN_SECRET` — required only to enable the admin dashboard.
 - Cloudflare TURN credentials and analytics variables, to relay connections
   that cannot go peer-to-peer until monthly egress reaches the switch limit.
 - ExpressTURN URLs and credentials, to provide the fallback relay service.
@@ -91,7 +93,7 @@ files (server and web) as templates.
 | `PORT` | `3000` | Port the signaling server listens on. |
 | `HOST` | `0.0.0.0` | Address the signaling server binds to. |
 | `ORIGIN` | — | CORS allow-origin for the web app. Required when the web app and server are on different origins. |
-| `JWT_SECRET` | — | Secret used to sign room session JWTs. Authenticates `/session` and WebSocket room joins. |
+| `JWT_SECRET` | — | Required secret used to sign invite, room session, and admin JWTs. The server will not start without it. |
 | `ADMIN_SECRET` | — | Shared secret exchanged for a one-hour admin JWT. Admin endpoints are disabled unless this and `JWT_SECRET` are explicitly set. |
 | `CLOUDFLARE_TURN_KEY_ID` | — | Cloudflare TURN key ID used by the server. |
 | `CLOUDFLARE_TURN_API_TOKEN` | — | Cloudflare API token used to generate temporary TURN credentials. |

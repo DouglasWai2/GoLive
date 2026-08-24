@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { FastifyRequest, FastifyReply } from "fastify";
 import { RoomService } from "../services/room.service.js";
-import type { InviteToken, RoomToken } from "../types/room.js";
+import { isInviteToken, type RoomToken } from "../types/room.js";
 
 const INVITE_TTL_SECONDS = 24 * 60 * 60;
 const ROOM_SESSION_TTL_SECONDS = 8 * 60 * 60;
@@ -25,12 +25,15 @@ export function createInviteController(roomService: RoomService, app: FastifyIns
       const { roomId } = request.body as CreateInviteBody;
       const user = request.user as RoomToken;
 
-      if (user.roomId !== roomId) {
+      if (
+        user.roomId !== roomId
+        || !roomService.isCurrentRoomInstance(roomId, user.roomInstanceId)
+      ) {
         return reply.code(403).send({ error: "Session does not match this room." });
       }
 
       const inviteToken = app.jwt.sign(
-        { kind: "invite", roomId },
+        { kind: "invite", roomId, roomInstanceId: user.roomInstanceId },
         { expiresIn: INVITE_TTL_SECONDS },
       );
 
@@ -43,21 +46,29 @@ export function createInviteController(roomService: RoomService, app: FastifyIns
     ): Promise<FastifyReply> {
       const { roomId, name, inviteToken } = request.body as VerifyInviteBody;
 
-      let invite: InviteToken;
+      let invite: Record<string, unknown>;
       try {
-        invite = app.jwt.verify<InviteToken>(inviteToken);
+        invite = app.jwt.verify<Record<string, unknown>>(inviteToken);
       } catch {
         return reply.code(401).send({ error: "Invalid or expired invite." });
       }
 
-      if (invite.kind !== "invite" || invite.roomId !== roomId) {
+      if (
+        !isInviteToken(invite)
+        || invite.roomId !== roomId
+        || !roomService.isCurrentRoomInstance(invite.roomId, invite.roomInstanceId)
+      ) {
         return reply.code(403).send({ error: "Invite does not match this room." });
       }
 
-      const session = roomService.createSession(roomId, name);
+      const session = roomService.createSession(
+        invite.roomId,
+        name,
+        invite.roomInstanceId,
+      );
 
-    const token = app.jwt.sign(
-        { kind: "room", sessionId: session.sessionId, roomId, name, host: false },
+      const token = app.jwt.sign(
+        { ...session, host: false },
         { expiresIn: ROOM_SESSION_TTL_SECONDS },
       );
 

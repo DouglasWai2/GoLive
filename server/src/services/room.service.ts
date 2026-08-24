@@ -4,21 +4,25 @@ import type { Client, Peer, RoomSession, RoomsSnapshot } from "../types/room.js"
 export class RoomService {
   private readonly rooms = new Map<string, Map<string, Client>>();
   private readonly hosts = new Map<string, string>();
+  private readonly roomInstances = new Map<string, string>();
   private readonly heartbeatOwners = new Map<string, string>();
 
-  hasHost(roomId: string): boolean {
-    return this.hosts.has(roomId);
-  }
+  createRoomSession(roomId: string, name: string): RoomSession | undefined {
+    if (this.hosts.has(roomId) || this.rooms.has(roomId)) return undefined;
 
-  claimHost(roomId: string, sessionId: string): boolean {
-    if (this.hosts.has(roomId)) return false;
-
-    this.hosts.set(roomId, sessionId);
-    return true;
+    const roomInstanceId = randomUUID();
+    const session = this.createSession(roomId, name, roomInstanceId);
+    this.hosts.set(roomId, session.sessionId);
+    this.roomInstances.set(roomId, roomInstanceId);
+    return session;
   }
 
   isHost(roomId: string, sessionId: string): boolean {
     return this.hosts.get(roomId) === sessionId;
+  }
+
+  isCurrentRoomInstance(roomId: string, roomInstanceId: string): boolean {
+    return this.roomInstances.get(roomId) === roomInstanceId;
   }
 
   getHeartbeatOwner(roomId: string): string | undefined {
@@ -71,11 +75,12 @@ export class RoomService {
     return ownerId;
   }
 
-  createSession(roomId: string, name: string): RoomSession {
+  createSession(roomId: string, name: string, roomInstanceId: string): RoomSession {
     const session: RoomSession = {
       kind: "room",
       sessionId: randomUUID(),
       roomId,
+      roomInstanceId,
       name: name.trim(),
     };
 
@@ -109,6 +114,7 @@ export class RoomService {
     if (room.size === 0) {
       this.rooms.delete(roomId);
       this.hosts.delete(roomId);
+      this.roomInstances.delete(roomId);
       this.heartbeatOwners.delete(roomId);
       return;
     }

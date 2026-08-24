@@ -153,6 +153,49 @@ test("joins without TURN and only the elected owner pings", () => {
   }
 });
 
+test("clears a session rejected after WebSocket authentication", () => {
+  const originalWebSocket = globalThis.WebSocket;
+  let rejected = 0;
+  const errors: string[] = [];
+
+  globalThis.WebSocket = FakeSocket as unknown as typeof WebSocket;
+  const session = new RoomSession(
+    {
+      onStatus: () => {},
+      onPeers: () => {},
+      onLocalStream: () => {},
+      onIsStartingShare: () => {},
+      onRemoteStream: () => {},
+      onConnectionState: () => {},
+      onRemoteStats: () => {},
+      onOutboundStats: () => {},
+      onError: (message) => {
+        if (message) errors.push(message);
+      },
+      onSessionRejected: () => {
+        rejected += 1;
+      },
+    },
+    { baseUrl: "https://signal.example.com", adapter: {} as PlatformAdapter },
+  );
+
+  try {
+    session.start("room-id", "Guest", "room-token");
+    const socket = FakeSocket.instance;
+    assert.ok(socket);
+    socket.open();
+    socket.receive({ type: "authenticated" });
+    socket.onclose?.({ code: 4003 });
+
+    assert.equal(rejected, 1);
+    assert.deepEqual(errors, []);
+  } finally {
+    session.stop();
+    globalThis.WebSocket = originalWebSocket;
+    FakeSocket.instance = null;
+  }
+});
+
 test("requests TURN only after direct ICE fails and rebuilds the viewer", async () => {
   const originalWebSocket = globalThis.WebSocket;
   const originalFetch = globalThis.fetch;

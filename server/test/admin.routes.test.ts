@@ -23,9 +23,16 @@ function configureAdmin(): void {
   process.env.JWT_SECRET = "test-jwt-secret-with-enough-entropy";
 }
 
-test("admin login fails closed without both explicit secrets", async () => {
+test("server refuses to start without an explicit JWT secret", async () => {
   delete process.env.ADMIN_SECRET;
   delete process.env.JWT_SECRET;
+
+  await assert.rejects(buildApp(), /JWT_SECRET is required/);
+});
+
+test("admin login fails closed without an explicit admin secret", async () => {
+  delete process.env.ADMIN_SECRET;
+  process.env.JWT_SECRET = "test-jwt-secret-with-enough-entropy";
   const app = await buildApp();
 
   try {

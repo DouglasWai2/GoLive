@@ -28,6 +28,13 @@ export function registerTurnRoutes(
             return reply.code(401).send({ error: "Unauthorized" });
           }
 
+          if (!roomService.isCurrentRoomInstance(
+            request.user.roomId,
+            request.user.roomInstanceId,
+          )) {
+            return reply.code(403).send({ error: "Room session expired" });
+          }
+
           const session = roomService.getClient(
             request.user.roomId,
             request.user.sessionId,

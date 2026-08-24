@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { createInviteController } from "../controllers/invite.controller.js";
 import { RoomService } from "../services/room.service.js";
 import { isRoomToken } from "../types/room.js";
+import { ROOM_ID_PATTERN } from "../utils/room-id.js";
 
 export function registerInviteRoutes(
   app: FastifyInstance,
@@ -37,7 +38,8 @@ export function registerInviteRoutes(
             roomId: {
               type: "string",
               minLength: 8,
-              maxLength: 128,
+              maxLength: 64,
+              pattern: ROOM_ID_PATTERN,
             },
           },
         },
@@ -64,7 +66,8 @@ export function registerInviteRoutes(
             roomId: {
               type: "string",
               minLength: 8,
-              maxLength: 128,
+              maxLength: 64,
+              pattern: ROOM_ID_PATTERN,
             },
             name: {
               type: "string",

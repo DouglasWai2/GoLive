@@ -5,7 +5,7 @@ export function createRoomId(): string {
 }
 
 export function roomFromPath(): string | null {
-  const match = window.location.pathname.match(/^\/room\/([a-zA-Z0-9_-]{1,64})\/?$/);
+  const match = window.location.pathname.match(/^\/room\/([a-zA-Z0-9_-]{8,64})\/?$/);
   return match?.[1] ?? null;
 }
 

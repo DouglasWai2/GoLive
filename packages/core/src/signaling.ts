@@ -41,6 +41,7 @@ export type JoinRoomResult = {
     kind: "room";
     sessionId: string;
     roomId: string;
+    roomInstanceId: string;
     name: string;
   };
   token: string;
@@ -173,7 +174,7 @@ export type InviteLink = {
 
 export function parseInviteUrl(url: string): InviteLink | null {
   const roomMatch = url.match(
-    /(?:\/room\/)([a-zA-Z0-9_-]{1,64})(?:\?(?:[^#]*?&)?token=([^&#\s]+))?/,
+    /(?:\/room\/)([a-zA-Z0-9_-]{8,64})(?:\?(?:[^#]*?&)?token=([^&#\s]+))?/,
   );
   const roomId = roomMatch?.[1] ?? null;
   const inviteToken = roomMatch?.[2] ?? null;

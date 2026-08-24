@@ -20,22 +20,46 @@ function client(
 
 test("elects a guest temporarily and restores the creator", () => {
   const rooms = new RoomService();
+  const creator = rooms.createRoomSession("room-id", "creator");
+  assert.ok(creator);
   const room = rooms.getRoom("room-id");
 
-  rooms.claimHost("room-id", "creator");
-  room.set("creator", client("creator"));
+  room.set(creator.sessionId, client(creator.sessionId));
   room.set("guest-a", client("guest-a"));
   room.set("guest-b", client("guest-b"));
 
-  assert.equal(rooms.refreshHeartbeatOwner("room-id"), "creator");
+  assert.equal(rooms.refreshHeartbeatOwner("room-id"), creator.sessionId);
 
-  rooms.removeClient("room-id", "creator");
+  rooms.removeClient("room-id", creator.sessionId);
   assert.equal(rooms.getHeartbeatOwner("room-id"), "guest-a");
 
   assert.equal(rooms.rotateHeartbeatOwner("room-id"), "guest-b");
 
-  room.set("creator", client("creator"));
-  assert.equal(rooms.reclaimHostHeartbeat("room-id", "creator"), "creator");
+  room.set(creator.sessionId, client(creator.sessionId));
+  assert.equal(
+    rooms.reclaimHostHeartbeat("room-id", creator.sessionId),
+    creator.sessionId,
+  );
+});
+
+test("invalidates the room instance when its last client leaves", () => {
+  const rooms = new RoomService();
+  const creator = rooms.createRoomSession("room-id", "creator");
+  assert.ok(creator);
+  rooms.getRoom("room-id").set(creator.sessionId, client(creator.sessionId));
+
+  assert.equal(
+    rooms.isCurrentRoomInstance("room-id", creator.roomInstanceId),
+    true,
+  );
+
+  rooms.removeClient("room-id", creator.sessionId);
+
+  assert.equal(
+    rooms.isCurrentRoomInstance("room-id", creator.roomInstanceId),
+    false,
+  );
+  assert.ok(rooms.createRoomSession("room-id", "new creator"));
 });
 
 test("returns a sanitized active-room snapshot", () => {

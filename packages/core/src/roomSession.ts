@@ -45,6 +45,7 @@ export type RoomSessionCallbacks = {
 
 const SOCKET_CONNECTING = 0;
 const SOCKET_OPEN = 1;
+const SESSION_REJECTED_CODE = 4003;
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 15_000;
 const CAPTURE_RECOVERY_MS = 30_000;
@@ -549,6 +550,14 @@ export class RoomSession {
 
       this.peers = [];
       this.callbacks.onPeers([]);
+
+      if (event.code === SESSION_REJECTED_CODE) {
+        this.terminal = true;
+        this.callbacks.onStatus("disconnected");
+        this.stopSharing();
+        this.callbacks.onSessionRejected?.();
+        return;
+      }
 
       /*
        * The server closes with 1008 when the room token is
