@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { createInviteController } from "../controllers/invite.controller.js";
 import { RoomService } from "../services/room.service.js";
+import { isRoomToken } from "../types/room.js";
 
 export function registerInviteRoutes(
   app: FastifyInstance,
@@ -20,6 +21,9 @@ export function registerInviteRoutes(
       preHandler: async (request, reply) => {
         try {
           await request.jwtVerify();
+          if (!isRoomToken(request.user)) {
+            return reply.code(401).send({ error: "Unauthorized" });
+          }
         } catch {
           return reply.code(401).send({ error: "Unauthorized" });
         }

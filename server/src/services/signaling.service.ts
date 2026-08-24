@@ -10,10 +10,16 @@ const MESSAGE_WINDOW_MS = 10_000;
 const MAX_PEERS_PER_ROOM = 10;
 const AUTH_TIMEOUT_MS = 10_000;
 const SESSION_REPLACED_CODE = 4001;
+const HEARTBEAT_LEASE_MS = 150_000;
 
 const connectionsByIp = new Map<string, number>();
 
 export class SignalingService {
+  private readonly heartbeatLeases = new Map<
+    string,
+    ReturnType<typeof setTimeout>
+  >();
+
   constructor(
     private readonly rooms: RoomService,
     private readonly verifyRoomToken: (token: string) => RoomToken | null,
@@ -47,8 +53,20 @@ export class SignalingService {
        * new active connection when its old socket closes.
        */
       if (this.rooms.getClient(roomId, client.id)?.socket === client.socket) {
+        const previousHeartbeatOwnerId = this.rooms.getHeartbeatOwner(roomId);
         this.rooms.removeClient(roomId, client.id);
         this.broadcast(roomId, { type: "peer-left", peerId: client.id });
+
+        const heartbeatOwnerId = this.rooms.getHeartbeatOwner(roomId);
+        if (heartbeatOwnerId && heartbeatOwnerId !== previousHeartbeatOwnerId) {
+          this.broadcast(roomId, {
+            type: "heartbeat-owner",
+            peerId: heartbeatOwnerId,
+          });
+        }
+
+        if (heartbeatOwnerId) this.scheduleHeartbeatLease(roomId, heartbeatOwnerId);
+        else this.clearHeartbeatLease(roomId);
       }
 
       membership = undefined;
@@ -173,7 +191,12 @@ export class SignalingService {
      */
     const peerId = session.sessionId;
 
+    if (session.host) {
+      this.rooms.claimHost(roomId, peerId);
+    }
+
     const existing = room.get(peerId);
+    const previousHeartbeatOwnerId = this.rooms.getHeartbeatOwner(roomId);
 
     if (existing && existing.socket !== socket) {
       /*
@@ -213,13 +236,31 @@ export class SignalingService {
       .filter((peer) => peer.id !== peerId)
       .map((peer) => this.rooms.toPeer(peer));
     room.set(client.id, client);
+    const heartbeatOwnerId = this.rooms.isHost(roomId, peerId)
+      ? this.rooms.reclaimHostHeartbeat(roomId, peerId) ?? client.id
+      : this.rooms.refreshHeartbeatOwner(roomId) ?? client.id;
+    this.scheduleHeartbeatLease(roomId, heartbeatOwnerId);
 
-    send(socket, { type: "room-state", selfId: client.id, peers });
+    send(socket, {
+      type: "room-state",
+      selfId: client.id,
+      heartbeatOwnerId,
+      isHost: this.rooms.isHost(roomId, client.id),
+      peers,
+    });
     this.broadcast(
       roomId,
       { type: "peer-joined", peer: this.rooms.toPeer(client) },
       client.id,
     );
+
+    if (heartbeatOwnerId !== previousHeartbeatOwnerId) {
+      this.broadcast(
+        roomId,
+        { type: "heartbeat-owner", peerId: heartbeatOwnerId },
+        client.id,
+      );
+    }
 
     return { roomId, client };
   }
@@ -231,6 +272,21 @@ export class SignalingService {
   ): void {
     const { roomId, client } = membership;
     const room = this.rooms.getRoom(roomId);
+
+    if (
+      message.type !== "ping"
+      && this.rooms.isHost(roomId, client.id)
+      && this.rooms.getHeartbeatOwner(roomId) !== client.id
+    ) {
+      const heartbeatOwnerId = this.rooms.reclaimHostHeartbeat(roomId, client.id);
+      if (heartbeatOwnerId) {
+        this.broadcast(roomId, {
+          type: "heartbeat-owner",
+          peerId: heartbeatOwnerId,
+        });
+        this.scheduleHeartbeatLease(roomId, heartbeatOwnerId);
+      }
+    }
 
     if (message.type === "signal") {
       const signal = message.data as Record<string, unknown>;
@@ -283,9 +339,12 @@ export class SignalingService {
     }
 
     if (message.type === "ping" && typeof message.timestamp === "number") {
-      console.log("Ping received", message.timestamp);
-      send(socket, { type: "pong", timestamp: message.timestamp });
+      if (this.rooms.getHeartbeatOwner(roomId) === client.id) {
+        send(socket, { type: "pong", timestamp: message.timestamp });
+        this.scheduleHeartbeatLease(roomId, client.id);
+      }
     }
+
   }
 
   private broadcast(
@@ -296,6 +355,41 @@ export class SignalingService {
     for (const client of this.rooms.findRoom(roomId)?.values() ?? []) {
       if (client.id !== excludedPeerId) send(client.socket, message);
     }
+  }
+
+  private scheduleHeartbeatLease(roomId: string, ownerId: string): void {
+    this.clearHeartbeatLease(roomId);
+
+    const timer = setTimeout(() => {
+      this.heartbeatLeases.delete(roomId);
+
+      if (this.rooms.getHeartbeatOwner(roomId) !== ownerId) {
+        return;
+      }
+
+      const nextOwnerId = this.rooms.rotateHeartbeatOwner(roomId);
+      if (!nextOwnerId) return;
+
+      if (nextOwnerId !== ownerId) {
+        this.broadcast(roomId, {
+          type: "heartbeat-owner",
+          peerId: nextOwnerId,
+        });
+      }
+
+      this.scheduleHeartbeatLease(roomId, nextOwnerId);
+    }, HEARTBEAT_LEASE_MS);
+
+    timer.unref?.();
+    this.heartbeatLeases.set(roomId, timer);
+  }
+
+  private clearHeartbeatLease(roomId: string): void {
+    const timer = this.heartbeatLeases.get(roomId);
+    if (!timer) return;
+
+    clearTimeout(timer);
+    this.heartbeatLeases.delete(roomId);
   }
 }
 
@@ -329,6 +423,10 @@ function parseMessage(raw: Buffer | ArrayBuffer | Buffer[]): ClientMessage | nul
 
     if (message.type === "ping" && typeof message.timestamp === "number") {
       return { type: "ping", timestamp: message.timestamp };
+    }
+
+    if (message.type === "heartbeat-reclaim") {
+      return { type: "heartbeat-reclaim" };
     }
 
     return null;

@@ -1,12 +1,20 @@
-import type { CloudflareGraphQlResponse, CloudflareTurnUsage } from "../types/turn.js";
 import { env } from "../config/env.js";
+import type {
+  CloudflareGraphQlResponse,
+  CloudflareTurnUsage,
+  IceServer,
+  TurnCredentialsResponse,
+} from "../types/turn.js";
 
-const TURN_USAGE_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+const TURN_USAGE_CACHE_TTL_MS = 10 * 60 * 1000;
+const TURN_CREDENTIAL_TTL_SECONDS = 8 * 60 * 60;
+const PROVIDER_TIMEOUT_MS = 8_000;
 
 export class TurnServiceError extends Error {
   constructor(
     message: string,
     readonly status = 500,
+    readonly code = "TURN_ERROR",
   ) {
     super(message);
   }
@@ -16,17 +24,116 @@ function toDateString(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
 
-export class TurnService {
-  private cachedTurnUsage: CloudflareTurnUsage | null = null;
-  private cacheExpiresAt = 0;
-  private inFlightRequest: Promise<CloudflareTurnUsage> | null = null;
+function monthStart(date: Date): Date {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
+}
 
-  async generateIceServers(): Promise<unknown> {
+function parseIceServers(value: unknown): IceServer[] {
+  if (!value || typeof value !== "object") return [];
+
+  const entries = (value as { iceServers?: unknown }).iceServers;
+  if (!Array.isArray(entries)) return [];
+
+  return entries.filter((entry): entry is IceServer => {
+    if (!entry || typeof entry !== "object") return false;
+
+    const server = entry as Record<string, unknown>;
+    const urls = typeof server.urls === "string"
+      ? [server.urls]
+      : Array.isArray(server.urls)
+        ? server.urls.filter((url): url is string => typeof url === "string")
+        : [];
+
+    if (urls.length === 0) return false;
+
+    const isTurn = urls.some((url) => /^turns?:/i.test(url));
+    return !isTurn
+      || (typeof server.username === "string"
+        && typeof server.credential === "string");
+  });
+}
+
+function containsTurnServer(servers: IceServer[]): boolean {
+  return servers.some((server) => {
+    const urls = Array.isArray(server.urls) ? server.urls : [server.urls];
+    return urls.some((url) => /^turns?:/i.test(url));
+  });
+}
+
+export class TurnService {
+  private cachedTurnUsage: {
+    month: string;
+    expiresAt: number;
+    usage: CloudflareTurnUsage;
+  } | null = null;
+  private inFlightRequest: {
+    month: string;
+    promise: Promise<CloudflareTurnUsage>;
+  } | null = null;
+
+  async generateIceServers(now = new Date()): Promise<TurnCredentialsResponse> {
+    if (env.turnKeyId && env.turnApiToken) {
+      try {
+        const usage = await this.getCachedUsage(monthStart(now), now);
+
+        if (usage.egressGB < env.cloudflareTurnSwitchGB) {
+          try {
+            return await this.generateCloudflareIceServers();
+          } catch (error) {
+            console.warn("Cloudflare TURN credentials failed; using ExpressTURN", error);
+          }
+        }
+      } catch (error) {
+        console.warn("Cloudflare TURN usage unavailable; using ExpressTURN", error);
+      }
+    }
+
+    return this.getExpressTurnIceServers();
+  }
+
+  async getCachedUsage(
+    from: Date,
+    to: Date = new Date(),
+  ): Promise<CloudflareTurnUsage> {
+    const now = Date.now();
+    const cacheMonth = toDateString(from);
+
+    if (
+      this.cachedTurnUsage
+      && this.cachedTurnUsage.month === cacheMonth
+      && now < this.cachedTurnUsage.expiresAt
+    ) {
+      return this.cachedTurnUsage.usage;
+    }
+
+    if (this.inFlightRequest?.month === cacheMonth) {
+      return this.inFlightRequest.promise;
+    }
+
+    const promise = this.getUsage(from, to);
+    this.inFlightRequest = { month: cacheMonth, promise };
+
+    try {
+      const usage = await promise;
+      this.cachedTurnUsage = {
+        month: cacheMonth,
+        expiresAt: Date.now() + TURN_USAGE_CACHE_TTL_MS,
+        usage,
+      };
+      return usage;
+    } finally {
+      if (this.inFlightRequest?.promise === promise) {
+        this.inFlightRequest = null;
+      }
+    }
+  }
+
+  private async generateCloudflareIceServers(): Promise<TurnCredentialsResponse> {
     const turnKeyId = env.turnKeyId;
     const turnApiToken = env.turnApiToken;
 
     if (!turnKeyId || !turnApiToken) {
-      throw new TurnServiceError("TURN configuration missing");
+      throw new Error("Cloudflare TURN configuration missing");
     }
 
     const response = await fetch(
@@ -37,141 +144,98 @@ export class TurnService {
           Authorization: `Bearer ${turnApiToken}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          ttl: 86400,
-        }),
+        body: JSON.stringify({ ttl: TURN_CREDENTIAL_TTL_SECONDS }),
+        signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
       },
     );
 
     if (!response.ok) {
-      const error = await response.text();
+      throw new Error(`Cloudflare credentials request failed: ${response.status}`);
+    }
 
+    const iceServers = parseIceServers(await response.json());
+    if (!containsTurnServer(iceServers)) {
+      throw new Error("Cloudflare returned no TURN server");
+    }
+
+    return { iceServers };
+  }
+
+  private getExpressTurnIceServers(): TurnCredentialsResponse {
+    const urls = env.expressTurnUrls;
+    const username = env.expressTurnUsername;
+    const credential = env.expressTurnCredential;
+
+    if (env.expressTurnDisabled || urls.length === 0 || !username || !credential) {
       throw new TurnServiceError(
-        `Failed to generate TURN credentials: ${response.status} ${error}`,
-        502,
+        "TURN relay is temporarily unavailable",
+        503,
+        "TURN_UNAVAILABLE",
       );
     }
 
-    return response.json();
+    return {
+      iceServers: [{ urls, username, credential }],
+    };
   }
 
-  async getCachedUsage(from: Date, to: Date = new Date()): Promise<CloudflareTurnUsage> {
-    const now = Date.now();
-
-    if (this.cachedTurnUsage && now < this.cacheExpiresAt) {
-      return this.cachedTurnUsage;
-    }
-
-    if (this.inFlightRequest) {
-      return this.inFlightRequest;
-    }
-
-    this.inFlightRequest = this.getUsage(from, to);
-
-    try {
-      const usage = await this.inFlightRequest;
-
-      this.cachedTurnUsage = usage;
-      this.cacheExpiresAt = Date.now() + TURN_USAGE_CACHE_TTL;
-
-      return usage;
-    } catch (error) {
-      // Analytics unavailable? Prefer an old value over failing completely.
-      if (this.cachedTurnUsage) {
-        console.warn(
-          "Cloudflare analytics failed; using stale TURN usage cache",
-          error,
-        );
-        return this.cachedTurnUsage;
-      }
-
-      throw error;
-    } finally {
-      this.inFlightRequest = null;
-    }
-  }
-
-  private async getUsage(from: Date, to: Date = new Date()): Promise<CloudflareTurnUsage> {
+  private async getUsage(
+    from: Date,
+    to: Date = new Date(),
+  ): Promise<CloudflareTurnUsage> {
     const accountId = env.cloudflareAccountId;
     const apiToken = env.cloudflareAnalyticsApiToken;
 
-    if (!accountId) {
-      throw new Error("CLOUDFLARE_ACCOUNT_ID is missing");
-    }
-
-    if (!apiToken) {
-      throw new Error("CLOUDFLARE_ANALYTICS_API_TOKEN is missing");
+    if (!accountId || !apiToken) {
+      throw new Error("Cloudflare analytics configuration missing");
     }
 
     const dateFrom = toDateString(from);
     const dateTo = toDateString(to);
-
     const query = `
       query TurnUsage {
         viewer {
-          accounts(
-            filter: {
-              accountTag: "${accountId}"
-            }
-          ) {
+          accounts(filter: { accountTag: "${accountId}" }) {
             callsTurnUsageAdaptiveGroups(
               limit: 1
-              filter: {
-                date_geq: "${dateFrom}"
-                date_leq: "${dateTo}"
-              }
+              filter: { date_geq: "${dateFrom}", date_leq: "${dateTo}" }
             ) {
-              sum {
-                egressBytes
-                ingressBytes
-              }
+              sum { egressBytes ingressBytes }
             }
           }
         }
       }
     `;
 
-    const response = await fetch(
-      "https://api.cloudflare.com/client/v4/graphql",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ query }),
+    const response = await fetch("https://api.cloudflare.com/client/v4/graphql", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiToken}`,
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({ query }),
+      signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
+    });
 
     if (!response.ok) {
-      const body = await response.text();
-      throw new Error(
-        `Cloudflare analytics request failed: ${response.status} ${body}`,
-      );
+      throw new Error(`Cloudflare analytics request failed: ${response.status}`);
     }
 
     const result = (await response.json()) as CloudflareGraphQlResponse;
-
     if (result.errors?.length) {
-      throw new Error(
-        `Cloudflare GraphQL error: ${result.errors
-          .map((error) => error.message)
-          .join(", ")}`,
-      );
+      throw new Error("Cloudflare analytics returned an error");
     }
 
-    const sum =
-      result.data?.viewer?.accounts?.[0]?.callsTurnUsageAdaptiveGroups?.[0]?.sum;
+    const account = result.data?.viewer?.accounts?.[0];
+    if (!account) {
+      throw new Error("Cloudflare analytics returned no account data");
+    }
 
+    const sum = account.callsTurnUsageAdaptiveGroups?.[0]?.sum;
     const egressBytes = sum?.egressBytes ?? 0;
     const ingressBytes = sum?.ingressBytes ?? 0;
-
-    // Cloudflare prices in decimal GB: 1 GB = 1,000,000,000 bytes
     const egressGB = egressBytes / 1_000_000_000;
     const ingressGB = ingressBytes / 1_000_000_000;
-
-    // Cloudflare Realtime free allowance: 1000 GB egress.
-    const freeTierPercent = (egressGB / 1000) * 100;
 
     return {
       from: dateFrom,
@@ -180,7 +244,7 @@ export class TurnService {
       ingressBytes,
       egressGB,
       ingressGB,
-      freeTierPercent,
+      freeTierPercent: (egressGB / 1000) * 100,
     };
   }
 }

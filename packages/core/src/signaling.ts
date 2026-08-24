@@ -77,13 +77,21 @@ export async function getIceServers(
   });
 
   if (!response.ok) {
-    throw new Error(`Failed to get TURN credentials: ${response.status}`);
+    throw new Error(await errorFrom(response));
   }
 
   const data = (await response.json()) as { iceServers?: IceServer[] };
 
-  if (!Array.isArray(data.iceServers)) {
-    throw new Error("TURN credentials response did not contain iceServers");
+  if (
+    !Array.isArray(data.iceServers)
+    || !data.iceServers.some((server) => {
+      const urls = Array.isArray(server.urls) ? server.urls : [server.urls];
+      return urls.some((url) => /^turns?:/i.test(url))
+        && typeof server.username === "string"
+        && typeof server.credential === "string";
+    })
+  ) {
+    throw new Error("TURN credentials response did not contain a relay server");
   }
 
   return data.iceServers;

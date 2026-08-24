@@ -56,8 +56,8 @@ export function createInviteController(roomService: RoomService, app: FastifyIns
 
       const session = roomService.createSession(roomId, name);
 
-      const token = app.jwt.sign(
-        { sessionId: session.sessionId, roomId, name },
+    const token = app.jwt.sign(
+        { kind: "room", sessionId: session.sessionId, roomId, name, host: false },
         { expiresIn: ROOM_SESSION_TTL_SECONDS },
       );
 

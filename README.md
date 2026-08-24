@@ -66,8 +66,9 @@ VITE_SIGNALING_URL=wss://signal.example.com/ws npm run build -w web
 Set the server-side variables on the signaling server:
 
 - `ORIGIN=https://example.com` — the web app origin, so CORS permits it.
-- `CLOUDFLARE_TURN_KEY_ID` and `CLOUDFLARE_TURN_API_TOKEN` — to enable TURN
-  relaying for connections that can't go peer-to-peer.
+- Cloudflare TURN credentials and analytics variables, to relay connections
+  that cannot go peer-to-peer until monthly egress reaches the switch limit.
+- ExpressTURN URLs and credentials, to provide the fallback relay service.
 
 Screen capture is available on `localhost` during development. A deployed app
 must use HTTPS and secure WebSocket (`wss://`).
@@ -89,10 +90,15 @@ files (server and web) as templates.
 | `HOST` | `0.0.0.0` | Address the signaling server binds to. |
 | `ORIGIN` | — | CORS allow-origin for the web app. Required when the web app and server are on different origins. |
 | `JWT_SECRET` | — | Secret used to sign room session JWTs. Authenticates `/session` and WebSocket room joins. |
-| `CLOUDFLARE_TURN_KEY_ID` | — | Cloudflare TURN key ID, sent to `/session`. |
-| `CLOUDFLARE_TURN_API_TOKEN` | — | Cloudflare TURN API token, sent to `/session`. |
+| `CLOUDFLARE_TURN_KEY_ID` | — | Cloudflare TURN key ID used by the server. |
+| `CLOUDFLARE_TURN_API_TOKEN` | — | Cloudflare API token used to generate temporary TURN credentials. |
 | `CLOUDFLARE_ACCOUNT_ID` | — | Cloudflare account ID, queried for TURN usage. |
 | `CLOUDFLARE_ANALYTICS_API_TOKEN` | — | Cloudflare API token with analytics read access, used for TURN usage. |
+| `CLOUDFLARE_TURN_SWITCH_GB` | `950` | Monthly Cloudflare egress at which new TURN requests switch to ExpressTURN. |
+| `EXPRESSTURN_URLS` | — | Comma-separated ExpressTURN URLs, for example `turn:free.expressturn.com:3478`. |
+| `EXPRESSTURN_USERNAME` | — | ExpressTURN username. |
+| `EXPRESSTURN_CREDENTIAL` | — | ExpressTURN password/credential. |
+| `EXPRESSTURN_DISABLED` | `false` | Emergency switch preventing new ExpressTURN configurations from being returned. |
 
 ### Web (`web/.env`)
 
@@ -125,15 +131,23 @@ The web app sends the room token as `Authorization: Bearer <token>` when
 fetching ICE servers from `/session` and includes it in the WebSocket
 join message, so only validated sessions can enter a room.
 
-When `CLOUDFLARE_TURN_KEY_ID` and `CLOUDFLARE_TURN_API_TOKEN` are set, the web app
-fetches ICE servers from `/session` before starting a peer connection.
-Otherwise it falls back to STUN-only:
+Peer connections start with STUN only:
 
 - `stun:stun.cloudflare.com:3478`
 - `stun:stun.l.google.com:19302`
 
-TURN adds resilience on symmetric NATs, corporate networks, and UDP-blocked
-connections, at the cost of relaying traffic through Cloudflare.
+Only after direct/STUN ICE fails does the affected participant request TURN
+credentials from `/session`. The server uses Cloudflare while current-month
+egress is below `CLOUDFLARE_TURN_SWITCH_GB`, then returns ExpressTURN. If
+Cloudflare analytics or credential generation fails, ExpressTURN is also used.
+ExpressTURN enforces its free-plan traffic cap; `EXPRESSTURN_DISABLED` provides
+a manual emergency cutoff. If no relay can establish the connection, clients
+show a temporary stream-unavailable message.
+
+One participant per room sends a ping every minute and the server replies with
+pong to keep the Render service active. The creator owns this heartbeat while
+connected; a connected guest is elected temporarily when the creator leaves or
+misses the heartbeat lease. The creator reclaims it after resuming activity.
 
 ## Project structure
 
@@ -225,6 +239,6 @@ connections, at the cost of relaying traffic through Cloudflare.
   copy the plain `/room/<id>` link and join via `POST /room`.
 - One participant can share at a time; one peer connection is created per viewer.
 - The same captured screen stream is reused for every viewer.
-- STUN is always available; TURN works only when the Cloudflare credentials are
-  configured (see [Environment variables](#environment-variables)).
+- STUN is always available. TURN uses Cloudflare first and ExpressTURN after the
+  configured Cloudflare egress threshold (see [Environment variables](#environment-variables)).
 - There are no accounts, recording, chat, persistence, or reconnect recovery.

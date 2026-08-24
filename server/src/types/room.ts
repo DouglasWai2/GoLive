@@ -19,12 +19,24 @@ export type RoomSession = {
 };
 
 export type RoomToken = {
+  kind?: "room";
   sessionId: string;
   roomId: string;
   name: string;
+  host?: boolean;
 };
 
 export type InviteToken = {
   kind: "invite";
   roomId: string;
 };
+
+export function isRoomToken(value: unknown): value is RoomToken {
+  if (!value || typeof value !== "object") return false;
+
+  const token = value as Record<string, unknown>;
+  return (token.kind === undefined || token.kind === "room")
+    && typeof token.sessionId === "string"
+    && typeof token.roomId === "string"
+    && typeof token.name === "string";
+}

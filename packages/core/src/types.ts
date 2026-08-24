@@ -86,7 +86,15 @@ export type IceServer = {
 
 export type ServerMessage =
   | { type: "authenticated" }
-  | { type: "room-state"; selfId: string; peers: Peer[] }
+  | {
+      type: "room-state";
+      selfId: string;
+      isHost: boolean;
+      heartbeatOwnerId: string;
+      peers: Peer[];
+    }
+  | { type: "heartbeat-owner"; peerId: string }
+  | { type: "pong"; timestamp: number }
   | { type: "peer-joined"; peer: Peer }
   | { type: "peer-left"; peerId: string }
   | { type: "peer-updated"; peer: Peer }
@@ -98,7 +106,9 @@ export type ClientMessage =
   | { type: "auth"; token: string }
   | { type: "join"; room: string; name: string }
   | { type: "signal"; target: string; data: unknown }
-  | { type: "sharing"; sharing: boolean };
+  | { type: "sharing"; sharing: boolean }
+  | { type: "ping"; timestamp: number }
+  | { type: "heartbeat-reclaim" };
 
 /*
  * Media stream surface used by the room session.

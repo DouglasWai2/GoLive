@@ -28,3 +28,13 @@ export type CloudflareTurnUsage = {
 
   freeTierPercent: number;
 };
+
+export type IceServer = {
+  urls: string | string[];
+  username?: string;
+  credential?: string;
+};
+
+export type TurnCredentialsResponse = {
+  iceServers: IceServer[];
+};

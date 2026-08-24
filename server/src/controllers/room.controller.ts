@@ -24,7 +24,7 @@ export function createRoomController(roomService: RoomService, app: FastifyInsta
     roomService.claimHost(roomId, session.sessionId);
 
     const token = app.jwt.sign(
-      { sessionId: session.sessionId, roomId, name },
+      { kind: "room", sessionId: session.sessionId, roomId, name, host: true },
       {
         expiresIn: 8 * 60 * 60,
       },

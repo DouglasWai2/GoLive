@@ -9,7 +9,7 @@ export function createTurnController(turnService: TurnService) {
     ): Promise<FastifyReply> {
       try {
         const data = await turnService.generateIceServers();
-        return reply.send(data);
+        return reply.header("Cache-Control", "no-store").send(data);
       } catch (error) {
         return handleTurnError(error, reply);
       }
@@ -19,11 +19,15 @@ export function createTurnController(turnService: TurnService) {
 
 function handleTurnError(error: unknown, reply: FastifyReply): FastifyReply {
   if (error instanceof TurnServiceError) {
-    return reply.code(error.status).send({ error: error.message });
+    return reply.code(error.status).send({
+      code: error.code,
+      error: error.message,
+    });
   }
 
   reply.log.error(error);
   return reply.code(500).send({
-    error: error instanceof Error ? error.message : "Unknown error",
+    code: "TURN_ERROR",
+    error: "TURN relay request failed",
   });
 }

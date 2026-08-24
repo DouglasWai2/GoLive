@@ -51,6 +51,10 @@ const CAPTURE_RECOVERY_MS = 30_000;
 const ICE_DISCONNECTED_GRACE_MS = 5000;
 const ICE_RESTART_COOLDOWN_MS = 10_000;
 const OFFER_ANSWER_TIMEOUT_MS = 10_000;
+const RELAY_FAILURE_GRACE_MS = 15_000;
+const TURN_FETCH_RETRY_MS = 30_000;
+const STREAM_UNAVAILABLE_MESSAGE =
+  "Unable to start stream right now. Try again later.";
 
 /*
  * setTimeout/setInterval resolve to `number` in browsers and to a Timeout
@@ -82,6 +86,15 @@ export class RoomSession {
   private terminal = false;
   private socket: WebSocketLike | null = null;
   private iceServers: IceServer[] = fallbackIceServers;
+  private turnServersPromise: Promise<IceServer[]> | null = null;
+  private turnConnections = new WeakSet<RTCPeerConnection>();
+  private turnUpgrades = new Set<string>();
+  private turnFailedPeers = new Set<string>();
+  private pendingRestartRequests = new Set<string>();
+  private turnFetchFailures = new Map<string, number>();
+  private turnRetryTimers = new Map<string, TimerHandle>();
+  private relayRecoveryAttempts = new Set<string>();
+  private relayFailureTimers = new Map<string, TimerHandle>();
 
   private peers: Peer[] = [];
   private localStream: MediaStream | null = null;
@@ -119,6 +132,9 @@ export class RoomSession {
   private roomId = "";
   private name = "";
   private token = "";
+  private selfId = "";
+  private isHost = false;
+  private heartbeatOwnerId = "";
   private authenticated = false;
 
   private heartbeatInterval: TimerHandle | null = null;
@@ -138,7 +154,7 @@ export class RoomSession {
     this.callbacks.onStatus("connecting");
     this.callbacks.onError("");
 
-    void this.initialize();
+    this.connectSocket();
   }
 
   stop() {
@@ -171,6 +187,14 @@ export class RoomSession {
       clearTimeout(timer);
     }
 
+    for (const timer of this.relayFailureTimers.values()) {
+      clearTimeout(timer);
+    }
+
+    for (const timer of this.turnRetryTimers.values()) {
+      clearTimeout(timer);
+    }
+
     this.statsTimers.clear();
     this.inboundStatsSamples.clear();
     this.outboundStatsSamples.clear();
@@ -178,6 +202,13 @@ export class RoomSession {
     this.iceRecoveryTimers.clear();
     this.lastIceRestartAt.clear();
     this.offerAnswerTimers.clear();
+    this.relayFailureTimers.clear();
+    this.turnUpgrades.clear();
+    this.turnFailedPeers.clear();
+    this.relayRecoveryAttempts.clear();
+    this.pendingRestartRequests.clear();
+    this.turnFetchFailures.clear();
+    this.turnRetryTimers.clear();
 
     if (this.socket) {
       this.socket.onopen = null;
@@ -206,6 +237,9 @@ export class RoomSession {
     this.scaleResolutionDownBy = 1;
 
     this.peers = [];
+    this.selfId = "";
+    this.isHost = false;
+    this.heartbeatOwnerId = "";
   }
 
   resume() {
@@ -214,6 +248,10 @@ export class RoomSession {
     }
 
     const socketState = this.socket?.readyState;
+
+    if (socketState === SOCKET_OPEN && this.joined && this.isHost) {
+      this.send({ type: "heartbeat-reclaim" });
+    }
 
     if (socketState !== SOCKET_CONNECTING && socketState !== SOCKET_OPEN) {
       this.clearReconnectTimer();
@@ -428,38 +466,6 @@ export class RoomSession {
     }
   }
 
-  /*
-   * Initialization:
-   *
-   *   1. Get Cloudflare STUN/TURN credentials
-   *   2. Only THEN connect to Fastify WebSocket
-   *   3. Only THEN join the room
-   *
-   * This guarantees every RTCPeerConnection has TURN
-   * available from the beginning.
-   */
-  private async initialize() {
-    let resolvedIceServers: IceServer[];
-
-    try {
-      resolvedIceServers = await getIceServers(this.deps.baseUrl, this.token);
-    } catch (caught) {
-      console.warn(
-        "Could not load TURN credentials. Falling back to STUN only.",
-        caught,
-      );
-
-      resolvedIceServers = fallbackIceServers;
-    }
-
-    if (!this.active) {
-      return;
-    }
-
-    this.iceServers = resolvedIceServers;
-    this.connectSocket();
-  }
-
   private connectSocket() {
     if (!this.active || this.terminal) {
       return;
@@ -507,18 +513,6 @@ export class RoomSession {
       );
 
       this.clearPingTimer();
-      this.heartbeatInterval = setInterval(() => {
-        if (ws.readyState !== SOCKET_OPEN) {
-          return;
-        }
-    
-        ws.send(
-          JSON.stringify({
-            type: "ping",
-            timestamp: Date.now(),
-          }),
-        );
-      }, 60_000);
     };
 
     ws.onmessage = (event) => {
@@ -539,6 +533,9 @@ export class RoomSession {
       this.signalingGeneration += 1;
       this.authenticated = false;
       this.joined = false;
+      this.selfId = "";
+      this.isHost = false;
+      this.heartbeatOwnerId = "";
       this.sharingAnnounced = false;
       this.clearPingTimer();
 
@@ -761,6 +758,10 @@ export class RoomSession {
       iceServers: this.iceServers,
     });
 
+    if (this.hasTurnServers(this.iceServers)) {
+      this.turnConnections.add(connection);
+    }
+
     this.peerConnections.set(peerId, connection);
 
     this.callbacks.onConnectionState(peerId, connection.connectionState);
@@ -879,6 +880,11 @@ export class RoomSession {
 
       if (connection.connectionState === "connected") {
         this.clearIceRecoveryTimer(peerId);
+        this.clearRelayFailureTimer(peerId);
+        this.clearTurnRetryTimer(peerId);
+        this.turnFailedPeers.delete(peerId);
+        this.relayRecoveryAttempts.delete(peerId);
+        this.turnFetchFailures.delete(peerId);
         void logSelectedIceRoute(peerId, connection);
       }
 
@@ -893,7 +899,13 @@ export class RoomSession {
       if (connection.connectionState === "failed") {
         console.error(`[${peerId}] Peer connection failed`);
         this.clearIceRecoveryTimer(peerId);
-        this.scheduleIceRecovery(peerId, 0);
+
+        if (this.turnConnections.has(connection)) {
+          this.restartRelayConnectionOnce(peerId, connection);
+          this.scheduleRelayFailure(peerId, connection);
+        } else {
+          void this.upgradePeerToTurn(peerId, connection);
+        }
       }
     };
 
@@ -1022,7 +1034,10 @@ export class RoomSession {
       return;
     }
 
-    if (connection.remoteDescription) {
+    if (
+      connection.remoteDescription
+      && connection.signalingState !== "have-local-offer"
+    ) {
       try {
         await connection.addIceCandidate(candidate as never);
       } catch (caught) {
@@ -1190,7 +1205,9 @@ export class RoomSession {
     }
 
     if ("restartRequest" in data) {
-      if (this.localStream && this.sharingAnnounced) {
+      if (this.turnUpgrades.has(from)) {
+        this.pendingRestartRequests.add(from);
+      } else if (this.localStream && this.sharingAnnounced) {
         this.scheduleIceRecovery(from, 0, true);
       }
 
@@ -1400,6 +1417,9 @@ export class RoomSession {
       this.clearReconnectTimer();
 
       this.peers = message.peers;
+      this.selfId = message.selfId;
+      this.isHost = message.isHost;
+      this.setHeartbeatOwner(message.heartbeatOwnerId);
       this.callbacks.onPeers(message.peers);
       this.callbacks.onStatus("connected");
 
@@ -1407,6 +1427,15 @@ export class RoomSession {
         void this.restoreSharing();
       }
 
+      return;
+    }
+
+    if (message.type === "heartbeat-owner") {
+      this.setHeartbeatOwner(message.peerId);
+      return;
+    }
+
+    if (message.type === "pong") {
       return;
     }
 
@@ -1615,6 +1644,209 @@ export class RoomSession {
     }
   }
 
+  private setHeartbeatOwner(peerId: string) {
+    this.heartbeatOwnerId = peerId;
+    this.clearPingTimer();
+
+    if (
+      !this.joined
+      || !this.selfId
+      || this.selfId !== this.heartbeatOwnerId
+      || this.socket?.readyState !== SOCKET_OPEN
+    ) {
+      return;
+    }
+
+    const ping = () => {
+      this.send({ type: "ping", timestamp: Date.now() });
+    };
+
+    ping();
+    this.heartbeatInterval = setInterval(ping, 60_000);
+  }
+
+  private hasTurnServers(servers: IceServer[]): boolean {
+    return servers.some((server) => {
+      const urls = Array.isArray(server.urls) ? server.urls : [server.urls];
+      return urls.some((url) => /^turns?:/i.test(url));
+    });
+  }
+
+  private async ensureTurnServers(): Promise<IceServer[]> {
+    if (this.hasTurnServers(this.iceServers)) {
+      return this.iceServers;
+    }
+
+    if (!this.turnServersPromise) {
+      this.turnServersPromise = getIceServers(this.deps.baseUrl, this.token)
+        .then((servers) => {
+          this.iceServers = [...fallbackIceServers, ...servers];
+          return this.iceServers;
+        })
+        .finally(() => {
+          this.turnServersPromise = null;
+        });
+    }
+
+    return this.turnServersPromise;
+  }
+
+  private async upgradePeerToTurn(
+    peerId: string,
+    failedConnection: RTCPeerConnection,
+  ) {
+    if (this.turnUpgrades.has(peerId) || this.turnFailedPeers.has(peerId)) {
+      return;
+    }
+
+    this.turnUpgrades.add(peerId);
+    const signalingGeneration = this.signalingGeneration;
+    let upgraded = false;
+
+    try {
+      await this.ensureTurnServers();
+
+      if (
+        !this.active
+        || !this.joined
+        || signalingGeneration !== this.signalingGeneration
+        || this.peerConnections.get(peerId) !== failedConnection
+        || !this.peers.some((peer) => peer.id === peerId)
+      ) {
+        return;
+      }
+
+      this.closePeer(peerId);
+      this.turnFetchFailures.delete(peerId);
+      this.clearTurnRetryTimer(peerId);
+      upgraded = true;
+
+      if (this.localStream && this.sharingAnnounced) {
+        void this.createOffer(peerId);
+      } else {
+        this.send({
+          type: "signal",
+          target: peerId,
+          data: { restartRequest: true },
+        });
+      }
+    } catch (caught) {
+      console.warn(`[${peerId}] TURN is unavailable`, caught);
+
+      if (this.active && this.peers.some((peer) => peer.id === peerId)) {
+        this.turnFailedPeers.add(peerId);
+        this.callbacks.onError(STREAM_UNAVAILABLE_MESSAGE);
+        this.scheduleTurnFetchRetry(peerId, failedConnection);
+      }
+    } finally {
+      this.turnUpgrades.delete(peerId);
+
+      const restartRequested = this.pendingRestartRequests.delete(peerId);
+      if (
+        restartRequested
+        && !upgraded
+        && this.localStream
+        && this.sharingAnnounced
+      ) {
+        this.scheduleIceRecovery(peerId, 0, true);
+      }
+    }
+  }
+
+  private scheduleTurnFetchRetry(
+    peerId: string,
+    failedConnection: RTCPeerConnection,
+  ) {
+    const failures = (this.turnFetchFailures.get(peerId) ?? 0) + 1;
+    this.turnFetchFailures.set(peerId, failures);
+
+    if (failures > 1 || this.turnRetryTimers.has(peerId)) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      this.turnRetryTimers.delete(peerId);
+      this.turnFailedPeers.delete(peerId);
+
+      if (
+        this.peerConnections.get(peerId) === failedConnection
+        && failedConnection.connectionState === "failed"
+      ) {
+        void this.upgradePeerToTurn(peerId, failedConnection);
+      }
+    }, TURN_FETCH_RETRY_MS);
+
+    this.turnRetryTimers.set(peerId, timer);
+  }
+
+  private clearTurnRetryTimer(peerId: string) {
+    const timer = this.turnRetryTimers.get(peerId);
+    if (!timer) return;
+
+    clearTimeout(timer);
+    this.turnRetryTimers.delete(peerId);
+  }
+
+  private scheduleRelayFailure(
+    peerId: string,
+    connection: RTCPeerConnection,
+  ) {
+    if (
+      this.relayFailureTimers.has(peerId)
+      || this.turnFailedPeers.has(peerId)
+    ) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      this.relayFailureTimers.delete(peerId);
+
+      if (
+        this.peerConnections.get(peerId) !== connection
+        || connection.connectionState === "connected"
+        || !this.peers.some((peer) => peer.id === peerId)
+      ) {
+        return;
+      }
+
+      this.turnFailedPeers.add(peerId);
+      this.clearIceRecoveryTimer(peerId);
+      this.callbacks.onError(STREAM_UNAVAILABLE_MESSAGE);
+    }, RELAY_FAILURE_GRACE_MS);
+
+    this.relayFailureTimers.set(peerId, timer);
+  }
+
+  private restartRelayConnectionOnce(
+    peerId: string,
+    connection: RTCPeerConnection,
+  ) {
+    if (this.relayRecoveryAttempts.has(peerId)) {
+      return;
+    }
+
+    this.relayRecoveryAttempts.add(peerId);
+
+    if (this.localStream && this.sharingAnnounced) {
+      void this.createOffer(peerId, true);
+    } else if (this.peerConnections.get(peerId) === connection) {
+      this.send({
+        type: "signal",
+        target: peerId,
+        data: { restartRequest: true },
+      });
+    }
+  }
+
+  private clearRelayFailureTimer(peerId: string) {
+    const timer = this.relayFailureTimers.get(peerId);
+
+    if (timer) {
+      clearTimeout(timer);
+      this.relayFailureTimers.delete(peerId);
+    }
+  }
+
   private clearReconnectTimer() {
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
@@ -1670,7 +1902,13 @@ export class RoomSession {
     this.pendingOffers.delete(peerId);
     this.clearIceRecoveryTimer(peerId);
     this.clearOfferAnswerTimer(peerId);
+    this.clearRelayFailureTimer(peerId);
+    this.clearTurnRetryTimer(peerId);
     this.lastIceRestartAt.delete(peerId);
+    this.turnFailedPeers.delete(peerId);
+    this.relayRecoveryAttempts.delete(peerId);
+    this.turnFetchFailures.delete(peerId);
+    this.pendingRestartRequests.delete(peerId);
 
     const timer = this.statsTimers.get(peerId);
 

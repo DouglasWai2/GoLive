@@ -6,15 +6,16 @@ import { registerRoomRoutes } from "./room.routes.js";
 import { registerInviteRoutes } from "./invite.routes.js";
 import { RoomService } from "../services/room.service.js";
 import { SignalingService } from "../services/signaling.service.js";
-import { TurnService } from "../services/turn.service.js";
 import type { RoomToken } from "../types/room.js";
+import { isRoomToken } from "../types/room.js";
 
 export function registerRoutes(app: FastifyInstance): void {
   const roomService = new RoomService();
 
   const verifyRoomToken = (token: string): RoomToken | null => {
     try {
-      return app.jwt.verify<RoomToken>(token);
+      const payload = app.jwt.verify<RoomToken>(token);
+      return isRoomToken(payload) ? payload : null;
     } catch {
       return null;
     }
@@ -24,7 +25,7 @@ export function registerRoutes(app: FastifyInstance): void {
 
   registerHealthRoutes(app);
   registerSignalingRoutes(app, signalingService);
-  registerTurnRoutes(app);
+  registerTurnRoutes(app, roomService);
   registerRoomRoutes(app, roomService);
   registerInviteRoutes(app, roomService);
 }
