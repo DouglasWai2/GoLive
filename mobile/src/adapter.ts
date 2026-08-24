@@ -1,4 +1,4 @@
-import { mediaDevices, RTCPeerConnection } from "react-native-webrtc";
+import { mediaDevices, MediaStream as RNMediaStream, RTCPeerConnection } from "react-native-webrtc";
 import type {
   IceCandidateInit,
   MediaStream,
@@ -16,13 +16,15 @@ type NativeCandidate = {
 /*
  * Android adapter: react-native-webrtc.
  *
- * getDisplayMedia() captures the full screen via MediaProjection (video only).
+ * getDisplayMedia() captures the full screen and optional device playback audio
+ * via one MediaProjection session.
  * Android capture ignores resolution/fps constraints (the whole display is
  * captured), so the web constraint caps only apply to the remote senders.
  */
 export const nativeAdapter: PlatformAdapter = {
-  getDisplayMedia: async () => {
+  getDisplayMedia: async (constraints) => {
     const stream = mediaDevices.getDisplayMedia({
+      audio: constraints.audio,
       android: { createConfigForDefaultDisplay: true },
     }) as unknown as Promise<MediaStream>;
 
@@ -35,12 +37,21 @@ export const nativeAdapter: PlatformAdapter = {
     return resolved;
   },
 
+  releaseMediaStream: (stream) => {
+    (stream as unknown as RNMediaStream).release();
+  },
+
   /*
    * Android rejects getDisplayMedia when the user declines the
-   * MediaProjection consent dialog. The library surfaces that as a
-   * plain Error, so treat any capture failure as a silent cancel for now.
+   * MediaProjection consent dialog. Keep native setup and permission failures
+   * visible instead of classifying every Error as a picker cancellation.
    */
-  isCaptureRejected: (error) => error instanceof Error,
+  isCaptureRejected: (error) => {
+    if (!error || typeof error !== "object") return false;
+    const candidate = error as { name?: unknown; message?: unknown };
+    return candidate.name === "NotAllowedError"
+      || candidate.message === "NotAllowedError";
+  },
 
   serializeCandidate: (candidate) => {
     const c = candidate as NativeCandidate;
@@ -68,7 +79,7 @@ export const nativeAdapter: PlatformAdapter = {
    * returns the original SDP untouched so the offer always stays parseable.
    */
   mungeOffer: (sdp) => {
-    const removedCodecs = new Set(["H264", "VP9", "AV1", "AV1X"]);
+    const removedCodecs = new Set(["VP9", "AV1", "AV1X"]);
     const lines = sdp.split("\r\n");
 
     const videoIndex = lines.findIndex((line) => /^m=video/.test(line));

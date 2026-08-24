@@ -29,7 +29,6 @@ export const frameRateOptions: FrameRateOption[] = [
 ];
 
 export const bitrateOptions: BitrateOption[] = [
-  { label: "8 Mbps", value: 8_000_000 },
   { label: "5 Mbps", value: 5_000_000 },
   { label: "3 Mbps", value: 3_000_000 },
   { label: "1.5 Mbps", value: 1_500_000 },
@@ -41,6 +40,7 @@ export const DEFAULT_SHARE_SETTINGS: ShareSettings = {
   height: 720,
   frameRate: 30,
   maxBitrate: 3_000_000,
+  includeAudio: true,
 };
 
 export function formatBitrate(bps: number): string {

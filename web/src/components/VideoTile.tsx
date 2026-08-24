@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { PeerConnectionState, RemoteVideoStats } from "@golive/core";
 import { FullscreenIcon } from "./icons";
 import { StreamStats, type OutboundStatsEntry } from "./room/StreamStats";
@@ -22,25 +22,108 @@ type VideoTileProps = {
   onFullscreen?: (video: HTMLVideoElement) => void;
 };
 
+function isNotAllowedError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "NotAllowedError";
+}
+
+async function startPlayback(
+  video: HTMLVideoElement,
+  muted: boolean,
+  hasAudio: boolean,
+  isCurrent: () => boolean,
+  setAudioBlocked: (blocked: boolean) => void,
+) {
+  video.muted = muted;
+
+  try {
+    await video.play();
+    if (!isCurrent()) return;
+    setAudioBlocked(false);
+  } catch (error) {
+    if (!isNotAllowedError(error) || !isCurrent()) return;
+
+    video.muted = true;
+    setAudioBlocked(hasAudio && !muted);
+
+    try {
+      await video.play();
+    } catch {
+      // The user-facing action below remains available for a gesture-driven retry.
+    }
+  }
+}
+
 export function VideoTile({ stream, name, local = false, state, qualityLabel, stats, outboundStats = [], volume = 1, muted = false, statsEnabled = true, onVolumeChange, onToggleMute, onToggleStats, onFullscreen }: VideoTileProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const [audioBlocked, setAudioBlocked] = useState(false);
+  const hasAudio = stream.getAudioTracks().length > 0;
 
   useEffect(() => {
-    if (videoRef.current) videoRef.current.srcObject = stream;
+    const video = videoRef.current;
+    let active = true;
+
+    if (video) {
+      video.srcObject = stream;
+      video.volume = volume;
+      void startPlayback(video, local || muted, hasAudio, () => (
+        active && video.srcObject === stream
+      ), (blocked) => {
+        if (active) setAudioBlocked(blocked);
+      });
+    }
+
     return () => {
-      if (videoRef.current) videoRef.current.srcObject = null;
+      active = false;
+      if (video?.srcObject === stream) video.srcObject = null;
     };
-  }, [stream]);
+  }, [hasAudio, stream]);
 
   useEffect(() => {
-    if (local || !videoRef.current) return;
-    videoRef.current.volume = volume;
-    videoRef.current.muted = muted;
-  }, [local, volume, muted]);
+    const video = videoRef.current;
+    if (!video) return;
+
+    let active = true;
+    const shouldMute = local || muted || audioBlocked;
+    video.volume = volume;
+    video.muted = shouldMute;
+
+    if (!local && hasAudio && !shouldMute) {
+      void video.play().catch((error: unknown) => {
+        if (active && video.srcObject === stream && isNotAllowedError(error)) {
+          video.muted = true;
+          setAudioBlocked(true);
+        }
+      });
+    }
+
+    return () => {
+      active = false;
+    };
+  }, [audioBlocked, hasAudio, local, muted, stream, volume]);
+
+  const hearAudio = async () => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    video.volume = volume;
+    video.muted = false;
+
+    try {
+      await video.play();
+      setAudioBlocked(false);
+    } catch {
+      setAudioBlocked(true);
+    }
+  };
 
   return (
     <article className="video-tile">
-      <video ref={videoRef} autoPlay playsInline muted={local} />
+      <video ref={videoRef} autoPlay playsInline muted={local || muted || audioBlocked} />
+      {!local && hasAudio && audioBlocked && !muted && (
+        <button type="button" className="audio-playback-action" onClick={() => void hearAudio()}>
+          Tap to hear shared audio
+        </button>
+      )}
       <div className="video-meta">
         <span className="live-dot" />
         <strong>{local ? "Your screen" : `${name}'s screen`}</strong>
@@ -55,7 +138,7 @@ export function VideoTile({ stream, name, local = false, state, qualityLabel, st
         (!local && (onVolumeChange || onToggleStats || onFullscreen))) && (
         <div className="tile-controls">
           {onToggleStats && <StatsButton statsEnabled={statsEnabled} toggleStats={onToggleStats} />}
-          {onVolumeChange && onToggleMute && (
+          {hasAudio && onVolumeChange && onToggleMute && (
             <VolumeControl
               volume={volume}
               muted={muted}

@@ -26,7 +26,7 @@
     "react-native": "0.86.2",
     "react-native-safe-area-context": "~5.7.0",
     "react-native-svg": "15.15.4",
-    "react-native-webrtc": "^124.0.8"
+    "react-native-webrtc": "file:../vendor/react-native-webrtc"
   },
   "devDependencies": {
     "@types/base-64": "^1.0.2"

@@ -45,6 +45,7 @@ export function VideoTile({
   onFullscreen,
 }: VideoTileProps) {
   const rnStream = stream as unknown as RNMediaStream;
+  const hasAudio = rnStream.getAudioTracks().length > 0;
 
   useEffect(() => {
     if (local) return;
@@ -83,7 +84,7 @@ export function VideoTile({
           {onToggleStats ? (
             <StatsButton statsEnabled={statsEnabled} onToggle={onToggleStats} />
           ) : null}
-          {onVolumeChange && onToggleMute ? (
+          {hasAudio && onVolumeChange && onToggleMute ? (
             <VolumeControl
               volume={volume}
               muted={muted}

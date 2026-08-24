@@ -85,6 +85,7 @@ export class RoomSession {
 
   private peers: Peer[] = [];
   private localStream: MediaStream | null = null;
+  private disposedStreams = new WeakSet<MediaStream>();
 
   private shareSettings: ShareSettings | null = null;
   private scaleResolutionDownBy = 1;
@@ -188,15 +189,14 @@ export class RoomSession {
       this.socket = null;
     }
 
-    for (const track of this.localStream?.getTracks() ?? []) {
-      track.stop();
-    }
-
+    const stream = this.localStream;
     this.localStream = null;
 
     for (const peerId of Array.from(this.peerConnections.keys())) {
       this.closePeer(peerId);
     }
+
+    this.disposeCapturedStream(stream);
 
     this.pendingCandidates.clear();
     this.pendingOffers.clear();
@@ -268,14 +268,11 @@ export class RoomSession {
             max: settings.frameRate,
           },
         },
-        audio: true,
+        audio: settings.includeAudio,
       });
 
       if (!this.active || generation !== this.sharingGeneration) {
-        for (const track of stream.getTracks()) {
-          track.stop();
-        }
-
+        this.disposeCapturedStream(stream);
         return;
       }
 
@@ -332,9 +329,7 @@ export class RoomSession {
       }
 
       if (!accepted || !this.active || generation !== this.sharingGeneration) {
-        for (const track of stream.getTracks()) {
-          track.stop();
-        }
+        this.disposeCapturedStream(stream);
 
         if (!accepted && this.active) {
           this.send({
@@ -377,6 +372,12 @@ export class RoomSession {
         await this.createOffer(peer.id);
       }
     } catch (caught) {
+      if (stream === this.localStream) {
+        this.stopSharing();
+      } else {
+        this.disposeCapturedStream(stream);
+      }
+
       if (this.deps.adapter.isCaptureRejected(caught)) {
         return;
       }
@@ -384,10 +385,6 @@ export class RoomSession {
       console.error("Screen capture failed", caught);
 
       this.callbacks.onError("Screen capture could not be started.");
-
-      for (const track of stream?.getTracks() ?? []) {
-        track.stop();
-      }
     } finally {
       if (generation === this.sharingGeneration) {
         this.startingShare = false;
@@ -411,10 +408,6 @@ export class RoomSession {
 
     this.callbacks.onIsStartingShare(false);
 
-    for (const track of stream?.getTracks() ?? []) {
-      track.stop();
-    }
-
     this.localStream = null;
     this.callbacks.onLocalStream(null);
 
@@ -424,6 +417,8 @@ export class RoomSession {
     for (const peerId of Array.from(this.peerConnections.keys())) {
       this.closePeer(peerId);
     }
+
+    this.disposeCapturedStream(stream);
 
     if (stream) {
       this.send({
@@ -854,6 +849,10 @@ export class RoomSession {
 
       if (!stream) {
         console.warn(`[${peerId}] Track received without MediaStream`);
+        return;
+      }
+
+      if (stream.getVideoTracks().length === 0) {
         return;
       }
 
@@ -1626,6 +1625,22 @@ export class RoomSession {
     if (this.captureRecoveryTimer) {
       clearTimeout(this.captureRecoveryTimer);
       this.captureRecoveryTimer = null;
+    }
+  }
+
+  private disposeCapturedStream(stream: MediaStream | null) {
+    if (!stream || this.disposedStreams.has(stream)) {
+      return;
+    }
+
+    this.disposedStreams.add(stream);
+
+    try {
+      for (const track of stream.getTracks()) {
+        track.stop();
+      }
+    } finally {
+      this.deps.adapter.releaseMediaStream?.(stream);
     }
   }
 

@@ -19,6 +19,7 @@ export type DisplayMediaConstraints = {
  *
  * - getDisplayMedia: browser navigator.mediaDevices.getDisplayMedia, or
  *   react-native-webrtc mediaDevices.getDisplayMedia (Android screen capture).
+ * - releaseMediaStream: optional native stream cleanup after its tracks stop.
  * - isCaptureRejected: true when the user declined the capture picker.
  * - serializeCandidate: normalizes a platform ICE candidate into the JSON
  *   shape sent over the signaling WebSocket.
@@ -27,6 +28,7 @@ export type DisplayMediaConstraints = {
  */
 export type PlatformAdapter = {
   getDisplayMedia: (constraints: DisplayMediaConstraints) => Promise<MediaStream>;
+  releaseMediaStream?: (stream: MediaStream) => void;
   isCaptureRejected: (error: unknown) => boolean;
   serializeCandidate: (candidate: unknown) => IceCandidateInit;
   createPeerConnection: (config: {

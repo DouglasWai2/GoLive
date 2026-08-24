@@ -48,6 +48,7 @@ export function RoomScreen({
   const [isInviting, setIsInviting] = useState(false);
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
+  const [audioPreferencesReady, setAudioPreferencesReady] = useState(false);
   const [statsEnabled, setStatsEnabled] = useState(true);
   const [fullscreenPeerId, setFullscreenPeerId] = useState<string | null>(null);
   const { width } = useWindowDimensions();
@@ -71,16 +72,22 @@ export function RoomScreen({
 
   useEffect(() => {
     void (async () => {
-      const [statsRaw, volumeRaw, mutedRaw] = await Promise.all([
-        AsyncStorage.getItem(STATS_STORAGE_KEY),
-        AsyncStorage.getItem(VOLUME_STORAGE_KEY),
-        AsyncStorage.getItem(MUTED_STORAGE_KEY),
-      ]);
+      try {
+        const [statsRaw, volumeRaw, mutedRaw] = await Promise.all([
+          AsyncStorage.getItem(STATS_STORAGE_KEY),
+          AsyncStorage.getItem(VOLUME_STORAGE_KEY),
+          AsyncStorage.getItem(MUTED_STORAGE_KEY),
+        ]);
 
-      if (statsRaw !== null) setStatsEnabled(statsRaw !== "0");
-      const storedVolume = Number(volumeRaw);
-      if (Number.isFinite(storedVolume) && storedVolume >= 0 && storedVolume <= 1) setVolume(storedVolume);
-      if (mutedRaw !== null) setMuted(mutedRaw === "1");
+        if (statsRaw !== null) setStatsEnabled(statsRaw !== "0");
+        const storedVolume = Number(volumeRaw);
+        if (Number.isFinite(storedVolume) && storedVolume >= 0 && storedVolume <= 1) setVolume(storedVolume);
+        if (mutedRaw !== null) setMuted(mutedRaw === "1");
+      } catch {
+        // Keep the safe defaults when stored preferences cannot be read.
+      } finally {
+        setAudioPreferencesReady(true);
+      }
     })();
   }, []);
 
@@ -125,7 +132,7 @@ export function RoomScreen({
     return stats ? [{ peerId: peer.id, peerName: peer.name, stats }] : [];
   });
   const localQuality = localStream && shareSettings
-    ? `${formatResolution(shareSettings.width, shareSettings.height)} · ${shareSettings.frameRate} fps · ${formatBitrate(shareSettings.maxBitrate)}`
+    ? `${formatResolution(shareSettings.width, shareSettings.height)} · ${shareSettings.frameRate} fps · ${formatBitrate(shareSettings.maxBitrate)} · ${localStream.getAudioTracks().length > 0 ? "Audio on" : "No audio"}`
     : null;
 
   const handleStart = (settings: ShareSettings) => {
@@ -268,7 +275,7 @@ export function RoomScreen({
                   stats={remoteStats[peerId] ?? null}
                   statsEnabled={statsEnabled}
                   volume={volume}
-                  muted={muted}
+                  muted={!audioPreferencesReady || muted}
                   onVolumeChange={changeVolume}
                   onToggleMute={toggleMute}
                   onToggleStats={toggleStats}
@@ -314,7 +321,7 @@ export function RoomScreen({
         stats={fullscreenPeerId ? remoteStats[fullscreenPeerId] ?? null : null}
         statsEnabled={statsEnabled}
         volume={volume}
-        muted={muted}
+        muted={!audioPreferencesReady || muted}
         onVolumeChange={changeVolume}
         onToggleMute={toggleMute}
         onToggleStats={toggleStats}

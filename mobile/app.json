@@ -49,16 +49,34 @@
         "android.permission.ACCESS_NETWORK_STATE",
         "android.permission.RECORD_AUDIO",
         "android.permission.FOREGROUND_SERVICE",
-        "android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION"
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION",
+        "android.permission.CAMERA",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.WAKE_LOCK",
+        "android.permission.BLUETOOTH"
       ],
       "intentFilters": [
         {
           "action": "VIEW",
           "autoVerify": true,
-          "category": ["DEFAULT", "BROWSABLE"],
-          "data": [{ "scheme": "https", "host": "golive.example" }]
+          "category": [
+            "DEFAULT",
+            "BROWSABLE"
+          ],
+          "data": [
+            {
+              "scheme": "https",
+              "host": "golive.example"
+            }
+          ]
         }
       ]
+    },
+    "extra": {
+      "eas": {
+        "projectId": "1286511b-9a14-4ea2-9312-796193f78f87"
+      }
     }
   }
 }

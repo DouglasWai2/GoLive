@@ -40,6 +40,11 @@ export function useRoom(
         onLocalStream: setLocalStream,
         onIsStartingShare: setIsStartingShare,
         onRemoteStream: (peerId, stream) => {
+          for (const track of stream?.getAudioTracks() ?? []) {
+            (track as typeof track & { _setVolume?: (volume: number) => void })
+              ._setVolume?.(0);
+          }
+
           setRemoteStreams((current) => {
             const next = { ...current };
 

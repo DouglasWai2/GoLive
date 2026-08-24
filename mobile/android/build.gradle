@@ -17,6 +17,7 @@ allprojects {
     google()
     mavenCentral()
     maven { url 'https://www.jitpack.io' }
+    maven { url "$rootDir/../../vendor/react-native-webrtc/android/maven" }
   }
 }
 

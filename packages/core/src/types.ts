@@ -18,6 +18,7 @@ export type ShareSettings = {
   height: number;
   frameRate: number;
   maxBitrate: number;
+  includeAudio: boolean;
 };
 
 export type RemoteVideoStats = {

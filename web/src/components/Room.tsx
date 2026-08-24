@@ -39,7 +39,7 @@ export function Room({
 
   const localQuality =
     room.localStream && shareSettings
-      ? `${formatResolution(shareSettings.width, shareSettings.height)} · ${shareSettings.frameRate} fps · ${formatBitrate(shareSettings.maxBitrate)}`
+      ? `${formatResolution(shareSettings.width, shareSettings.height)} · ${shareSettings.frameRate} fps · ${formatBitrate(shareSettings.maxBitrate)} · ${room.localStream.getAudioTracks().length > 0 ? "Audio on" : "No audio"}`
       : null;
 
   return (
