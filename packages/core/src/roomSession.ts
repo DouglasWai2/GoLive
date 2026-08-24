@@ -725,6 +725,7 @@ export class RoomSession {
         ) {
           break;
         }
+        
 
         await this.createOffer(peer.id);
       }
@@ -1087,7 +1088,13 @@ export class RoomSession {
 
       await this.applySenderSettings(connection);
 
-      let offer = await connection.createOffer(
+      try {
+        await this.deps.adapter.configureVideoCodecs?.(connection);
+      } catch (caught) {
+        console.warn(`[${peerId}] Could not configure video codecs`, caught);
+      }
+
+      const offer = await connection.createOffer(
         iceRestart ? { iceRestart: true } : undefined,
       );
 
@@ -1100,12 +1107,6 @@ export class RoomSession {
         this.peerConnections.get(peerId) !== connection
       ) {
         return;
-      }
-
-      const munge = this.deps.adapter.mungeOffer;
-
-      if (munge && offer.sdp) {
-        offer = { ...offer, sdp: munge(offer.sdp) };
       }
 
       await connection.setLocalDescription(offer);

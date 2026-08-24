@@ -65,6 +65,11 @@ export type {
   FrameRateOption,
   BitrateOption,
 } from "./sharePresets";
-export type { DisplayMediaConstraints, PlatformAdapter } from "./adapter";
+export { orderVideoCodecs } from "./adapter";
+export type {
+  DisplayMediaConstraints,
+  PlatformAdapter,
+  VideoCodecCapability,
+} from "./adapter";
 export { RoomSession } from "./roomSession";
 export type { RoomSessionDeps, RoomSessionCallbacks } from "./roomSession";

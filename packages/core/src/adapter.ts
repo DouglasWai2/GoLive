@@ -14,6 +14,34 @@ export type DisplayMediaConstraints = {
   audio?: boolean;
 };
 
+export type VideoCodecCapability = {
+  mimeType: string;
+};
+
+const videoCodecPriority: Record<string, number> = {
+  H264: 0,
+  AV1: 1,
+  AV1X: 1,
+  VP8: 2,
+};
+
+export function orderVideoCodecs<T extends VideoCodecCapability>(
+  codecs: readonly T[],
+): T[] {
+  return codecs
+    .map((codec, index) => ({
+      codec,
+      index,
+      priority:
+        videoCodecPriority[codec.mimeType.split("/").pop()?.toUpperCase() ?? ""]
+        ?? Number.MAX_SAFE_INTEGER,
+    }))
+    .sort((left, right) =>
+      left.priority - right.priority || left.index - right.index,
+    )
+    .map(({ codec }) => codec);
+}
+
 /*
  * Platform-specific pieces of the room session.
  *
@@ -25,6 +53,8 @@ export type DisplayMediaConstraints = {
  *   shape sent over the signaling WebSocket.
  * - createPeerConnection: factory so the core never touches platform globals
  *   directly.
+ * - configureVideoCodecs: optional capability-based codec ordering before an
+ *   offer is created.
  */
 export type PlatformAdapter = {
   getDisplayMedia: (constraints: DisplayMediaConstraints) => Promise<MediaStream>;
@@ -34,11 +64,7 @@ export type PlatformAdapter = {
   createPeerConnection: (config: {
     iceServers: IceServer[];
   }) => RTCPeerConnection;
-  /*
-   * Optional SDP rewrite applied to the sharer's offer before it is set
-   * locally. Android uses this to drop hardware H.264 from m=video so the
-   * negotiated codec is VP8 (hardware H.264 MediaProjection capture is a
-   * known source of black frames on web receivers).
-   */
-  mungeOffer?: (sdp: string) => string;
+  configureVideoCodecs?: (
+    connection: RTCPeerConnection,
+  ) => void | Promise<void>;
 };
