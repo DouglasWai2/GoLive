@@ -4,6 +4,7 @@ import { Landing } from "./components/Landing";
 import { NameGate } from "./components/NameGate";
 import { Room } from "./components/Room";
 import { SessionReplaced } from "./components/SessionReplaced";
+import { Admin } from "./components/Admin";
 import { clearSession, loadSession } from "./utils/session";
 
 type Join = {
@@ -11,7 +12,7 @@ type Join = {
   token: string;
 };
 
-export default function App() {
+function RoomApp() {
   const roomId = roomFromPath();
   const [inviteToken, setInviteToken] = useState<string | null>(() => {
     if (!roomId) return null;
@@ -81,4 +82,12 @@ export default function App() {
       onSessionReplaced={() => setReplaced(true)}
     />
   );
+}
+
+export default function App() {
+  if (window.location.pathname === "/admin" || window.location.pathname.startsWith("/admin/")) {
+    return <Admin />;
+  }
+
+  return <RoomApp />;
 }

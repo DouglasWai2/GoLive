@@ -19,9 +19,9 @@ export type VideoCodecCapability = {
 };
 
 const videoCodecPriority: Record<string, number> = {
-  H264: 0,
-  AV1: 1,
-  AV1X: 1,
+  AV1: 0,
+  AV1X: 0,
+  H264: 1,
   VP8: 2,
 };
 

@@ -1,12 +1,21 @@
-import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import type {
+  FastifyError,
+  FastifyInstance,
+  FastifyReply,
+  FastifyRequest,
+} from "fastify";
 
 export function registerErrorHandler(app: FastifyInstance): void {
   app.setErrorHandler(
-    (error: Error, _request: FastifyRequest, reply: FastifyReply) => {
+    (error: FastifyError, _request: FastifyRequest, reply: FastifyReply) => {
       app.log.error(error);
 
+      if (error.statusCode && error.statusCode < 500) {
+        return reply.code(error.statusCode).send({ error: error.message });
+      }
+
       return reply.code(500).send({
-        error: error.message || "Internal server error",
+        error: "Internal server error",
       });
     },
   );

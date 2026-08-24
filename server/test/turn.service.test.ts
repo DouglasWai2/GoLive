@@ -18,9 +18,11 @@ const originalEnv = Object.fromEntries(
   envKeys.map((key) => [key, process.env[key]]),
 );
 const originalFetch = globalThis.fetch;
+const originalDateNow = Date.now;
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  Date.now = originalDateNow;
 
   for (const key of envKeys) {
     const value = originalEnv[key];
@@ -128,4 +130,65 @@ test("returns TURN_UNAVAILABLE when ExpressTURN is disabled", async () => {
       && error.status === 503
       && error.code === "TURN_UNAVAILABLE",
   );
+});
+
+test("caches TURN usage by the complete normalized date range", async () => {
+  configureProviders();
+  let requestCount = 0;
+
+  globalThis.fetch = async (input, init) => {
+    assert.match(String(input), /graphql/);
+    requestCount += 1;
+    const body = JSON.parse(String(init?.body)) as { query: string };
+    const to = /date_leq: "([^"]+)"/.exec(body.query)?.[1];
+    return usageResponse(to === "2026-08-02" ? 2 : 3);
+  };
+
+  const service = new TurnService();
+  const first = await service.getCachedUsage(
+    new Date("2026-08-01T12:00:00Z"),
+    new Date("2026-08-02T23:00:00Z"),
+  );
+  const second = await service.getCachedUsage(
+    new Date("2026-08-01T00:00:00Z"),
+    new Date("2026-08-03T00:00:00Z"),
+  );
+  const firstAgain = await service.getCachedUsage(
+    new Date("2026-08-01T00:00:00Z"),
+    new Date("2026-08-02T00:00:00Z"),
+  );
+
+  assert.equal(requestCount, 2);
+  assert.equal(first.usage.to, "2026-08-02");
+  assert.equal(second.usage.to, "2026-08-03");
+  assert.equal(firstAgain.usage.egressGB, first.usage.egressGB);
+  assert.equal(firstAgain.stale, false);
+  assert.match(first.fetchedAt, /^\d{4}-\d{2}-\d{2}T/);
+});
+
+test("returns stale same-range TURN usage when refresh fails", async () => {
+  configureProviders();
+  let now = originalDateNow();
+  Date.now = () => now;
+  globalThis.fetch = async () => usageResponse(12);
+
+  const service = new TurnService();
+  const fresh = await service.getCachedUsage(
+    new Date("2026-08-01T00:00:00Z"),
+    new Date("2026-08-24T00:00:00Z"),
+  );
+
+  now += 10 * 60 * 1000 + 1;
+  globalThis.fetch = async () => {
+    throw new Error("upstream body must not escape");
+  };
+  const stale = await service.getCachedUsage(
+    new Date("2026-08-01T12:00:00Z"),
+    new Date("2026-08-24T23:00:00Z"),
+  );
+
+  assert.equal(fresh.stale, false);
+  assert.equal(stale.stale, true);
+  assert.equal(stale.fetchedAt, fresh.fetchedAt);
+  assert.deepEqual(stale.usage, fresh.usage);
 });

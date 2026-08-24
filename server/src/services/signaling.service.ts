@@ -230,6 +230,7 @@ export class SignalingService {
       name,
       sharing: false,
       socket,
+      connectedAt: new Date().toISOString(),
     };
 
     const peers = [...room.values()]

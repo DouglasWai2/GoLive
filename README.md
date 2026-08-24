@@ -27,6 +27,7 @@ select **Share screen** in either one.
 - TURN credentials: `http://localhost:3000/session` (requires a room JWT)
 - Create invite: `http://localhost:3000/invite` (requires a room JWT)
 - Verify invite: `http://localhost:3000/invite/verify`
+- Admin dashboard: `http://localhost:5173/admin` (requires `ADMIN_SECRET`)
 
 In development the Vite server proxies `/ws` to the signaling server, so no
 configuration is required. Copy the `.env.example` files into `.env` in each
@@ -66,6 +67,7 @@ VITE_SIGNALING_URL=wss://signal.example.com/ws npm run build -w web
 Set the server-side variables on the signaling server:
 
 - `ORIGIN=https://example.com` — the web app origin, so CORS permits it.
+- `JWT_SECRET` and `ADMIN_SECRET` — required to enable the admin dashboard.
 - Cloudflare TURN credentials and analytics variables, to relay connections
   that cannot go peer-to-peer until monthly egress reaches the switch limit.
 - ExpressTURN URLs and credentials, to provide the fallback relay service.
@@ -90,6 +92,7 @@ files (server and web) as templates.
 | `HOST` | `0.0.0.0` | Address the signaling server binds to. |
 | `ORIGIN` | — | CORS allow-origin for the web app. Required when the web app and server are on different origins. |
 | `JWT_SECRET` | — | Secret used to sign room session JWTs. Authenticates `/session` and WebSocket room joins. |
+| `ADMIN_SECRET` | — | Shared secret exchanged for a one-hour admin JWT. Admin endpoints are disabled unless this and `JWT_SECRET` are explicitly set. |
 | `CLOUDFLARE_TURN_KEY_ID` | — | Cloudflare TURN key ID used by the server. |
 | `CLOUDFLARE_TURN_API_TOKEN` | — | Cloudflare API token used to generate temporary TURN credentials. |
 | `CLOUDFLARE_ACCOUNT_ID` | — | Cloudflare account ID, queried for TURN usage. |
@@ -105,6 +108,16 @@ files (server and web) as templates.
 | Variable | Default | Description |
 | --- | --- | --- |
 | `VITE_SIGNALING_URL` | web app origin | Full signaling endpoint for WebSocket and TURN credential requests. Accepts `http`/`https`/`ws`/`wss`. |
+
+### Admin dashboard
+
+Open `/admin` on the web deployment and enter `ADMIN_SECRET`. The browser sends
+the shared secret only to `/admin/login` and stores the returned one-hour admin
+JWT in session storage. Live room, participant, and resource values represent
+only the current signaling-server process and reset when it restarts. Cloudflare
+TURN usage is queried separately for the current UTC month and cached for ten
+minutes. Historical users, cross-instance totals, and hosting-provider metrics
+are not collected.
 
 ### Mobile (`mobile/.env`)
 

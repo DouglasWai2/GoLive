@@ -8,9 +8,14 @@ import { RoomService } from "../services/room.service.js";
 import { SignalingService } from "../services/signaling.service.js";
 import type { RoomToken } from "../types/room.js";
 import { isRoomToken } from "../types/room.js";
+import { TurnService } from "../services/turn.service.js";
+import { SystemMetricsService } from "../services/system-metrics.service.js";
+import { registerAdminRoutes } from "./admin.routes.js";
 
 export function registerRoutes(app: FastifyInstance): void {
   const roomService = new RoomService();
+  const turnService = new TurnService();
+  const systemMetrics = new SystemMetricsService();
 
   const verifyRoomToken = (token: string): RoomToken | null => {
     try {
@@ -25,7 +30,8 @@ export function registerRoutes(app: FastifyInstance): void {
 
   registerHealthRoutes(app);
   registerSignalingRoutes(app, signalingService);
-  registerTurnRoutes(app, roomService);
+  registerTurnRoutes(app, roomService, turnService);
   registerRoomRoutes(app, roomService);
   registerInviteRoutes(app, roomService);
+  registerAdminRoutes(app, roomService, turnService, systemMetrics);
 }

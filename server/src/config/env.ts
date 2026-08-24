@@ -56,4 +56,8 @@ export const env = {
   get jwtSecret(): string | undefined {
     return process.env.JWT_SECRET;
   },
+
+  get adminSecret(): string | undefined {
+    return process.env.ADMIN_SECRET;
+  },
 }

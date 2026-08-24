@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Client, Peer, RoomSession } from "../types/room.js";
+import type { Client, Peer, RoomSession, RoomsSnapshot } from "../types/room.js";
 
 export class RoomService {
   private readonly rooms = new Map<string, Map<string, Client>>();
@@ -114,6 +114,47 @@ export class RoomService {
     }
 
     this.refreshHeartbeatOwner(roomId);
+  }
+
+  getSnapshot(): RoomsSnapshot {
+    let activeUsers = 0;
+    let activeSharers = 0;
+    const rooms = [...this.rooms.entries()]
+      .filter(([, clients]) => clients.size > 0)
+      .map(([id, clients]) => {
+        const participants = [...clients.values()].map((client) => ({
+          id: client.id,
+          name: client.name,
+          sharing: client.sharing,
+          connectedAt: client.connectedAt,
+        }));
+        const roomSharers = participants.filter(
+          (participant) => participant.sharing,
+        ).length;
+
+        activeUsers += participants.length;
+        activeSharers += roomSharers;
+
+        return {
+          id,
+          startedAt: participants.reduce(
+            (oldest, participant) => participant.connectedAt < oldest
+              ? participant.connectedAt
+              : oldest,
+            participants[0]!.connectedAt,
+          ),
+          activeUsers: participants.length,
+          activeSharers: roomSharers,
+          participants,
+        };
+      });
+
+    return {
+      activeRooms: rooms.length,
+      activeUsers,
+      activeSharers,
+      rooms,
+    };
   }
 
   toPeer(client: Client): Peer {

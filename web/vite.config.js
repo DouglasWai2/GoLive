@@ -33,6 +33,15 @@ export default defineConfig({
             "/session": {
                 target: "http://localhost:3000",
             },
+            "/admin": {
+                target: "http://localhost:3000",
+                bypass: function (req) {
+                    var _a;
+                    if (req.method === "GET" && ((_a = req.headers.accept) === null || _a === void 0 ? void 0 : _a.includes("text/html"))) {
+                        return "/index.html";
+                    }
+                },
+            },
         },
     },
 });

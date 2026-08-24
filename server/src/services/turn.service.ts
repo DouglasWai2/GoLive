@@ -4,6 +4,7 @@ import type {
   CloudflareTurnUsage,
   IceServer,
   TurnCredentialsResponse,
+  TurnUsageResult,
 } from "../types/turn.js";
 
 const TURN_USAGE_CACHE_TTL_MS = 10 * 60 * 1000;
@@ -61,20 +62,17 @@ function containsTurnServer(servers: IceServer[]): boolean {
 }
 
 export class TurnService {
-  private cachedTurnUsage: {
-    month: string;
+  private readonly cachedTurnUsage = new Map<string, {
     expiresAt: number;
+    fetchedAt: string;
     usage: CloudflareTurnUsage;
-  } | null = null;
-  private inFlightRequest: {
-    month: string;
-    promise: Promise<CloudflareTurnUsage>;
-  } | null = null;
+  }>();
+  private readonly inFlightRequests = new Map<string, Promise<TurnUsageResult>>();
 
   async generateIceServers(now = new Date()): Promise<TurnCredentialsResponse> {
     if (env.turnKeyId && env.turnApiToken) {
       try {
-        const usage = await this.getCachedUsage(monthStart(now), now);
+        const { usage } = await this.getCachedUsage(monthStart(now), now);
 
         if (usage.egressGB < env.cloudflareTurnSwitchGB) {
           try {
@@ -94,38 +92,44 @@ export class TurnService {
   async getCachedUsage(
     from: Date,
     to: Date = new Date(),
-  ): Promise<CloudflareTurnUsage> {
+  ): Promise<TurnUsageResult> {
     const now = Date.now();
-    const cacheMonth = toDateString(from);
+    const dateFrom = toDateString(from);
+    const dateTo = toDateString(to);
+    const cacheKey = `${dateFrom}:${dateTo}`;
+    const cached = this.cachedTurnUsage.get(cacheKey);
 
-    if (
-      this.cachedTurnUsage
-      && this.cachedTurnUsage.month === cacheMonth
-      && now < this.cachedTurnUsage.expiresAt
-    ) {
-      return this.cachedTurnUsage.usage;
+    if (cached && now < cached.expiresAt) {
+      return { usage: cached.usage, fetchedAt: cached.fetchedAt, stale: false };
     }
 
-    if (this.inFlightRequest?.month === cacheMonth) {
-      return this.inFlightRequest.promise;
+    const inFlight = this.inFlightRequests.get(cacheKey);
+    if (inFlight) {
+      return inFlight;
     }
 
-    const promise = this.getUsage(from, to);
-    this.inFlightRequest = { month: cacheMonth, promise };
-
-    try {
-      const usage = await promise;
-      this.cachedTurnUsage = {
-        month: cacheMonth,
-        expiresAt: Date.now() + TURN_USAGE_CACHE_TTL_MS,
-        usage,
-      };
-      return usage;
-    } finally {
-      if (this.inFlightRequest?.promise === promise) {
-        this.inFlightRequest = null;
+    const promise = (async (): Promise<TurnUsageResult> => {
+      try {
+        const usage = await this.getUsage(dateFrom, dateTo);
+        const fetchedAt = new Date().toISOString();
+        this.cachedTurnUsage.set(cacheKey, {
+          expiresAt: Date.now() + TURN_USAGE_CACHE_TTL_MS,
+          fetchedAt,
+          usage,
+        });
+        return { usage, fetchedAt, stale: false };
+      } catch (error) {
+        if (cached) {
+          return { usage: cached.usage, fetchedAt: cached.fetchedAt, stale: true };
+        }
+        throw error;
+      } finally {
+        this.inFlightRequests.delete(cacheKey);
       }
-    }
+    })();
+
+    this.inFlightRequests.set(cacheKey, promise);
+    return promise;
   }
 
   private async generateCloudflareIceServers(): Promise<TurnCredentialsResponse> {
@@ -180,8 +184,8 @@ export class TurnService {
   }
 
   private async getUsage(
-    from: Date,
-    to: Date = new Date(),
+    dateFrom: string,
+    dateTo: string,
   ): Promise<CloudflareTurnUsage> {
     const accountId = env.cloudflareAccountId;
     const apiToken = env.cloudflareAnalyticsApiToken;
@@ -190,8 +194,6 @@ export class TurnService {
       throw new Error("Cloudflare analytics configuration missing");
     }
 
-    const dateFrom = toDateString(from);
-    const dateTo = toDateString(to);
     const query = `
       query TurnUsage {
         viewer {

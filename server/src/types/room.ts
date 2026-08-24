@@ -9,7 +9,27 @@ export type Peer = {
 export type Client = Peer & {
   sessionId: string;
   socket: WebSocket;
+  connectedAt: string;
 };
+
+export type RoomParticipantSnapshot = Readonly<Peer & {
+  connectedAt: string;
+}>;
+
+export type ActiveRoomSnapshot = Readonly<{
+  id: string;
+  startedAt: string;
+  activeUsers: number;
+  activeSharers: number;
+  participants: readonly RoomParticipantSnapshot[];
+}>;
+
+export type RoomsSnapshot = Readonly<{
+  activeRooms: number;
+  activeUsers: number;
+  activeSharers: number;
+  rooms: readonly ActiveRoomSnapshot[];
+}>;
 
 export type RoomSession = {
   kind: "room";

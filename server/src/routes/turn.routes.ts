@@ -7,8 +7,9 @@ import { isRoomToken } from "../types/room.js";
 export function registerTurnRoutes(
   app: FastifyInstance,
   roomService: RoomService,
+  turnService: TurnService,
 ): void {
-  const controller = createTurnController(new TurnService());
+  const controller = createTurnController(turnService);
 
   app.get(
     "/session",

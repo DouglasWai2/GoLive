@@ -29,6 +29,12 @@ export type CloudflareTurnUsage = {
   freeTierPercent: number;
 };
 
+export type TurnUsageResult = {
+  usage: CloudflareTurnUsage;
+  fetchedAt: string;
+  stale: boolean;
+};
+
 export type IceServer = {
   urls: string | string[];
   username?: string;
