@@ -43,6 +43,7 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showCinemaControls, setShowCinemaControls] = useState(false);
   const [cinemaAudioBlocked, setCinemaAudioBlocked] = useState(false);
+  const [showParticipants, setShowParticipants] = useState(false);
   const [statsEnabled, setStatsEnabled] = useState(() => {
     try {
       return localStorage.getItem(STATS_STORAGE_KEY) !== "0";
@@ -68,6 +69,8 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
   const cinemaRef = useRef<HTMLDivElement>(null);
   const cinemaVideoRef = useRef<HTMLVideoElement>(null);
   const cinemaControlsTimer = useRef<number | null>(null);
+  const participantsRef = useRef<HTMLDivElement>(null);
+  const participantsButtonRef = useRef<HTMLButtonElement>(null);
 
   const activeSharer = peers.find((peer) => peer.sharing);
   const remoteTiles = peers.filter((peer) => remoteStreams[peer.id]);
@@ -126,6 +129,30 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
       document.removeEventListener("webkitfullscreenchange", onChange);
     };
   }, []);
+
+  useEffect(() => {
+    if (!showParticipants) return;
+
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      if (event.target instanceof Node && !participantsRef.current?.contains(event.target)) {
+        setShowParticipants(false);
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+
+      setShowParticipants(false);
+      participantsButtonRef.current?.focus();
+    };
+
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    document.addEventListener("keydown", closeOnEscape);
+
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsideClick);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [showParticipants]);
 
   useEffect(() => {
     if (!isFullscreen) {
@@ -349,7 +376,40 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
           <h1>{localStream ? "You are presenting" : activeSharer ? `${activeSharer.name} is presenting` : "Ready when you are"}</h1>
         </div>
         <div className="stage-actions">
-          <div className="people-count"><UsersIcon /><strong>{peers.length + 1}</strong> in room</div>
+          <div className="participants" ref={participantsRef}>
+            <button
+              ref={participantsButtonRef}
+              type="button"
+              className="people-count"
+              aria-expanded={showParticipants}
+              aria-controls="participants-list"
+              onClick={() => setShowParticipants((current) => !current)}
+            >
+              <UsersIcon />
+              <strong>{peers.length + 1}</strong>
+              <span className="people-count-label">in room</span>
+            </button>
+            {showParticipants && (
+              <div id="participants-list" className="participants-popover" role="region" aria-label="Participants in room">
+                <div className="participants-heading">
+                  <strong>Participants</strong>
+                  <span>{peers.length + 1}</span>
+                </div>
+                <ul>
+                  <li>
+                    <span className="participant-avatar">{localName.slice(0, 1).toUpperCase()}</span>
+                    <span className="participant-name"><strong>{localName}</strong><small>You</small></span>
+                  </li>
+                  {peers.map((peer) => (
+                    <li key={peer.id}>
+                      <span className="participant-avatar">{peer.name.slice(0, 1).toUpperCase()}</span>
+                      <span className="participant-name"><strong>{peer.name}</strong></span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
