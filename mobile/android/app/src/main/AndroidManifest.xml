@@ -38,7 +38,7 @@
       </intent-filter>
       <intent-filter android:autoVerify="true" data-generated="true">
         <action android:name="android.intent.action.VIEW"/>
-        <data android:scheme="https" android:host="golive.example"/>
+        <data android:scheme="https" android:host="go-live-web.vercel.app" android:pathPrefix="/room"/>
         <category android:name="android.intent.category.DEFAULT"/>
         <category android:name="android.intent.category.BROWSABLE"/>
       </intent-filter>

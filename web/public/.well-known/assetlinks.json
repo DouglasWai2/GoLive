@@ -1,0 +1,13 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.golive.mobile",
+      "sha256_cert_fingerprints": [
+        "06:CF:0C:E0:19:28:2E:80:C0:C7:91:D4:07:B1:6B:3D:C7:B1:CA:6A:47:C9:02:07:43:A0:8E:0E:5A:3D:C1:23",
+        "FA:C6:17:45:DC:09:03:78:6F:B9:ED:E6:2A:96:2B:39:9F:73:48:F0:BB:6F:89:9B:83:32:66:75:91:03:3B:9C"
+      ]
+    }
+  }
+]

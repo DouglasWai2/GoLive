@@ -72,7 +72,8 @@
           "data": [
             {
               "scheme": "https",
-              "host": "golive.example"
+              "host": "go-live-web.vercel.app",
+              "pathPrefix": "/room"
             }
           ]
         }
