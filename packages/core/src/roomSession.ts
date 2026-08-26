@@ -594,10 +594,6 @@ export class RoomSession {
       this.startCaptureRecoveryTimer();
       this.scheduleReconnect();
     };
-
-    ws.onerror = (event) => {
-      console.error("Signaling WebSocket error", event);
-    };
   }
 
   private scheduleReconnect() {

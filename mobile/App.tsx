@@ -40,7 +40,7 @@ export default function App() {
           roomId: invite.roomId,
           name: stored.name,
           token: stored.token,
-          inviteToken: stored.inviteToken,
+          inviteToken: invite.inviteToken,
         });
         return;
       }
@@ -82,7 +82,6 @@ export default function App() {
               roomId,
               name: session.name,
               token: session.token,
-              inviteToken: session.inviteToken,
             }
           : { screen: "landing" },
       );
@@ -127,6 +126,13 @@ export default function App() {
 
   const rejected = (roomId: string, inviteToken?: string) => {
     clearSession(roomId).catch(() => {});
+    AsyncStorage.removeItem(LAST_ROOM_KEY).catch(() => {});
+
+    if (!inviteToken) {
+      setStage({ screen: "landing" });
+      return;
+    }
+
     void AsyncStorage.getItem(LAST_NAME_KEY).then((initialName) => {
       setStage({ screen: "name", roomId, inviteToken, initialName: initialName ?? "" });
     });

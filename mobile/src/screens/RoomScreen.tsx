@@ -21,6 +21,7 @@ import { ControlDock } from "../components/ControlDock";
 import { FullscreenView } from "../components/FullscreenView";
 import { INVITE_BASE_URL, SIGNALING_URL } from "../config";
 import { colors, radii, technicalText } from "../theme";
+import { ParticipantsList } from "../components/ParticipantsList";
 
 const STATS_STORAGE_KEY = "golive.stats.enabled";
 const VOLUME_STORAGE_KEY = "golive.volume";
@@ -46,6 +47,8 @@ export function RoomScreen({
   const [shareVisible, setShareVisible] = useState(false);
   const [shareSettings, setShareSettings] = useState<ShareSettings | null>(null);
   const [isInviting, setIsInviting] = useState(false);
+  const [participantsVisible, setParticipantsVisible] = useState(false);
+
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
   const [audioPreferencesReady, setAudioPreferencesReady] = useState(false);
@@ -229,9 +232,15 @@ export function RoomScreen({
             </View>
             <Text style={styles.stageTitle}>{stageTitle}</Text>
           </View>
-          <View style={styles.peopleCount}>
-            <UsersIcon color={colors.muted} />
-            <Text style={styles.peopleText}><Text style={styles.peopleStrong}>{peers.length + 1}</Text> in room</Text>
+          <View>
+            <Pressable
+              style={({ pressed }) => [styles.peopleCount, pressed && styles.pressed]}
+              onPress={() => setParticipantsVisible((visible) => !visible)}
+            >
+              <UsersIcon color={colors.muted} />
+              <Text style={styles.peopleText}><Text style={styles.peopleStrong}>{peers.length + 1}</Text> in room</Text>
+            </Pressable>
+            {participantsVisible && <ParticipantsList name={name} participants={peers} />}
           </View>
         </View>
 
@@ -364,10 +373,10 @@ const styles = StyleSheet.create({
   acidDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.acid },
   eyebrowText: { ...technicalText, color: colors.muted, fontSize: 9 },
   stageTitle: { color: colors.paper, fontSize: 27, lineHeight: 31, fontWeight: "800", letterSpacing: -1.25 },
-  peopleCount: { flexDirection: "row", alignItems: "center", gap: 7, paddingBottom: 4 },
+  peopleCount: { flexDirection: "row", alignItems: "center", gap: 7, borderWidth: 1, borderStyle: "solid", borderColor: "#32322d", padding: 5 },
   peopleText: { color: "#85857d", fontSize: 10 },
   peopleStrong: { color: colors.paper, fontWeight: "800" },
-  videoGrid: { minHeight: 330, borderWidth: 1, borderColor: "#32322d", backgroundColor: colors.surface, padding: 7, alignItems: "stretch", justifyContent: "center" },
+  videoGrid: { borderWidth: 1, borderColor: "#32322d", backgroundColor: colors.surface, padding: 7, alignItems: "stretch", justifyContent: "center" },
   videoGridActive: { justifyContent: "flex-start" },
   tileGrid: { gap: 8 },
   tileGridWide: { flexDirection: "row", flexWrap: "wrap" },

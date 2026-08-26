@@ -2,17 +2,12 @@
   "expo": {
     "name": "GoLive",
     "slug": "golive-mobile",
-    "version": "0.1.0",
+    "version": "1.0.0",
     "icon": "./assets/icon.png",
     "orientation": "default",
     "userInterfaceStyle": "dark",
     "newArchEnabled": true,
     "scheme": "golive",
-    "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#11110f"
-    },
     "plugins": [
       [
         "@config-plugins/react-native-webrtc",
@@ -36,10 +31,20 @@
           "initialOrientation": "PORTRAIT_UP"
         }
       ],
-      "./plugins/withWebRTCMediaProjection"
+      "./plugins/withWebRTCMediaProjection",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#11110f",
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 288,
+          "resizeMode": "contain"
+        }
+      ]
     ],
     "android": {
       "package": "com.golive.mobile",
+      "versionCode": 2,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#11110f"
@@ -77,6 +82,9 @@
       "eas": {
         "projectId": "1286511b-9a14-4ea2-9312-796193f78f87"
       }
+    },
+    "ios": {
+      "bundleIdentifier": "com.golive.mobile"
     }
   }
 }

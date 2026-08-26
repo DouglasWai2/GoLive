@@ -153,7 +153,7 @@ test("joins without TURN and only the elected owner pings", () => {
   }
 });
 
-test("clears a session rejected after WebSocket authentication", () => {
+test("clears a session rejected before WebSocket authentication", () => {
   const originalWebSocket = globalThis.WebSocket;
   let rejected = 0;
   const errors: string[] = [];
@@ -184,7 +184,6 @@ test("clears a session rejected after WebSocket authentication", () => {
     const socket = FakeSocket.instance;
     assert.ok(socket);
     socket.open();
-    socket.receive({ type: "authenticated" });
     socket.onclose?.({ code: 4003 });
 
     assert.equal(rejected, 1);

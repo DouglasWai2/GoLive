@@ -1,4 +1,10 @@
-const { withMainActivity } = require("@expo/config-plugins");
+const {
+  withMainActivity,
+  withProjectBuildGradle,
+} = require("@expo/config-plugins");
+
+const WEBRTC_MAVEN_REPOSITORY =
+  '    maven { url "$rootDir/../../vendor/react-native-webrtc/android/maven" }';
 
 const IMPORT_JAVA = "import com.oney.WebRTCModule.WebRTCModuleOptions;";
 const IMPORT_KOTLIN = "import com.oney.WebRTCModule.WebRTCModuleOptions";
@@ -19,6 +25,17 @@ const INIT_KOTLIN =
  * Java and Kotlin syntax.
  */
 module.exports = function withWebRTCMediaProjection(config) {
+  config = withProjectBuildGradle(config, (project) => {
+    if (!project.modResults.contents.includes(WEBRTC_MAVEN_REPOSITORY.trim())) {
+      project.modResults.contents = project.modResults.contents.replace(
+        "    maven { url 'https://www.jitpack.io' }",
+        (match) => `${match}\n${WEBRTC_MAVEN_REPOSITORY}`,
+      );
+    }
+
+    return project;
+  });
+
   return withMainActivity(config, (activity) => {
     let contents = activity.modResults.contents;
 
