@@ -40,7 +40,7 @@ export const DEFAULT_SHARE_SETTINGS: ShareSettings = {
   height: 720,
   frameRate: 30,
   maxBitrate: 3_000_000,
-  includeAudio: true,
+  includeAudio: false,
 };
 
 export function formatBitrate(bps: number): string {

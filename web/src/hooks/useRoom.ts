@@ -7,6 +7,7 @@ import type {
   RemoteVideoStats,
   ShareSettings,
   SocketStatus,
+  VoiceState,
 } from "@golive/core";
 import { createSessionDeps } from "../services/sessionDeps";
 
@@ -26,6 +27,12 @@ export function useRoom(
   const [remoteStats, setRemoteStats] = useState<Record<string, RemoteVideoStats | null>>({});
   const [outboundStats, setOutboundStats] = useState<Record<string, OutboundVideoStats>>({});
   const [error, setError] = useState("");
+  const [voiceState, setVoiceState] = useState<VoiceState>({
+    joined: true,
+    micMuted: true,
+    requestingMicrophone: false,
+  });
+  const [remoteVoiceStreams, setRemoteVoiceStreams] = useState<Record<string, MediaStream>>({});
 
   const sessionRef = useRef<RoomSession | null>(null);
 
@@ -90,6 +97,20 @@ export function useRoom(
             return next;
           });
         },
+        onVoiceState: setVoiceState,
+        onRemoteVoiceTrack: (peerId, track) => {
+          setRemoteVoiceStreams((current) => {
+            const next = { ...current };
+
+            if (track) {
+              next[peerId] = new MediaStream([track as MediaStreamTrack]);
+            } else {
+              delete next[peerId];
+            }
+
+            return next;
+          });
+        },
         onError: setError,
         onSessionRejected,
         onSessionReplaced,
@@ -100,6 +121,7 @@ export function useRoom(
     sessionRef.current = session;
 
     session.start(roomId, name, token);
+    session.joinVoice();
 
     const resume = () => session.resume();
     const resumeWhenVisible = () => {
@@ -121,6 +143,8 @@ export function useRoom(
 
   const startSharing = (settings: ShareSettings) => sessionRef.current?.startSharing(settings);
   const stopSharing = () => sessionRef.current?.stopSharing();
+  const setMicrophoneMuted = (muted: boolean) =>
+    sessionRef.current?.setMicrophoneMuted(muted);
 
   return {
     status,
@@ -132,8 +156,11 @@ export function useRoom(
     remoteStats,
     outboundStats,
     error,
+    voiceState,
+    remoteVoiceStreams,
     setError,
     startSharing,
     stopSharing,
+    setMicrophoneMuted,
   };
 }

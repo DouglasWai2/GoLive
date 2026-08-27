@@ -51,6 +51,24 @@ export function ShareSettingsPanel({ isStarting, onStart, onCancel }: ShareSetti
         </div>
       </div>
 
+      <div className="setting-row audio-setting">
+        <div>
+          <label>Tab audio</label>
+          <small>Only browser-tab audio is allowed. Windows system audio may include private calls.</small>
+        </div>
+        <button
+          type="button"
+          className={`audio-toggle ${settings.includeAudio ? "active" : ""}`}
+          aria-pressed={settings.includeAudio}
+          onClick={() => setSettings((current) => ({
+            ...current,
+            includeAudio: !current.includeAudio,
+          }))}
+        >
+          {settings.includeAudio ? "On" : "Off"}
+        </button>
+      </div>
+
       <div className="setting-row">
         <label>Frame rate</label>
         <div className="segmented">

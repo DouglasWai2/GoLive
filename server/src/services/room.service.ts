@@ -132,6 +132,8 @@ export class RoomService {
           id: client.id,
           name: client.name,
           sharing: client.sharing,
+          voiceJoined: client.voiceJoined,
+          micMuted: client.micMuted,
           connectedAt: client.connectedAt,
         }));
         const roomSharers = participants.filter(
@@ -168,6 +170,8 @@ export class RoomService {
       id: client.id,
       name: client.name,
       sharing: client.sharing,
+      voiceJoined: client.voiceJoined,
+      micMuted: client.micMuted,
     };
   }
 }

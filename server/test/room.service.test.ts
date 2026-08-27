@@ -13,6 +13,8 @@ function client(
     sessionId: id,
     name: id,
     sharing: false,
+    voiceJoined: false,
+    micMuted: true,
     socket: {} as WebSocket,
     connectedAt,
   };
@@ -87,6 +89,8 @@ test("returns a sanitized active-room snapshot", () => {
     id: "first",
     name: "first",
     sharing: false,
+    voiceJoined: false,
+    micMuted: true,
     connectedAt: first.connectedAt,
   });
   assert.doesNotMatch(JSON.stringify(snapshot), /sessionId|socket/);

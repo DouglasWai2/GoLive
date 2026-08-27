@@ -5,6 +5,8 @@ export type Peer = {
   id: string;
   name: string;
   sharing: boolean;
+  voiceJoined: boolean;
+  micMuted: boolean;
 };
 
 export type Client = Peer & {

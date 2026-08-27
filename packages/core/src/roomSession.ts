@@ -1,15 +1,18 @@
 import type {
   IceServer,
   MediaStream,
+  MediaTrack,
   OutboundVideoStats,
   Peer,
   PeerConnectionState,
   RemoteVideoStats,
   RTCPeerConnection,
+  RTCRtpSender,
   ServerMessage,
   ShareSettings,
   SignalData,
   SocketStatus,
+  VoiceState,
   WebSocketLike,
 } from "./types";
 import { fallbackIceServers, getIceServers, websocketUrl } from "./signaling";
@@ -38,6 +41,8 @@ export type RoomSessionCallbacks = {
   onConnectionState: (peerId: string, state: PeerConnectionState | null) => void;
   onRemoteStats: (peerId: string, stats: RemoteVideoStats | null) => void;
   onOutboundStats: (peerId: string, stats: OutboundVideoStats | null) => void;
+  onVoiceState?: (state: VoiceState) => void;
+  onRemoteVoiceTrack?: (peerId: string, track: MediaTrack | null) => void;
   onError: (message: string) => void;
   onSessionRejected?: () => void;
   onSessionReplaced?: () => void;
@@ -110,6 +115,22 @@ export class RoomSession {
   private signalQueues = new Map<string, Promise<void>>();
   private peerGenerations = new Map<string, number>();
 
+  private voiceDesired = false;
+  private voiceJoined = false;
+  private micMuted = true;
+  private requestingMicrophone = false;
+  private microphoneGeneration = 0;
+  private microphoneStream: MediaStream | null = null;
+  private voicePeerConnections = new Map<string, RTCPeerConnection>();
+  private voiceSenders = new Map<string, RTCRtpSender>();
+  private voicePendingCandidates = new Map<string, unknown[]>();
+  private voicePendingOffers = new Map<string, symbol>();
+  private voiceSignalQueues = new Map<string, Promise<void>>();
+  private voicePeerGenerations = new Map<string, number>();
+  private voiceRecoveryTimers = new Map<string, TimerHandle>();
+  private voiceOfferAnswerTimers = new Map<string, TimerHandle>();
+  private voiceRetryTimers = new Map<string, TimerHandle>();
+
   private statsTimers = new Map<string, TimerHandle>();
   private inboundStatsSamples = new Map<string, InboundVideoSample>();
   private outboundStatsSamples = new Map<string, OutboundVideoSample>();
@@ -171,6 +192,7 @@ export class RoomSession {
     this.joined = false;
 
     this.signalQueues.clear();
+    this.voiceSignalQueues.clear();
 
     for (const timer of this.statsTimers.values()) {
       clearInterval(timer);
@@ -196,6 +218,18 @@ export class RoomSession {
       clearTimeout(timer);
     }
 
+    for (const timer of this.voiceRecoveryTimers.values()) {
+      clearTimeout(timer);
+    }
+
+    for (const timer of this.voiceOfferAnswerTimers.values()) {
+      clearTimeout(timer);
+    }
+
+    for (const timer of this.voiceRetryTimers.values()) {
+      clearTimeout(timer);
+    }
+
     this.statsTimers.clear();
     this.inboundStatsSamples.clear();
     this.outboundStatsSamples.clear();
@@ -210,6 +244,9 @@ export class RoomSession {
     this.pendingRestartRequests.clear();
     this.turnFetchFailures.clear();
     this.turnRetryTimers.clear();
+    this.voiceRecoveryTimers.clear();
+    this.voiceOfferAnswerTimers.clear();
+    this.voiceRetryTimers.clear();
 
     if (this.socket) {
       this.socket.onopen = null;
@@ -223,16 +260,26 @@ export class RoomSession {
 
     const stream = this.localStream;
     this.localStream = null;
+    const microphoneStream = this.microphoneStream;
+    this.microphoneStream = null;
 
     for (const peerId of Array.from(this.peerConnections.keys())) {
       this.closePeer(peerId);
     }
 
+    for (const peerId of Array.from(this.voicePeerConnections.keys())) {
+      this.closeVoicePeer(peerId);
+    }
+
     this.disposeCapturedStream(stream);
+    this.disposeCapturedStream(microphoneStream);
 
     this.pendingCandidates.clear();
     this.pendingOffers.clear();
     this.peerGenerations.clear();
+    this.voicePendingCandidates.clear();
+    this.voicePendingOffers.clear();
+    this.voicePeerGenerations.clear();
 
     this.shareSettings = null;
     this.scaleResolutionDownBy = 1;
@@ -241,6 +288,12 @@ export class RoomSession {
     this.selfId = "";
     this.isHost = false;
     this.heartbeatOwnerId = "";
+    this.voiceDesired = false;
+    this.voiceJoined = false;
+    this.micMuted = true;
+    this.requestingMicrophone = false;
+    this.microphoneGeneration += 1;
+    this.emitVoiceState();
   }
 
   resume() {
@@ -269,6 +322,173 @@ export class RoomSession {
         this.scheduleIceRecovery(peerId, 0);
       }
     }
+
+    for (const [peerId, connection] of this.voicePeerConnections) {
+      if (
+        connection.connectionState === "disconnected" ||
+        connection.connectionState === "failed"
+      ) {
+        this.scheduleVoiceRecovery(peerId, connection);
+      }
+    }
+  }
+
+  joinVoice() {
+    this.voiceDesired = true;
+    this.emitVoiceState();
+
+    if (this.joined) {
+      this.announceVoiceState();
+      void this.ensureTurnServers().catch((caught) => {
+        console.warn("TURN is unavailable for room voice", caught);
+      });
+    }
+  }
+
+  leaveVoice() {
+    this.voiceDesired = false;
+    this.voiceJoined = false;
+    this.micMuted = true;
+    this.requestingMicrophone = false;
+    this.microphoneGeneration += 1;
+
+    const stream = this.microphoneStream;
+    this.microphoneStream = null;
+    this.disposeCapturedStream(stream);
+
+    for (const peerId of Array.from(this.voicePeerConnections.keys())) {
+      this.closeVoicePeer(peerId);
+    }
+
+    this.send({ type: "voice", joined: false, micMuted: true });
+    this.emitVoiceState();
+  }
+
+  async setMicrophoneMuted(muted: boolean) {
+    if (!this.voiceDesired || this.requestingMicrophone) return;
+
+    if (!muted && !this.microphoneStream) {
+      const getUserMedia = this.deps.adapter.getUserMedia;
+      if (!getUserMedia) {
+        this.callbacks.onError("Microphone voice chat is not supported on this device.");
+        return;
+      }
+
+      this.requestingMicrophone = true;
+      const microphoneGeneration = this.microphoneGeneration + 1;
+      this.microphoneGeneration = microphoneGeneration;
+      this.emitVoiceState();
+
+      let requestedStream: MediaStream | null = null;
+
+      try {
+        requestedStream = await getUserMedia({
+          video: false,
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        });
+
+        if (
+          !this.active
+          || !this.voiceDesired
+          || microphoneGeneration !== this.microphoneGeneration
+        ) {
+          this.disposeCapturedStream(requestedStream);
+          return;
+        }
+
+        const track = requestedStream.getAudioTracks()[0];
+        if (!track) {
+          this.disposeCapturedStream(requestedStream);
+          throw new Error("No microphone track was returned");
+        }
+
+        const activeStream = requestedStream;
+        const detachMicrophone = () => {
+          track.enabled = false;
+          if (this.microphoneStream === activeStream) {
+            this.microphoneStream = null;
+          }
+          this.disposeCapturedStream(activeStream);
+          void Promise.allSettled(
+            [...this.voiceSenders.values()].map((sender) =>
+              sender.replaceTrack?.(null) ?? Promise.resolve(),
+            ),
+          );
+        };
+
+        track.enabled = false;
+        this.microphoneStream = activeStream;
+        track.addEventListener("ended", () => {
+          if (this.microphoneStream !== activeStream) return;
+
+          this.microphoneGeneration += 1;
+          this.microphoneStream = null;
+          this.micMuted = true;
+          this.announceVoiceState();
+          this.emitVoiceState();
+        }, { once: true });
+
+        try {
+          await Promise.all(
+            [...this.voiceSenders.values()].map((sender) =>
+              sender.replaceTrack?.(track) ?? Promise.resolve(),
+            ),
+          );
+
+          // Reconcile senders created while the first attachment was pending.
+          await Promise.all(
+            [...this.voiceSenders.values()].map((sender) =>
+              sender.replaceTrack?.(track) ?? Promise.resolve(),
+            ),
+          );
+        } catch (caught) {
+          detachMicrophone();
+          throw caught;
+        }
+
+        if (
+          !this.active
+          || !this.voiceDesired
+          || microphoneGeneration !== this.microphoneGeneration
+        ) {
+          detachMicrophone();
+          return;
+        }
+
+        track.enabled = true;
+      } catch (caught) {
+        if (
+          this.active
+          && this.voiceDesired
+          && microphoneGeneration === this.microphoneGeneration
+        ) {
+          console.warn("Microphone capture failed", caught);
+          this.callbacks.onError(
+            this.deps.adapter.isCaptureRejected(caught)
+              ? "Microphone permission was not granted."
+              : "Microphone could not be started.",
+          );
+        }
+        return;
+      } finally {
+        if (microphoneGeneration === this.microphoneGeneration) {
+          this.requestingMicrophone = false;
+          if (this.active) this.emitVoiceState();
+        }
+      }
+    }
+
+    const track = this.microphoneStream?.getAudioTracks()[0];
+    if (!muted && !track) return;
+    if (track) track.enabled = !muted;
+
+    this.micMuted = muted;
+    this.announceVoiceState();
+    this.emitVoiceState();
   }
 
   async startSharing(settings: ShareSettings) {
@@ -309,6 +529,15 @@ export class RoomSession {
         },
         audio: settings.includeAudio,
       });
+
+      const removedUnsafeAudio = settings.includeAudio
+        && this.deps.adapter.removeUnsafeDisplayAudio?.(stream);
+
+      if (removedUnsafeAudio) {
+        this.callbacks.onError(
+          "For privacy, audio is shared only when you choose a browser tab. Window and screen audio can include calls and other system sounds.",
+        );
+      }
 
       if (!this.active || generation !== this.sharingGeneration) {
         this.disposeCapturedStream(stream);
@@ -543,10 +772,18 @@ export class RoomSession {
       this.sharingRequest?.("disconnected");
       this.sharingRequest = null;
       this.signalQueues.clear();
+      this.voiceSignalQueues.clear();
 
       for (const peerId of Array.from(this.peerConnections.keys())) {
         this.closePeer(peerId);
       }
+
+      for (const peerId of Array.from(this.voicePeerConnections.keys())) {
+        this.closeVoicePeer(peerId);
+      }
+
+      this.voiceJoined = false;
+      this.emitVoiceState();
 
       this.peers = [];
       this.callbacks.onPeers([]);
@@ -746,6 +983,430 @@ export class RoomSession {
     }
 
     return new Ctor(websocketUrl(this.deps.baseUrl));
+  }
+
+  private emitVoiceState() {
+    this.callbacks.onVoiceState?.({
+      joined: this.voiceDesired,
+      micMuted: this.micMuted,
+      requestingMicrophone: this.requestingMicrophone,
+    });
+  }
+
+  private announceVoiceState() {
+    if (!this.joined || !this.voiceDesired) return;
+
+    this.send({
+      type: "voice",
+      joined: true,
+      micMuted: this.micMuted,
+    });
+  }
+
+  private shouldOfferVoice(peerId: string): boolean {
+    return Boolean(this.selfId && this.selfId.localeCompare(peerId) < 0);
+  }
+
+  private async attachMicrophoneToVoicePeer(peerId: string) {
+    const track = this.microphoneStream?.getAudioTracks()[0] ?? null;
+    const sender = this.voiceSenders.get(peerId);
+
+    if (sender?.replaceTrack) {
+      await sender.replaceTrack(track);
+    }
+  }
+
+  private createVoicePeerConnection(peerId: string): RTCPeerConnection {
+    const existing = this.voicePeerConnections.get(peerId);
+    if (existing && existing.signalingState !== "closed") return existing;
+    if (existing) this.voicePeerConnections.delete(peerId);
+
+    const connection = this.deps.adapter.createPeerConnection({
+      iceServers: this.iceServers,
+    });
+    const transceiver = connection.addTransceiver?.("audio", {
+      direction: "sendrecv",
+    });
+
+    if (!transceiver?.sender.replaceTrack) {
+      connection.close();
+      throw new Error("Audio transceivers are not supported on this platform");
+    }
+
+    this.voicePeerConnections.set(peerId, connection);
+    this.voiceSenders.set(peerId, transceiver.sender);
+
+    connection.onicecandidate = (event) => {
+      if (!event.candidate) return;
+
+      this.send({
+        type: "signal",
+        target: peerId,
+        channel: "voice",
+        data: {
+          candidate: this.deps.adapter.serializeCandidate(event.candidate),
+        },
+      });
+    };
+
+    connection.onicecandidateerror = (event) => {
+      console.warn(`[voice:${peerId}] ICE candidate error`, event);
+    };
+    connection.ontrack = (event) => {
+      if (event.track.kind !== "audio") return;
+
+      this.callbacks.onRemoteVoiceTrack?.(peerId, event.track);
+    };
+    connection.onconnectionstatechange = () => {
+      if (connection.connectionState === "connected") {
+        this.clearVoiceRecoveryTimer(peerId);
+      }
+
+      if (
+        connection.connectionState === "failed"
+        || connection.connectionState === "disconnected"
+      ) {
+        this.scheduleVoiceRecovery(peerId, connection);
+      }
+
+      if (connection.connectionState === "closed") {
+        this.closeVoicePeer(peerId);
+      }
+    };
+
+    return connection;
+  }
+
+  private async createVoiceOffer(peerId: string) {
+    if (
+      this.voicePendingOffers.has(peerId)
+      || !this.voiceJoined
+      || !this.shouldOfferVoice(peerId)
+      || !this.peers.some((peer) => peer.id === peerId && peer.voiceJoined)
+    ) {
+      return;
+    }
+
+    const offerToken = Symbol(peerId);
+    const signalingGeneration = this.signalingGeneration;
+    const peerGeneration = this.voicePeerGenerations.get(peerId) ?? 0;
+    let connection: RTCPeerConnection | null = null;
+    this.voicePendingOffers.set(peerId, offerToken);
+
+    const isCurrent = () =>
+      this.active
+      && this.joined
+      && this.voiceJoined
+      && signalingGeneration === this.signalingGeneration
+      && peerGeneration === (this.voicePeerGenerations.get(peerId) ?? 0)
+      && this.voicePendingOffers.get(peerId) === offerToken
+      && this.peers.some((peer) => peer.id === peerId && peer.voiceJoined);
+
+    try {
+      try {
+        await this.ensureTurnServers();
+      } catch (caught) {
+        console.warn(`[voice:${peerId}] TURN is unavailable`, caught);
+      }
+
+      if (!isCurrent()) return;
+
+      connection = this.createVoicePeerConnection(peerId);
+      if (connection.signalingState !== "stable") return;
+
+      await this.attachMicrophoneToVoicePeer(peerId);
+      if (!isCurrent() || this.voicePeerConnections.get(peerId) !== connection) return;
+
+      const offer = await connection.createOffer();
+
+      if (
+        !isCurrent()
+        || this.voicePeerConnections.get(peerId) !== connection
+      ) {
+        return;
+      }
+
+      await connection.setLocalDescription(offer);
+      if (!isCurrent() || this.voicePeerConnections.get(peerId) !== connection) return;
+
+      this.send({
+        type: "signal",
+        target: peerId,
+        channel: "voice",
+        data: connection.localDescription,
+      });
+      this.startVoiceOfferAnswerTimer(peerId, connection);
+    } catch (caught) {
+      if (isCurrent()) {
+        console.error(`[voice:${peerId}] Could not create voice offer`, caught);
+        if (connection && this.voicePeerConnections.get(peerId) === connection) {
+          this.closeVoicePeer(peerId);
+        }
+        this.callbacks.onError("Room voice could not connect to a participant.");
+        this.scheduleVoiceOfferRetry(peerId);
+      }
+    } finally {
+      if (this.voicePendingOffers.get(peerId) === offerToken) {
+        this.voicePendingOffers.delete(peerId);
+      }
+    }
+  }
+
+  private async addOrQueueVoiceCandidate(
+    peerId: string,
+    connection: RTCPeerConnection,
+    candidate: unknown,
+  ) {
+    if (connection.remoteDescription) {
+      await connection.addIceCandidate(candidate as never);
+      return;
+    }
+
+    const pending = this.voicePendingCandidates.get(peerId) ?? [];
+    pending.push(candidate);
+    this.voicePendingCandidates.set(peerId, pending);
+  }
+
+  private async flushVoiceCandidates(
+    peerId: string,
+    connection: RTCPeerConnection,
+  ) {
+    const pending = this.voicePendingCandidates.get(peerId) ?? [];
+    this.voicePendingCandidates.delete(peerId);
+
+    for (const candidate of pending) {
+      if (connection.signalingState === "closed") return;
+      await connection.addIceCandidate(candidate as never);
+    }
+  }
+
+  private async processVoiceSignal(
+    from: string,
+    data: SignalData,
+    signalingGeneration: number,
+    peerGeneration: number,
+  ) {
+    if (
+      !this.active
+      || !this.voiceJoined
+      || signalingGeneration !== this.signalingGeneration
+      || peerGeneration !== (this.voicePeerGenerations.get(from) ?? 0)
+      || !this.peers.some((peer) => peer.id === from && peer.voiceJoined)
+    ) {
+      return;
+    }
+
+    if ("restartRequest" in data) return;
+
+    const connection = this.createVoicePeerConnection(from);
+
+    if ("candidate" in data) {
+      await this.addOrQueueVoiceCandidate(from, connection, data.candidate);
+      return;
+    }
+
+    if (data.type === "answer") {
+      if (connection.signalingState !== "have-local-offer") return;
+
+      await connection.setRemoteDescription(data);
+      if (
+        this.voicePeerConnections.get(from) !== connection
+        || signalingGeneration !== this.signalingGeneration
+        || peerGeneration !== (this.voicePeerGenerations.get(from) ?? 0)
+      ) return;
+
+      this.clearVoiceOfferAnswerTimer(from);
+      await this.flushVoiceCandidates(from, connection);
+      return;
+    }
+
+    if (data.type === "offer") {
+      if (connection.signalingState !== "stable") return;
+
+      this.clearVoiceRecoveryTimer(from);
+      await connection.setRemoteDescription(data);
+      if (
+        this.voicePeerConnections.get(from) !== connection
+        || signalingGeneration !== this.signalingGeneration
+        || peerGeneration !== (this.voicePeerGenerations.get(from) ?? 0)
+      ) return;
+
+      await this.flushVoiceCandidates(from, connection);
+      if (this.voicePeerConnections.get(from) !== connection) return;
+
+      await this.attachMicrophoneToVoicePeer(from);
+      if (this.voicePeerConnections.get(from) !== connection) return;
+
+      const answer = await connection.createAnswer();
+      if (this.voicePeerConnections.get(from) !== connection) return;
+
+      await connection.setLocalDescription(answer);
+      if (this.voicePeerConnections.get(from) !== connection) return;
+
+      this.send({
+        type: "signal",
+        target: from,
+        channel: "voice",
+        data: connection.localDescription,
+      });
+    }
+  }
+
+  private enqueueVoiceSignal(
+    from: string,
+    data: SignalData,
+    signalingGeneration: number,
+  ) {
+    const peerGeneration = this.voicePeerGenerations.get(from) ?? 0;
+    const previous = this.voiceSignalQueues.get(from) ?? Promise.resolve();
+    const next = previous
+      .catch(() => {})
+      .then(() => this.processVoiceSignal(
+        from,
+        data,
+        signalingGeneration,
+        peerGeneration,
+      ))
+      .catch((caught) => {
+        if (
+          this.active
+          && this.voiceJoined
+          && signalingGeneration === this.signalingGeneration
+          && peerGeneration === (this.voicePeerGenerations.get(from) ?? 0)
+        ) {
+          console.error(`[voice:${from}] Negotiation failed`, caught);
+          this.closeVoicePeer(from);
+          this.callbacks.onError("Room voice negotiation failed.");
+          if (this.shouldOfferVoice(from)) this.scheduleVoiceOfferRetry(from);
+        }
+      });
+
+    this.voiceSignalQueues.set(from, next);
+    void next.finally(() => {
+      if (this.voiceSignalQueues.get(from) === next) {
+        this.voiceSignalQueues.delete(from);
+      }
+    });
+  }
+
+  private scheduleVoiceRecovery(
+    peerId: string,
+    failedConnection: RTCPeerConnection,
+  ) {
+    if (
+      this.voiceRecoveryTimers.has(peerId)
+      || !this.voiceJoined
+      || !this.peers.some((peer) => peer.id === peerId && peer.voiceJoined)
+    ) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      this.voiceRecoveryTimers.delete(peerId);
+
+      if (
+        this.voicePeerConnections.get(peerId) !== failedConnection
+        || (
+          failedConnection.connectionState !== "failed"
+          && failedConnection.connectionState !== "disconnected"
+        )
+      ) {
+        return;
+      }
+
+      this.closeVoicePeer(peerId);
+
+      if (this.shouldOfferVoice(peerId)) {
+        void this.createVoiceOffer(peerId);
+      }
+    }, 3000);
+
+    this.voiceRecoveryTimers.set(peerId, timer);
+  }
+
+  private clearVoiceRecoveryTimer(peerId: string) {
+    const timer = this.voiceRecoveryTimers.get(peerId);
+    if (!timer) return;
+
+    clearTimeout(timer);
+    this.voiceRecoveryTimers.delete(peerId);
+  }
+
+  private startVoiceOfferAnswerTimer(
+    peerId: string,
+    connection: RTCPeerConnection,
+  ) {
+    this.clearVoiceOfferAnswerTimer(peerId);
+
+    const timer = setTimeout(() => {
+      this.voiceOfferAnswerTimers.delete(peerId);
+      if (
+        this.voicePeerConnections.get(peerId) !== connection
+        || connection.signalingState !== "have-local-offer"
+      ) return;
+
+      this.closeVoicePeer(peerId);
+      if (this.shouldOfferVoice(peerId)) void this.createVoiceOffer(peerId);
+    }, OFFER_ANSWER_TIMEOUT_MS);
+
+    this.voiceOfferAnswerTimers.set(peerId, timer);
+  }
+
+  private clearVoiceOfferAnswerTimer(peerId: string) {
+    const timer = this.voiceOfferAnswerTimers.get(peerId);
+    if (!timer) return;
+
+    clearTimeout(timer);
+    this.voiceOfferAnswerTimers.delete(peerId);
+  }
+
+  private scheduleVoiceOfferRetry(peerId: string) {
+    if (
+      this.voiceRetryTimers.has(peerId)
+      || !this.voiceJoined
+      || !this.shouldOfferVoice(peerId)
+      || !this.peers.some((peer) => peer.id === peerId && peer.voiceJoined)
+    ) return;
+
+    const timer = setTimeout(() => {
+      this.voiceRetryTimers.delete(peerId);
+      void this.createVoiceOffer(peerId);
+    }, 3000);
+
+    this.voiceRetryTimers.set(peerId, timer);
+  }
+
+  private clearVoiceRetryTimer(peerId: string) {
+    const timer = this.voiceRetryTimers.get(peerId);
+    if (!timer) return;
+
+    clearTimeout(timer);
+    this.voiceRetryTimers.delete(peerId);
+  }
+
+  private closeVoicePeer(peerId: string) {
+    this.voicePeerGenerations.set(
+      peerId,
+      (this.voicePeerGenerations.get(peerId) ?? 0) + 1,
+    );
+
+    const connection = this.voicePeerConnections.get(peerId);
+    if (connection) {
+      connection.ontrack = null;
+      connection.onicecandidate = null;
+      connection.onicecandidateerror = null;
+      connection.onconnectionstatechange = null;
+      connection.close();
+      this.voicePeerConnections.delete(peerId);
+    }
+
+    this.clearVoiceRecoveryTimer(peerId);
+    this.clearVoiceOfferAnswerTimer(peerId);
+    this.clearVoiceRetryTimer(peerId);
+    this.voiceSenders.delete(peerId);
+    this.voicePendingCandidates.delete(peerId);
+    this.voicePendingOffers.delete(peerId);
+    this.callbacks.onRemoteVoiceTrack?.(peerId, null);
   }
 
   private createPeerConnection(peerId: string): RTCPeerConnection {
@@ -1428,6 +2089,13 @@ export class RoomSession {
       this.callbacks.onPeers(message.peers);
       this.callbacks.onStatus("connected");
 
+      if (this.voiceDesired) {
+        this.announceVoiceState();
+        void this.ensureTurnServers().catch((caught) => {
+          console.warn("TURN is unavailable for room voice", caught);
+        });
+      }
+
       if (this.localStream) {
         void this.restoreSharing();
       }
@@ -1447,6 +2115,8 @@ export class RoomSession {
     if (message.type === "peer-joined") {
       this.signalQueues.delete(message.peer.id);
       this.closePeer(message.peer.id);
+      this.voiceSignalQueues.delete(message.peer.id);
+      this.closeVoicePeer(message.peer.id);
 
       this.peers = [
         ...this.peers.filter((peer) => peer.id !== message.peer.id),
@@ -1468,8 +2138,10 @@ export class RoomSession {
 
     if (message.type === "peer-left") {
       this.signalQueues.delete(message.peerId);
+      this.voiceSignalQueues.delete(message.peerId);
 
       this.closePeer(message.peerId);
+      this.closeVoicePeer(message.peerId);
 
       this.peers = this.peers.filter((peer) => peer.id !== message.peerId);
 
@@ -1479,6 +2151,7 @@ export class RoomSession {
     }
 
     if (message.type === "peer-updated") {
+      const previous = this.peers.find((peer) => peer.id === message.peer.id);
       this.peers = this.peers.map((peer) =>
         peer.id === message.peer.id ? message.peer : peer,
       );
@@ -1490,15 +2163,50 @@ export class RoomSession {
         this.closePeer(message.peer.id);
       }
 
+      if (!message.peer.voiceJoined) {
+        this.voiceSignalQueues.delete(message.peer.id);
+        this.closeVoicePeer(message.peer.id);
+      } else if (
+        this.voiceJoined
+        && (!previous?.voiceJoined || !this.voicePeerConnections.has(message.peer.id))
+        && this.shouldOfferVoice(message.peer.id)
+      ) {
+        void this.createVoiceOffer(message.peer.id);
+      }
+
       return;
     }
 
     if (message.type === "signal") {
-      this.enqueueSignal(
-        message.from,
-        message.data,
-        this.signalingGeneration,
-      );
+      if (message.channel === "voice") {
+        this.enqueueVoiceSignal(
+          message.from,
+          message.data,
+          this.signalingGeneration,
+        );
+      } else {
+        this.enqueueSignal(
+          message.from,
+          message.data,
+          this.signalingGeneration,
+        );
+      }
+      return;
+    }
+
+    if (message.type === "voice-accepted") {
+      this.voiceJoined = message.joined;
+      this.micMuted = message.micMuted;
+      this.emitVoiceState();
+
+      if (message.joined) {
+        for (const peer of this.peers) {
+          if (peer.voiceJoined && this.shouldOfferVoice(peer.id)) {
+            void this.createVoiceOffer(peer.id);
+          }
+        }
+      }
+
       return;
     }
 
@@ -1939,4 +2647,19 @@ export class RoomSession {
 
     this.socket.send(JSON.stringify(message));
   }
+}
+
+function isSignalData(value: unknown): value is SignalData {
+  if (!value || typeof value !== "object") return false;
+
+  const signal = value as Record<string, unknown>;
+  if (signal.restartRequest === true) return true;
+  if (signal.candidate && typeof signal.candidate === "object") return true;
+
+  return (
+    signal.type === "offer"
+    || signal.type === "answer"
+    || signal.type === "pranswer"
+    || signal.type === "rollback"
+  ) && (signal.sdp === undefined || typeof signal.sdp === "string");
 }

@@ -1,6 +1,12 @@
 import { useState } from "react";
-import { ScreenIcon } from "../icons";
-import type { Peer, ShareSettings, SocketStatus } from "../../types";
+import {
+  MicrophoneIcon,
+  MicrophoneMutedIcon,
+  ScreenIcon,
+  VolumeIcon,
+  VolumeMutedIcon,
+} from "../icons";
+import type { Peer, ShareSettings, SocketStatus, VoiceState } from "../../types";
 import { formatBitrate, formatResolution } from "@golive/core";
 import { ShareSettingsPanel } from "./ShareSettingsPanel";
 
@@ -11,8 +17,12 @@ type ControlDockProps = {
   isStartingShare: boolean;
   peers: Peer[];
   activeSettings: ShareSettings | null;
+  voiceState: VoiceState;
+  deafened: boolean;
   onStartShare: (settings: ShareSettings) => void;
   onStopShare: () => void;
+  onSetMicrophoneMuted: (muted: boolean) => void;
+  onToggleDeafen: () => void;
 };
 
 export function ControlDock({
@@ -22,8 +32,12 @@ export function ControlDock({
   isStartingShare,
   peers,
   activeSettings,
+  voiceState,
+  deafened,
   onStartShare,
   onStopShare,
+  onSetMicrophoneMuted,
+  onToggleDeafen,
 }: ControlDockProps) {
   const [showSettings, setShowSettings] = useState(false);
 
@@ -37,7 +51,32 @@ export function ControlDock({
 
   return (
     <footer className="control-dock">
-      <div className="you-chip"><span>{name.slice(0, 1).toUpperCase()}</span><div><small>YOU</small><strong>{name}</strong></div></div>
+      <div className="identity-controls">
+        <div className="you-chip"><span>{name.slice(0, 1).toUpperCase()}</span><div><small>YOU</small><strong>{name}</strong></div></div>
+        <div className="voice-controls" aria-label="Room voice controls">
+          <button
+            type="button"
+            className={`icon-button ${voiceState.micMuted ? "muted" : "active"}`}
+            disabled={status !== "connected" || voiceState.requestingMicrophone}
+            aria-pressed={!voiceState.micMuted}
+            title={voiceState.micMuted ? "Unmute microphone" : "Mute microphone"}
+            onClick={() => onSetMicrophoneMuted(!voiceState.micMuted)}
+          >
+            {voiceState.micMuted ? <MicrophoneMutedIcon /> : <MicrophoneIcon />}
+            {voiceState.requestingMicrophone ? "Starting..." : voiceState.micMuted ? "Unmute" : "Mute"}
+          </button>
+          <button
+            type="button"
+            className={`icon-button ${deafened ? "muted" : ""}`}
+            aria-pressed={deafened}
+            title={deafened ? "Hear room voice" : "Deafen room voice"}
+            onClick={onToggleDeafen}
+          >
+            {deafened ? <VolumeMutedIcon /> : <VolumeIcon />}
+            {deafened ? "Undeafen" : "Deafen"}
+          </button>
+        </div>
+      </div>
 
       <div className="share-control">
         {localStream ? (
@@ -68,7 +107,7 @@ export function ControlDock({
         )}
       </div>
 
-      <div className="privacy-note"><i>↗</i><span><strong>Direct connection</strong><small>Media never touches our server</small></span></div>
+      <div className="privacy-note"><i>↗</i><span><strong>Encrypted media</strong><small>Direct with relay fallback</small></span></div>
     </footer>
   );
 }

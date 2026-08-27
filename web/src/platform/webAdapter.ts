@@ -10,7 +10,28 @@ import { orderVideoCodecs } from "@golive/core";
  */
 export const webAdapter: PlatformAdapter = {
   getDisplayMedia: (constraints) =>
-    navigator.mediaDevices.getDisplayMedia(constraints),
+    navigator.mediaDevices.getDisplayMedia({
+      ...constraints,
+      audio: constraints.audio ? { restrictOwnAudio: true } : false,
+      systemAudio: "exclude",
+      windowAudio: "exclude",
+    } as DisplayMediaStreamOptions),
+
+  getUserMedia: (constraints) =>
+    navigator.mediaDevices.getUserMedia(constraints),
+
+  removeUnsafeDisplayAudio: (stream) => {
+    const displaySurface = stream.getVideoTracks()[0]?.getSettings?.().displaySurface;
+    if (displaySurface === "browser") return false;
+
+    const audioTracks = stream.getAudioTracks();
+    for (const track of audioTracks) {
+      track.stop();
+      stream.removeTrack?.(track);
+    }
+
+    return audioTracks.length > 0;
+  },
 
   isCaptureRejected: (error) =>
     error instanceof DOMException && error.name === "NotAllowedError",

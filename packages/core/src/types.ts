@@ -11,6 +11,14 @@ export type Peer = {
   id: string;
   name: string;
   sharing: boolean;
+  voiceJoined: boolean;
+  micMuted: boolean;
+};
+
+export type VoiceState = {
+  joined: boolean;
+  micMuted: boolean;
+  requestingMicrophone: boolean;
 };
 
 export type ShareSettings = {
@@ -99,14 +107,26 @@ export type ServerMessage =
   | { type: "peer-left"; peerId: string }
   | { type: "peer-updated"; peer: Peer }
   | { type: "sharing-accepted"; sharing: boolean }
-  | { type: "signal"; from: string; data: SignalData }
+  | {
+      type: "signal";
+      from: string;
+      channel?: "screen" | "voice";
+      data: SignalData;
+    }
+  | { type: "voice-accepted"; joined: boolean; micMuted: boolean }
   | { type: "error"; code?: string; message: string };
 
 export type ClientMessage =
   | { type: "auth"; token: string }
   | { type: "join"; room: string; name: string }
-  | { type: "signal"; target: string; data: unknown }
+  | {
+      type: "signal";
+      target: string;
+      channel?: "screen" | "voice";
+      data: unknown;
+    }
   | { type: "sharing"; sharing: boolean }
+  | { type: "voice"; joined: boolean; micMuted: boolean }
   | { type: "ping"; timestamp: number }
   | { type: "heartbeat-reclaim" };
 
@@ -128,6 +148,7 @@ export type MediaTrack = {
     width?: number;
     height?: number;
     frameRate?: number;
+    displaySurface?: string;
   };
   applyConstraints?: (
     constraints: {
@@ -143,6 +164,7 @@ export type MediaStream = {
   getTracks(): MediaTrack[];
   getVideoTracks(): MediaTrack[];
   getAudioTracks(): MediaTrack[];
+  removeTrack?(track: MediaTrack): void;
 };
 
 export type RTCRtpEncodingParameters = {
@@ -165,6 +187,11 @@ export type RTCRtpSender = {
   track: MediaTrack | null;
   getParameters(): RTCRtpSendParameters;
   setParameters(params: RTCRtpSendParameters): Promise<void>;
+  replaceTrack?(track: MediaTrack | null): Promise<void>;
+};
+
+export type RTCRtpTransceiver = {
+  sender: RTCRtpSender;
 };
 
 /*
@@ -192,10 +219,14 @@ export type RTCPeerConnection = {
   oniceconnectionstatechange: (() => void) | null;
   onicegatheringstatechange: (() => void) | null;
   onsignalingstatechange: (() => void) | null;
-  ontrack: ((event: { streams: MediaStream[] }) => void) | null;
+  ontrack: ((event: { track: MediaTrack; streams: MediaStream[] }) => void) | null;
   onconnectionstatechange: (() => void) | null;
 
   addTrack(track: MediaTrack, stream: MediaStream): unknown;
+  addTransceiver?(
+    kind: "audio" | "video",
+    init?: { direction?: "sendrecv" | "sendonly" | "recvonly" | "inactive" },
+  ): RTCRtpTransceiver;
   addIceCandidate(candidate: IceCandidateInit): Promise<void>;
   createOffer(options?: { iceRestart?: boolean }): Promise<SessionDescriptionInit>;
   createAnswer(): Promise<SessionDescriptionInit>;

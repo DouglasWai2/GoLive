@@ -1,5 +1,6 @@
 export type {
   Peer,
+  VoiceState,
   ShareSettings,
   RemoteVideoStats,
   OutboundVideoStats,
@@ -16,6 +17,7 @@ export type {
   RTCRtpEncodingParameters,
   RTCRtpSendParameters,
   RTCRtpSender,
+  RTCRtpTransceiver,
   StatsReportLike,
   RTCPeerConnection,
   SocketEvent,
@@ -68,6 +70,7 @@ export type {
 export { orderVideoCodecs } from "./adapter";
 export type {
   DisplayMediaConstraints,
+  UserMediaConstraints,
   PlatformAdapter,
   VideoCodecCapability,
 } from "./adapter";

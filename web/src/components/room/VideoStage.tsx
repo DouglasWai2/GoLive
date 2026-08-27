@@ -29,6 +29,8 @@ type VideoStageProps = {
   localQuality: string | null;
   localName: string;
   status: SocketStatus;
+  localMicMuted: boolean;
+  deafened: boolean;
 };
 
 const STATS_STORAGE_KEY = "golive.stats.enabled";
@@ -39,7 +41,7 @@ function isNotAllowedError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "NotAllowedError";
 }
 
-export function VideoStage({ localStream, peers, remoteStreams, connectionStates, remoteStats, outboundStats, localQuality, localName, status }: VideoStageProps) {
+export function VideoStage({ localStream, peers, remoteStreams, connectionStates, remoteStats, outboundStats, localQuality, localName, status, localMicMuted, deafened }: VideoStageProps) {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showCinemaControls, setShowCinemaControls] = useState(false);
   const [cinemaAudioBlocked, setCinemaAudioBlocked] = useState(false);
@@ -398,12 +400,12 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
                 <ul>
                   <li>
                     <span className="participant-avatar">{localName.slice(0, 1).toUpperCase()}</span>
-                    <span className="participant-name"><strong>{localName}</strong><small>You</small></span>
+                    <span className="participant-name"><strong>{localName}</strong><small>You · {localMicMuted ? "Muted" : "Mic on"}{deafened ? " · Deafened" : ""}</small></span>
                   </li>
                   {peers.map((peer) => (
                     <li key={peer.id}>
                       <span className="participant-avatar">{peer.name.slice(0, 1).toUpperCase()}</span>
-                      <span className="participant-name"><strong>{peer.name}</strong></span>
+                      <span className="participant-name"><strong>{peer.name}</strong><small>{peer.voiceJoined ? peer.micMuted ? "Muted" : "Mic on" : "No voice"}</small></span>
                     </li>
                   ))}
                 </ul>

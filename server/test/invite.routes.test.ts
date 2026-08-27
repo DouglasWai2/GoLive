@@ -245,3 +245,99 @@ test("WebSocket join cannot use a room token for another room", async () => {
     await app.close();
   }
 });
+
+test("authorizes and scopes room voice signaling", async () => {
+  const app = await buildApp();
+
+  try {
+    const host = await createRoom(app, "roomVOICE", "Host");
+    const inviteResponse = await app.inject({
+      method: "POST",
+      url: "/invite",
+      headers: { authorization: `Bearer ${host.token}` },
+      payload: { roomId: "roomVOICE" },
+    });
+    const { inviteToken } = inviteResponse.json<{ inviteToken: string }>();
+    const guestResponse = await app.inject({
+      method: "POST",
+      url: "/invite/verify",
+      payload: { roomId: "roomVOICE", name: "Guest", inviteToken },
+    });
+    const guest = guestResponse.json<{ token: string }>();
+
+    const hostSocket = await connectAndJoin(app, host.token, "roomVOICE", "Host");
+    const hostJoined = nextMessage(hostSocket);
+    const guestSocket = await connectAndJoin(app, guest.token, "roomVOICE", "Guest");
+    const joinedMessage = await hostJoined;
+    assert.equal(joinedMessage.type, "peer-joined");
+    const guestId = (joinedMessage.peer as { id: string }).id;
+
+    const unauthorized = nextMessage(hostSocket);
+    hostSocket.send(JSON.stringify({
+      type: "signal",
+      target: guestId,
+      channel: "voice",
+      data: { type: "offer", sdp: "not-joined" },
+    }));
+    assert.equal((await unauthorized).type, "error");
+
+    const invalidChannel = nextMessage(hostSocket);
+    hostSocket.send(JSON.stringify({
+      type: "signal",
+      target: guestId,
+      channel: "typo",
+      data: { candidate: { candidate: "invalid" } },
+    }));
+    assert.equal((await invalidChannel).message, "Invalid message.");
+
+    const malformedSignal = nextMessage(hostSocket);
+    hostSocket.send(JSON.stringify({
+      type: "signal",
+      target: guestId,
+      channel: "voice",
+      data: null,
+    }));
+    assert.equal((await malformedSignal).message, "Invalid message.");
+
+    const hostAccepted = nextMessage(hostSocket);
+    const guestSawHost = nextMessage(guestSocket);
+    hostSocket.send(JSON.stringify({
+      type: "voice",
+      joined: true,
+      micMuted: true,
+    }));
+    assert.deepEqual(await hostAccepted, {
+      type: "voice-accepted",
+      joined: true,
+      micMuted: true,
+    });
+    assert.equal((await guestSawHost).type, "peer-updated");
+
+    const guestAccepted = nextMessage(guestSocket);
+    const hostSawGuest = nextMessage(hostSocket);
+    guestSocket.send(JSON.stringify({
+      type: "voice",
+      joined: true,
+      micMuted: true,
+    }));
+    assert.equal((await guestAccepted).type, "voice-accepted");
+    assert.equal((await hostSawGuest).type, "peer-updated");
+
+    const relayed = nextMessage(guestSocket);
+    hostSocket.send(JSON.stringify({
+      type: "signal",
+      target: guestId,
+      channel: "voice",
+      data: { type: "offer", sdp: "voice-offer" },
+    }));
+    const signal = await relayed;
+    assert.equal(signal.type, "signal");
+    assert.equal(signal.channel, "voice");
+    assert.deepEqual(signal.data, { type: "offer", sdp: "voice-offer" });
+
+    hostSocket.close();
+    guestSocket.close();
+  } finally {
+    await app.close();
+  }
+});

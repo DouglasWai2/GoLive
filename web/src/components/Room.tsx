@@ -6,6 +6,7 @@ import { RoomHeader } from "./room/RoomHeader";
 import { ErrorBanner } from "./room/ErrorBanner";
 import { VideoStage } from "./room/VideoStage";
 import { ControlDock } from "./room/ControlDock";
+import { VoiceAudio } from "./room/VoiceAudio";
 
 type RoomProps = {
   roomId: string;
@@ -26,6 +27,7 @@ export function Room({
 }: RoomProps) {
   const room = useRoom(roomId, name, token, onSessionRejected, onSessionReplaced);
   const [shareSettings, setShareSettings] = useState<ShareSettings | null>(null);
+  const [deafened, setDeafened] = useState(false);
 
   const startShare = (settings: ShareSettings) => {
     setShareSettings(settings);
@@ -60,7 +62,11 @@ export function Room({
         localQuality={localQuality}
         localName={name}
         status={room.status}
+        localMicMuted={room.voiceState.micMuted}
+        deafened={deafened}
       />
+
+      <VoiceAudio streams={room.remoteVoiceStreams} deafened={deafened} />
 
       <ControlDock
         name={name}
@@ -69,8 +75,12 @@ export function Room({
         isStartingShare={room.isStartingShare}
         peers={room.peers}
         activeSettings={shareSettings}
+        voiceState={room.voiceState}
+        deafened={deafened}
         onStartShare={startShare}
         onStopShare={stopShare}
+        onSetMicrophoneMuted={(muted) => void room.setMicrophoneMuted(muted)}
+        onToggleDeafen={() => setDeafened((current) => !current)}
       />
     </main>
   );

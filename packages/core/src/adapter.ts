@@ -14,6 +14,15 @@ export type DisplayMediaConstraints = {
   audio?: boolean;
 };
 
+export type UserMediaConstraints = {
+  video: false;
+  audio: {
+    echoCancellation: boolean;
+    noiseSuppression: boolean;
+    autoGainControl: boolean;
+  };
+};
+
 export type VideoCodecCapability = {
   mimeType: string;
 };
@@ -58,6 +67,8 @@ export function orderVideoCodecs<T extends VideoCodecCapability>(
  */
 export type PlatformAdapter = {
   getDisplayMedia: (constraints: DisplayMediaConstraints) => Promise<MediaStream>;
+  getUserMedia?: (constraints: UserMediaConstraints) => Promise<MediaStream>;
+  removeUnsafeDisplayAudio?: (stream: MediaStream) => boolean;
   releaseMediaStream?: (stream: MediaStream) => void;
   isCaptureRejected: (error: unknown) => boolean;
   serializeCandidate: (candidate: unknown) => IceCandidateInit;

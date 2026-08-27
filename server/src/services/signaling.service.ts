@@ -210,10 +210,19 @@ export class SignalingService {
        */
       existing.socket.close(SESSION_REPLACED_CODE, "Session opened in another tab");
 
-      if (existing.sharing) {
+      if (existing.sharing || existing.voiceJoined) {
         this.broadcast(
           roomId,
-          { type: "peer-updated", peer: { id: peerId, name, sharing: false } },
+          {
+            type: "peer-updated",
+            peer: {
+              id: peerId,
+              name,
+              sharing: false,
+              voiceJoined: false,
+              micMuted: true,
+            },
+          },
           peerId,
         );
       }
@@ -234,6 +243,8 @@ export class SignalingService {
       sessionId: peerId,
       name,
       sharing: false,
+      voiceJoined: false,
+      micMuted: true,
       socket,
       connectedAt: new Date().toISOString(),
     };
@@ -297,10 +308,26 @@ export class SignalingService {
     if (message.type === "signal") {
       const signal = message.data as Record<string, unknown>;
 
-      if (signal?.type === "offer" && !client.sharing) {
+      if (
+        signal?.type === "offer"
+        && message.channel === "screen"
+        && !client.sharing
+      ) {
         send(socket, {
           type: "error",
           message: "Start sharing before sending an offer.",
+        });
+        return;
+      }
+
+      if (
+        signal?.type === "offer"
+        && message.channel === "voice"
+        && !client.voiceJoined
+      ) {
+        send(socket, {
+          type: "error",
+          message: "Join room voice before sending a voice offer.",
         });
         return;
       }
@@ -310,13 +337,35 @@ export class SignalingService {
        * so sender.roomId === target.roomId by construction.
        */
       const target = room.get(message.target);
-      if (target && target.id !== client.id) {
+      if (
+        target
+        && target.id !== client.id
+        && (message.channel === "screen" || target.voiceJoined)
+      ) {
         send(target.socket, {
           type: "signal",
           from: client.id,
+          channel: message.channel,
           data: message.data,
         });
       }
+      return;
+    }
+
+    if (message.type === "voice") {
+      client.voiceJoined = message.joined;
+      client.micMuted = message.joined ? message.micMuted : true;
+
+      send(socket, {
+        type: "voice-accepted",
+        joined: client.voiceJoined,
+        micMuted: client.micMuted,
+      });
+      this.broadcast(
+        roomId,
+        { type: "peer-updated", peer: this.rooms.toPeer(client) },
+        client.id,
+      );
       return;
     }
 
@@ -401,7 +450,10 @@ export class SignalingService {
 
 function parseMessage(raw: Buffer | ArrayBuffer | Buffer[]): ClientMessage | null {
   try {
-    const message = JSON.parse(raw.toString()) as Record<string, unknown>;
+    const serialized = raw.toString();
+    if (serialized.length > 64_000) return null;
+
+    const message = JSON.parse(serialized) as Record<string, unknown>;
 
     if (message.type === "auth" && typeof message.token === "string") {
       return { type: "auth", token: message.token };
@@ -418,13 +470,34 @@ function parseMessage(raw: Buffer | ArrayBuffer | Buffer[]): ClientMessage | nul
     if (
       message.type === "signal" &&
       typeof message.target === "string" &&
-      message.data !== undefined
+      isSignalData(message.data)
     ) {
-      return { type: "signal", target: message.target, data: message.data };
+      if (
+        message.channel !== undefined
+        && message.channel !== "screen"
+        && message.channel !== "voice"
+      ) {
+        return null;
+      }
+
+      const channel = message.channel === "voice" ? "voice" : "screen";
+      return { type: "signal", target: message.target, channel, data: message.data };
     }
 
     if (message.type === "sharing" && typeof message.sharing === "boolean") {
       return { type: "sharing", sharing: message.sharing };
+    }
+
+    if (
+      message.type === "voice"
+      && typeof message.joined === "boolean"
+      && typeof message.micMuted === "boolean"
+    ) {
+      return {
+        type: "voice",
+        joined: message.joined,
+        micMuted: message.micMuted,
+      };
     }
 
     if (message.type === "ping" && typeof message.timestamp === "number") {
@@ -439,4 +512,19 @@ function parseMessage(raw: Buffer | ArrayBuffer | Buffer[]): ClientMessage | nul
   } catch {
     return null;
   }
+}
+
+function isSignalData(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+
+  const signal = value as Record<string, unknown>;
+  if (signal.restartRequest === true) return true;
+  if (signal.candidate && typeof signal.candidate === "object") return true;
+
+  return (
+    signal.type === "offer"
+    || signal.type === "answer"
+    || signal.type === "pranswer"
+    || signal.type === "rollback"
+  ) && (signal.sdp === undefined || typeof signal.sdp === "string");
 }

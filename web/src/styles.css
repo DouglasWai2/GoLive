@@ -169,6 +169,13 @@ button.active:hover {
 .cinema.controls-hidden .cinema-meta, .cinema.controls-hidden .cinema-controls, .cinema.controls-hidden .stream-stats, .cinema.controls-hidden .volume-control { opacity: 0; pointer-events: none; }
 
 .control-dock { height: 80px; position: fixed; z-index: 5; left: 4vw; right: 4vw; bottom: 20px; background: rgba(28,28,25,.94); backdrop-filter: blur(18px); border: 1px solid #3b3b36; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; padding: 0 17px; box-shadow: 0 18px 45px rgba(0,0,0,.3); }
+.identity-controls, .voice-controls { display: flex; align-items: center; }
+.identity-controls { min-width: 0; gap: 16px; }
+.voice-controls { gap: 7px; }
+.voice-controls .icon-button { padding: 0 10px; background: #22221e; }
+.voice-controls .icon-button.active { border-color: rgba(201,255,66,.55); color: var(--acid); }
+.voice-controls .icon-button.muted { color: #7e7e76; }
+.voice-controls .icon-button:disabled { cursor: wait; opacity: .45; }
 .you-chip { display: flex; align-items: center; gap: 10px; }.you-chip > span { width: 37px; height: 37px; display: grid; place-items: center; border-radius: 50%; background: #34342f; color: #c2c1b8; font-size: 13px; }.you-chip small, .you-chip strong { display: block; }.you-chip small { color: #66665f; font-size: 8px; letter-spacing: .13em; margin-bottom: 3px; }.you-chip strong { font-size: 12px; }
 .stop-button { min-height: 48px; padding: 0 20px; background: #31201d; border: 1px solid #69342d; color: #ff9386; border-radius: 4px; font-weight: 700; display: flex; gap: 9px; align-items: center; }.stop-button > span { width: 10px; height: 10px; background: var(--red); }
 .privacy-note { justify-self: end; display: flex; align-items: center; gap: 10px; color: #87877f; }.privacy-note i { font-style: normal; width: 33px; height: 33px; border: 1px solid #41413c; border-radius: 50%; display: grid; place-items: center; }.privacy-note strong, .privacy-note small { display: block; }.privacy-note strong { color: #aaa9a0; font-size: 10px; margin-bottom: 3px; }.privacy-note small { font-size: 9px; }
@@ -178,12 +185,18 @@ button.active:hover {
 .quality-badge { color: #b5b5ad; font-family: ui-monospace, monospace; font-size: 10px; display: flex; align-items: center; gap: 8px; border: 1px solid #3b3b36; border-radius: 4px; padding: 0 11px; min-height: 34px; background: #22221e; }
 .quality-badge i { width: 3px; height: 3px; border-radius: 50%; background: var(--acid); }
 
-.share-settings { position: absolute; bottom: calc(100% + 16px); left: 50%; transform: translateX(-50%); width: min(360px, 92vw); background: #1b1b18; border: 1px solid #3b3b36; border-radius: 8px; padding: 18px; box-shadow: 0 22px 60px rgba(0,0,0,.5); z-index: 20; }
+.share-settings { position: absolute; bottom: calc(100% + 16px); left: 50%; transform: translateX(-50%); width: min(390px, 92vw); background: #1b1b18; border: 1px solid #3b3b36; border-radius: 8px; padding: 18px; box-shadow: 0 22px 60px rgba(0,0,0,.5); z-index: 20; }
 .share-settings-head { margin-bottom: 16px; }
 .share-settings-head strong { display: block; font-size: 15px; letter-spacing: -.02em; margin-bottom: 4px; }
 .share-settings-head small { color: var(--muted); font-size: 11px; }
 .setting-row { margin-bottom: 14px; }
 .setting-row label { display: block; color: #9c9c93; font-size: 10px; text-transform: uppercase; letter-spacing: .11em; margin-bottom: 7px; }
+.audio-setting { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 11px 0; border-top: 1px solid #30302b; border-bottom: 1px solid #30302b; }
+.audio-setting > div { min-width: 0; }
+.audio-setting label { margin-bottom: 5px; }
+.audio-setting small { display: block; color: #77776f; font-size: 9px; line-height: 1.4; }
+.audio-toggle { min-width: 54px; min-height: 31px; border: 1px solid #3b3b36; border-radius: 3px; background: #12120f; color: #8d8d84; font-size: 10px; font-weight: 700; }
+.audio-toggle.active { background: var(--acid); color: #15160f; }
 .segmented { display: flex; gap: 4px; background: #12120f; border: 1px solid #30302b; border-radius: 5px; padding: 3px; }
 .segmented button { flex: 1; border: 0; background: transparent; color: #8d8d84; font-size: 11px; font-weight: 600; min-height: 31px; border-radius: 3px; transition: background .15s, color .15s; }
 .segmented button:hover:not(.active) { color: var(--paper); }
@@ -193,6 +206,8 @@ button.active:hover {
 .ghost-button:hover:not(:disabled) { border-color: #5f5f57; color: var(--paper); }
 .ghost-button:disabled { opacity: .42; cursor: not-allowed; }
 .share-settings-actions .primary-button { min-height: 40px; }
+.voice-audio audio { display: none; }
+.voice-playback-action { position: fixed; z-index: 30; bottom: 115px; }
 
 .admin-shell { min-height: 100vh; background: #11110f; color: var(--paper); }
 .admin-shell button, .admin-shell input { font: inherit; }
@@ -306,6 +321,7 @@ button.active:hover {
   .control-dock { left: 20px; right: 20px; }
   .privacy-note { display: none; }
   .control-dock { grid-template-columns: 1fr auto; }
+  .voice-controls .icon-button { font-size: 0; }
   .admin-header { height: auto; min-height: 86px; padding: 16px 24px; }
   .admin-updated { display: none; }
   .admin-content { width: calc(100% - 48px); }
@@ -332,7 +348,11 @@ button.active:hover {
   .room-header { height: 72px; }.icon-button { font-size: 0; }.icon-button svg { margin: 0; }
   .stage-heading { align-items: start; }.people-count { margin-top: 7px; }.people-count-label { display: none; }
   .video-grid { min-height: 330px; padding: 7px; }
-  .control-dock { height: 70px; left: 12px; right: 12px; bottom: 12px; display: flex; justify-content: center; }
+  .control-dock { height: 70px; left: 12px; right: 12px; bottom: 12px; display: flex; justify-content: center; gap: 10px; }
+  .identity-controls { gap: 0; }
+  .voice-controls .icon-button { width: 42px; justify-content: center; }
+  .sharing-state .quality-badge { display: none; }
+  .share-control .primary-button { min-height: 42px; padding: 0 14px; }
   .admin-login-header { left: 22px; right: 22px; height: 72px; }
   .admin-login-card { padding: 32px 23px; }
   .admin-login-card h1 { font-size: 34px; }
