@@ -144,7 +144,7 @@ const styles = StyleSheet.create({
   meta: { position: "absolute", maxWidth: "45%", minHeight: 38, backgroundColor: "rgba(16,16,14,0.9)", paddingHorizontal: 13, flexDirection: "row", alignItems: "center", gap: 9 },
   liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.red },
   name: { color: colors.paper, fontSize: 12, fontWeight: "700", flexShrink: 1 },
-  controls: { position: "absolute", flexDirection: "row", alignItems: "center", gap: 9 },
+  controls: { position: "absolute", flexDirection: "row", alignItems: "flex-end", gap: 9 },
   closeButton: { width: 44, height: 44, backgroundColor: "rgba(16,16,14,0.9)", borderWidth: 1, borderColor: "#3d3d36", borderRadius: radii.control, alignItems: "center", justifyContent: "center" },
   pressed: { opacity: 0.62 },
 });

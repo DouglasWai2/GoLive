@@ -159,7 +159,7 @@ const styles = StyleSheet.create({
     right: 12,
     bottom: 12,
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-end",
     gap: 8,
     zIndex: 3,
   },

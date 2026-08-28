@@ -24,7 +24,7 @@ export function VolumeControl({
   const [open, setOpen] = useState(false);
 
   return (
-    <View style={styles.wrap}>
+    <View style={[styles.wrap, open && styles.wrapOpen]}>
       {open ? (
         <View style={styles.popover}>
           {disabled ? (
@@ -54,7 +54,10 @@ export function VolumeControl({
                 minimumValue={0}
                 maximumValue={1}
                 step={0.05}
-                value={muted ? 0 : volume}
+                value={volume}
+                onSlidingStart={() => {
+                  if (muted) onToggleMute();
+                }}
                 onValueChange={onVolumeChange}
                 minimumTrackTintColor={colors.acid}
                 maximumTrackTintColor="#3d3d36"
@@ -83,7 +86,8 @@ export function VolumeControl({
 }
 
 const styles = StyleSheet.create({
-  wrap: { alignItems: "flex-end" },
+  wrap: { alignItems: "flex-end", justifyContent: "flex-end" },
+  wrapOpen: { width: 220, height: 132 },
   button: { width: 44, height: 44, backgroundColor: "rgba(16,16,14,0.9)", borderWidth: 1, borderColor: "#3d3d36", borderRadius: radii.control, alignItems: "center", justifyContent: "center" },
   buttonMuted: { opacity: 0.72 },
   buttonDisabled: { opacity: 0.38 },

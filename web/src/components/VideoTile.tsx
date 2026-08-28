@@ -112,6 +112,39 @@ export function VideoTile({ stream, name, local = false, state, qualityLabel, st
     };
   }, [audioBlocked, hasAudio, local, muted, stream, volume]);
 
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    let active = true;
+    let frameRequest: number | null = null;
+    const resumeAfterFullscreen = () => {
+      if (frameRequest !== null) window.cancelAnimationFrame(frameRequest);
+
+      frameRequest = window.requestAnimationFrame(() => {
+        frameRequest = null;
+        if (!active || video.srcObject !== stream) return;
+
+        void video.play().then(
+          () => {
+            if (active && video.srcObject === stream) setPlaybackBlocked(false);
+          },
+          () => {
+            if (active && video.srcObject === stream) setPlaybackBlocked(true);
+          },
+        );
+      });
+    };
+
+    video.addEventListener("webkitendfullscreen", resumeAfterFullscreen);
+
+    return () => {
+      active = false;
+      if (frameRequest !== null) window.cancelAnimationFrame(frameRequest);
+      video.removeEventListener("webkitendfullscreen", resumeAfterFullscreen);
+    };
+  }, [stream]);
+
   const hearAudio = async () => {
     const video = videoRef.current;
     if (!video) return;
