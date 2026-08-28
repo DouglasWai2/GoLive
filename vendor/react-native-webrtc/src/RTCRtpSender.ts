@@ -29,11 +29,7 @@ export default class RTCRtpSender {
     }
 
     async replaceTrack(track: MediaStreamTrack | null): Promise<void> {
-        try {
-            await WebRTCModule.senderReplaceTrack(this._peerConnectionId, this._id, track ? track.id : null);
-        } catch (e) {
-            return;
-        }
+        await WebRTCModule.senderReplaceTrack(this._peerConnectionId, this._id, track ? track.id : null);
 
         this._track = track;
     }

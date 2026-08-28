@@ -19,6 +19,15 @@ type NativeCandidate = {
   usernameFragment?: string | null;
 };
 
+type UserMediaConstraints = {
+  video: false;
+  audio: {
+    echoCancellation: boolean;
+    noiseSuppression: boolean;
+    autoGainControl: boolean;
+  };
+};
+
 /*
  * Android adapter: react-native-webrtc.
  *
@@ -26,6 +35,9 @@ type NativeCandidate = {
  * via one MediaProjection session.
  * Android capture ignores resolution/fps constraints (the whole display is
  * captured), so the web constraint caps only apply to the remote senders.
+ *
+ * getUserMedia() is used for room voice microphone capture with echo cancellation,
+ * noise suppression, and auto gain control.
  */
 export const nativeAdapter: PlatformAdapter = {
   getDisplayMedia: async (constraints) => {
@@ -41,6 +53,14 @@ export const nativeAdapter: PlatformAdapter = {
     }
 
     return resolved;
+  },
+
+  getUserMedia: async (constraints: UserMediaConstraints) => {
+    const stream = await mediaDevices.getUserMedia({
+      video: false,
+      audio: constraints.audio as any,
+    });
+    return stream as unknown as MediaStream;
   },
 
   releaseMediaStream: (stream) => {
@@ -70,10 +90,11 @@ export const nativeAdapter: PlatformAdapter = {
     } as IceCandidateInit;
   },
 
-  createPeerConnection: ({ iceServers }) =>
+  createPeerConnection: ({ iceServers, purpose }) =>
     new RTCPeerConnection({
       iceServers: iceServers as never,
-    }) as unknown as CorePeerConnection,
+      golivePeerConnectionPurpose: purpose,
+    } as any) as unknown as CorePeerConnection,
 
   configureVideoCodecs: (connection) => {
     const capabilities = RTCRtpSender.getCapabilities("video");

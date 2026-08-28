@@ -14,11 +14,12 @@ import { buildInviteUrl, createInvite, formatBitrate, formatResolution } from "@
 import type { ShareSettings } from "@golive/core";
 import { useRoom } from "../hooks/useRoom";
 import { Brand } from "../components/Brand";
-import { CloseIcon, ScreenIcon, ShareIcon, UsersIcon } from "../components/icons";
+import { CloseIcon, MicrophoneIcon, MicrophoneMutedIcon, ScreenIcon, ShareIcon, UsersIcon, VolumeIcon, VolumeMutedIcon } from "../components/icons";
 import { VideoTile } from "../components/VideoTile";
 import { ShareSheet } from "../components/ShareSheet";
 import { ControlDock } from "../components/ControlDock";
 import { FullscreenView } from "../components/FullscreenView";
+import { VoiceAudio } from "../components/VoiceAudio";
 import { INVITE_BASE_URL, SIGNALING_URL } from "../config";
 import { colors, radii, technicalText } from "../theme";
 import { ParticipantsList } from "../components/ParticipantsList";
@@ -54,6 +55,7 @@ export function RoomScreen({
   const [audioPreferencesReady, setAudioPreferencesReady] = useState(false);
   const [statsEnabled, setStatsEnabled] = useState(true);
   const [fullscreenPeerId, setFullscreenPeerId] = useState<string | null>(null);
+  const [deafened, setDeafened] = useState(false);
   const { width } = useWindowDimensions();
   const wide = width >= 720;
   const compactHeader = width < 390;
@@ -68,9 +70,12 @@ export function RoomScreen({
     outboundStats,
     connectionStates,
     error,
+    voiceState,
+    remoteVoiceTracks,
     setError,
     startSharing,
     stopSharing,
+    setMicrophoneMuted,
   } = useRoom(roomId, name, token, onSessionRejected, onSessionReplaced);
 
   useEffect(() => {
@@ -240,7 +245,7 @@ export function RoomScreen({
               <UsersIcon color={colors.muted} />
               <Text style={styles.peopleText}><Text style={styles.peopleStrong}>{peers.length + 1}</Text> in room</Text>
             </Pressable>
-            {participantsVisible && <ParticipantsList name={name} participants={peers} />}
+            {participantsVisible && <ParticipantsList name={name} participants={peers} voiceState={{ voiceJoined: voiceState.joined, micMuted: voiceState.micMuted }} />}
           </View>
         </View>
 
@@ -310,6 +315,12 @@ export function RoomScreen({
         </View>
       </ScrollView>
 
+      <VoiceAudio
+        tracks={remoteVoiceTracks}
+        deafened={deafened}
+        activeMediaCount={Object.keys(remoteVoiceTracks).length + Object.keys(remoteStreams).length}
+      />
+
       <ControlDock
         name={name}
         status={status}
@@ -317,11 +328,20 @@ export function RoomScreen({
         isStartingShare={isStartingShare}
         peers={peers}
         activeSettings={shareSettings}
+        voiceState={voiceState}
+        deafened={deafened}
         onOpenSettings={() => setShareVisible(true)}
         onStopShare={stopSharing}
+        onSetMicrophoneMuted={setMicrophoneMuted}
+        onToggleDeafen={() => setDeafened((v) => !v)}
       />
 
-      <ShareSheet visible={shareVisible} isStarting={isStartingShare} onStart={handleStart} onCancel={() => setShareVisible(false)} />
+      <ShareSheet
+        visible={shareVisible}
+        isStarting={isStartingShare}
+        onStart={handleStart}
+        onCancel={() => setShareVisible(false)}
+      />
 
       <FullscreenView
         visible={fullscreenPeerId !== null}

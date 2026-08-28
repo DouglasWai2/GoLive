@@ -9,6 +9,7 @@ import type {
   RemoteVideoStats,
   ShareSettings,
   SocketStatus,
+  VoiceState,
 } from "@golive/core";
 import { SIGNALING_URL } from "../config";
 import { nativeAdapter } from "../adapter";
@@ -29,6 +30,12 @@ export function useRoom(
   const [remoteStats, setRemoteStats] = useState<Record<string, RemoteVideoStats | null>>({});
   const [outboundStats, setOutboundStats] = useState<Record<string, OutboundVideoStats>>({});
   const [error, setError] = useState("");
+  const [voiceState, setVoiceState] = useState<VoiceState>({
+    joined: true,
+    micMuted: true,
+    requestingMicrophone: false,
+  });
+  const [remoteVoiceTracks, setRemoteVoiceTracks] = useState<Record<string, any>>({});
 
   const sessionRef = useRef<RoomSession | null>(null);
 
@@ -96,6 +103,18 @@ export function useRoom(
             return next;
           });
         },
+        onVoiceState: setVoiceState,
+        onRemoteVoiceTrack: (peerId, track) => {
+          setRemoteVoiceTracks((current) => {
+            const next = { ...current };
+            if (track) {
+              next[peerId] = track;
+            } else {
+              delete next[peerId];
+            }
+            return next;
+          });
+        },
         onError: setError,
         onSessionRejected,
         onSessionReplaced,
@@ -109,10 +128,13 @@ export function useRoom(
     sessionRef.current = session;
 
     session.start(roomId, name, token);
+    session.joinVoice();
 
     const appStateSubscription = AppState.addEventListener("change", (state) => {
       if (state === "active") {
         session.resume();
+      } else {
+        session.handleAppBackground();
       }
     });
 
@@ -125,6 +147,7 @@ export function useRoom(
 
   const startSharing = (settings: ShareSettings) => sessionRef.current?.startSharing(settings);
   const stopSharing = () => sessionRef.current?.stopSharing();
+  const setMicrophoneMuted = (muted: boolean) => sessionRef.current?.setMicrophoneMuted(muted);
 
   return {
     status,
@@ -136,8 +159,11 @@ export function useRoom(
     remoteStats,
     outboundStats,
     error,
+    voiceState,
+    remoteVoiceTracks,
     setError,
     startSharing,
     stopSharing,
+    setMicrophoneMuted,
   };
 }

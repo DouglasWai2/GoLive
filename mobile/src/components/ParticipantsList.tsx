@@ -6,15 +6,21 @@ import { colors, radii, technicalText } from "../theme";
 type ParticipantsListProps = {
   participants: Peer[];
   name: string;
+  voiceState?: {
+    micMuted: boolean;
+    voiceJoined: boolean;
+  };
 };
 
 type ParticipantProps = {
   name: string;
   isYou?: boolean;
   showDivider: boolean;
+  voiceJoined?: boolean;
+  micMuted?: boolean;
 };
 
-function Participant({ name, isYou = false, showDivider }: ParticipantProps) {
+function Participant({ name, isYou = false, showDivider, voiceJoined = false, micMuted = true }: ParticipantProps) {
   const scale = useRef(new Animated.Value(1)).current;
 
   const animateTo = (toValue: number) => {
@@ -25,6 +31,12 @@ function Participant({ name, isYou = false, showDivider }: ParticipantProps) {
       useNativeDriver: true,
     }).start();
   };
+
+  const voiceStatus = voiceJoined
+    ? micMuted
+      ? { text: "Muted", color: colors.muted }
+      : { text: "Mic on", color: colors.acid }
+    : { text: "No voice", color: colors.dim };
 
   return (
     <Pressable
@@ -46,13 +58,20 @@ function Participant({ name, isYou = false, showDivider }: ParticipantProps) {
         >
           {name}
         </Text>
-        {isYou ? <Text style={styles.youBadge}>You</Text> : null}
+        {isYou ? (
+          <>
+            <Text style={styles.youBadge}>You</Text>
+            <Text style={[styles.voiceBadge, { color: voiceStatus.color }]}>{voiceStatus.text}</Text>
+          </>
+        ) : (
+          <Text style={[styles.voiceBadge, { color: voiceStatus.color }]}>{voiceStatus.text}</Text>
+        )}
       </Animated.View>
     </Pressable>
   );
 }
 
-export function ParticipantsList({ participants, name }: ParticipantsListProps) {
+export function ParticipantsList({ participants, name, voiceState }: ParticipantsListProps) {
   return (
     <View style={styles.panel}>
       <View style={styles.column}>
@@ -60,12 +79,20 @@ export function ParticipantsList({ participants, name }: ParticipantsListProps) 
           <Text style={styles.headerLabel}>Participants</Text>
           <Text style={styles.value}>{participants.length + 1}</Text>
         </View>
-        <Participant name={name} isYou showDivider={participants.length > 0} />
+        <Participant
+          name={name}
+          isYou
+          showDivider={participants.length > 0}
+          voiceJoined={voiceState?.voiceJoined ?? true}
+          micMuted={voiceState?.micMuted ?? true}
+        />
         {participants.map((participant, index) => (
           <Participant
             key={participant.id}
             name={participant.name}
             showDivider={index < participants.length - 1}
+            voiceJoined={participant.voiceJoined ?? false}
+            micMuted={participant.micMuted ?? true}
           />
         ))}
       </View>
@@ -143,5 +170,14 @@ const styles = StyleSheet.create({
     color: colors.acid,
     fontFamily: "monospace",
     fontSize: 13,
+  },
+  voiceBadge: {
+    ...technicalText,
+    flexShrink: 0,
+    paddingHorizontal: 4,
+    borderWidth: 1,
+    borderRadius: radii.control,
+    fontSize: 7,
+    lineHeight: 12,
   },
 });

@@ -26,6 +26,17 @@ public class MediaProjectionService extends Service {
     static final int NOTIFICATION_ID = new Random().nextInt(99999) + 10000;
 
     private static volatile CompletableFuture<Void> startFuture;
+    private static volatile boolean microphoneActive;
+    private static volatile MediaProjectionService runningService;
+
+    public static void setMicrophoneActive(boolean active) {
+        microphoneActive = active;
+
+        MediaProjectionService service = runningService;
+        if (service != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            service.updateForegroundNotification();
+        }
+    }
 
     public static CompletableFuture<Void> launch(Context context) {
         if (!WebRTCModuleOptions.getInstance().enableMediaProjectionService) {
@@ -82,14 +93,22 @@ public class MediaProjectionService extends Service {
     }
 
     @Override
-    public int onStartCommand(Intent intent, int flags, int startId) {
-        Notification notification = MediaProjectionNotification.buildMediaProjectionNotification(this);
+    public void onCreate() {
+        super.onCreate();
+        runningService = this;
+    }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION);
-        } else {
-            startForeground(NOTIFICATION_ID, notification);
+    @Override
+    public void onDestroy() {
+        if (runningService == this) {
+            runningService = null;
         }
+        super.onDestroy();
+    }
+
+    @Override
+    public int onStartCommand(Intent intent, int flags, int startId) {
+        updateForegroundNotification();
 
         CompletableFuture<Void> fut = startFuture;
 
@@ -99,5 +118,20 @@ public class MediaProjectionService extends Service {
         }
 
         return START_NOT_STICKY;
+    }
+
+    private void updateForegroundNotification() {
+        Notification notification = MediaProjectionNotification.buildMediaProjectionNotification(this);
+
+        int serviceTypes = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE && microphoneActive) {
+            serviceTypes |= ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE;
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(NOTIFICATION_ID, notification, serviceTypes);
+        } else {
+            startForeground(NOTIFICATION_ID, notification);
+        }
     }
 }

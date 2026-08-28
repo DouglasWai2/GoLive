@@ -1,5 +1,10 @@
 package com.oney.WebRTCModule;
 
+import android.content.Context;
+import android.media.AudioDeviceCallback;
+import android.media.AudioDeviceInfo;
+import android.media.AudioManager;
+import android.os.Build;
 import android.util.Log;
 import android.util.Pair;
 import android.util.SparseArray;
@@ -46,9 +51,18 @@ public class WebRTCModule extends ReactContextBaseJavaModule {
     static final String TAG = WebRTCModule.class.getCanonicalName();
 
     PeerConnectionFactory mFactory;
+    PeerConnectionFactory mScreenFactory;
     VideoEncoderFactory mVideoEncoderFactory;
     VideoDecoderFactory mVideoDecoderFactory;
     AudioDeviceModule mAudioDeviceModule;
+    JavaAudioDeviceModule mScreenAdm;
+
+    private int microphoneTrackCount;
+    private final AudioManager mAudioManager;
+    private final AudioDeviceCallback mAudioDeviceCallback;
+    private boolean mAudioDeviceCallbackRegistered;
+    private boolean mLoudspeakerPreferred;
+    private boolean mBluetoothScoStarted;
 
     // Need to expose the peer connection codec factories here to get capabilities
     private final SparseArray<PeerConnectionObserver> mPeerConnectionObservers;
@@ -64,6 +78,18 @@ public class WebRTCModule extends ReactContextBaseJavaModule {
 
         mPeerConnectionObservers = new SparseArray<>();
         localStreams = new HashMap<>();
+        mAudioManager = (AudioManager) reactContext.getSystemService(Context.AUDIO_SERVICE);
+        mAudioDeviceCallback = new AudioDeviceCallback() {
+            @Override
+            public void onAudioDevicesAdded(AudioDeviceInfo[] addedDevices) {
+                updatePreferredAudioRoute();
+            }
+
+            @Override
+            public void onAudioDevicesRemoved(AudioDeviceInfo[] removedDevices) {
+                updatePreferredAudioRoute();
+            }
+        };
 
         WebRTCModuleOptions options = WebRTCModuleOptions.getInstance();
 
@@ -113,12 +139,200 @@ public class WebRTCModule extends ReactContextBaseJavaModule {
         // PeerConnectionFactory now owns the adm native pointer, and we don't need it anymore.
         adm.release();
 
+        // Keep screen playback capture independent from room microphone capture.
+        mScreenAdm = JavaAudioDeviceModule.builder(reactContext)
+            .setEnableVolumeLogger(false)
+            .createAudioDeviceModule();
+
+        mScreenFactory = PeerConnectionFactory.builder()
+            .setAudioDeviceModule(mScreenAdm)
+            .setVideoEncoderFactory(encoderFactory)
+            .setVideoDecoderFactory(decoderFactory)
+            .createPeerConnectionFactory();
+
+        // PeerConnectionFactory now owns the screen adm native pointer.
+        mScreenAdm.release();
+
         // Saving the encoder and decoder factories to get codec info later when needed.
         mVideoEncoderFactory = encoderFactory;
         mVideoDecoderFactory = decoderFactory;
         mAudioDeviceModule = adm;
 
         getUserMediaImpl = new GetUserMediaImpl(this, reactContext);
+    }
+
+    public PeerConnectionFactory getScreenFactory() {
+        return mScreenFactory;
+    }
+
+    public JavaAudioDeviceModule getScreenAdm() {
+        return mScreenAdm;
+    }
+
+    public synchronized void onMicrophoneTrackCreated() {
+        microphoneTrackCount += 1;
+        MediaProjectionService.setMicrophoneActive(true);
+    }
+
+    public synchronized void onMicrophoneTrackDisposed() {
+        microphoneTrackCount = Math.max(0, microphoneTrackCount - 1);
+        MediaProjectionService.setMicrophoneActive(microphoneTrackCount > 0);
+    }
+
+    @ReactMethod
+    public synchronized void setLoudspeakerPreferred(boolean enabled) {
+        mLoudspeakerPreferred = enabled;
+
+        if (enabled) {
+            if (!mAudioDeviceCallbackRegistered) {
+                mAudioManager.registerAudioDeviceCallback(mAudioDeviceCallback, null);
+                mAudioDeviceCallbackRegistered = true;
+            }
+            updatePreferredAudioRoute();
+        } else {
+            clearPreferredAudioRoute();
+        }
+    }
+
+    private synchronized void updatePreferredAudioRoute() {
+        if (!mLoudspeakerPreferred) {
+            return;
+        }
+
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                AudioDeviceInfo currentDevice = mAudioManager.getCommunicationDevice();
+                List<AudioDeviceInfo> availableDevices = mAudioManager.getAvailableCommunicationDevices();
+
+                if (isExternalAudioDevice(currentDevice)
+                        && containsAudioDevice(availableDevices, currentDevice.getId())) {
+                    return;
+                }
+
+                AudioDeviceInfo targetDevice = null;
+                int targetPriority = Integer.MAX_VALUE;
+
+                for (AudioDeviceInfo device : availableDevices) {
+                    int priority = getAudioDevicePriority(device);
+                    if (priority < targetPriority) {
+                        targetDevice = device;
+                        targetPriority = priority;
+                    }
+                }
+
+                if (targetDevice != null
+                        && (currentDevice == null || currentDevice.getId() != targetDevice.getId())
+                        && !mAudioManager.setCommunicationDevice(targetDevice)) {
+                    Log.w(TAG, "Could not select communication audio device " + targetDevice.getType());
+                }
+                return;
+            }
+
+            updateLegacyAudioRoute();
+        } catch (SecurityException error) {
+            Log.w(TAG, "Could not update communication audio route", error);
+        }
+    }
+
+    private void updateLegacyAudioRoute() {
+        boolean hasBluetoothOutput = false;
+        boolean hasWiredOutput = false;
+
+        for (AudioDeviceInfo device : mAudioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)) {
+            switch (device.getType()) {
+                case AudioDeviceInfo.TYPE_BLUETOOTH_A2DP:
+                case AudioDeviceInfo.TYPE_BLUETOOTH_SCO:
+                    hasBluetoothOutput = true;
+                    break;
+                case AudioDeviceInfo.TYPE_WIRED_HEADPHONES:
+                case AudioDeviceInfo.TYPE_WIRED_HEADSET:
+                case AudioDeviceInfo.TYPE_USB_DEVICE:
+                case AudioDeviceInfo.TYPE_USB_HEADSET:
+                    hasWiredOutput = true;
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        if (hasWiredOutput) {
+            stopBluetoothScoIfStarted();
+            mAudioManager.setSpeakerphoneOn(false);
+        } else if (hasBluetoothOutput) {
+            mAudioManager.setSpeakerphoneOn(false);
+            if (!mAudioManager.isBluetoothScoOn()) {
+                mAudioManager.startBluetoothSco();
+                mAudioManager.setBluetoothScoOn(true);
+                mBluetoothScoStarted = true;
+            }
+        } else {
+            stopBluetoothScoIfStarted();
+            mAudioManager.setSpeakerphoneOn(true);
+        }
+    }
+
+    private static boolean containsAudioDevice(List<AudioDeviceInfo> devices, int deviceId) {
+        for (AudioDeviceInfo device : devices) {
+            if (device.getId() == deviceId) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isExternalAudioDevice(@Nullable AudioDeviceInfo device) {
+        return device != null && getAudioDevicePriority(device) < 100;
+    }
+
+    private static int getAudioDevicePriority(AudioDeviceInfo device) {
+        switch (device.getType()) {
+            case AudioDeviceInfo.TYPE_WIRED_HEADSET:
+            case AudioDeviceInfo.TYPE_WIRED_HEADPHONES:
+                return 0;
+            case AudioDeviceInfo.TYPE_USB_HEADSET:
+            case AudioDeviceInfo.TYPE_USB_DEVICE:
+                return 1;
+            case AudioDeviceInfo.TYPE_BLE_HEADSET:
+            case AudioDeviceInfo.TYPE_BLE_SPEAKER:
+            case AudioDeviceInfo.TYPE_BLUETOOTH_SCO:
+            case AudioDeviceInfo.TYPE_HEARING_AID:
+                return 2;
+            case AudioDeviceInfo.TYPE_BUILTIN_SPEAKER:
+                return 100;
+            default:
+                return Integer.MAX_VALUE;
+        }
+    }
+
+    private void stopBluetoothScoIfStarted() {
+        if (!mBluetoothScoStarted) {
+            return;
+        }
+
+        mAudioManager.setBluetoothScoOn(false);
+        mAudioManager.stopBluetoothSco();
+        mBluetoothScoStarted = false;
+    }
+
+    private synchronized void clearPreferredAudioRoute() {
+        if (mAudioDeviceCallbackRegistered) {
+            mAudioManager.unregisterAudioDeviceCallback(mAudioDeviceCallback);
+            mAudioDeviceCallbackRegistered = false;
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            mAudioManager.clearCommunicationDevice();
+        } else {
+            stopBluetoothScoIfStarted();
+            mAudioManager.setSpeakerphoneOn(false);
+        }
+    }
+
+    @Override
+    public void invalidate() {
+        mLoudspeakerPreferred = false;
+        clearPreferredAudioRoute();
+        super.invalidate();
     }
 
     @NonNull
@@ -400,15 +614,22 @@ public class WebRTCModule extends ReactContextBaseJavaModule {
     @ReactMethod(isBlockingSynchronousMethod = true)
     public boolean peerConnectionInit(ReadableMap configuration, int id) {
         PeerConnection.RTCConfiguration rtcConfiguration = parseRTCConfiguration(configuration);
+        boolean useScreenFactory = configuration != null
+                && configuration.hasKey("golivePeerConnectionPurpose")
+                && configuration.getType("golivePeerConnectionPurpose") == ReadableType.String
+                && "screen".equals(configuration.getString("golivePeerConnectionPurpose"));
 
         try {
             return (boolean) ThreadUtils
                     .submitToExecutor(() -> {
                         PeerConnectionObserver observer = new PeerConnectionObserver(this, id);
-                        PeerConnection peerConnection = mFactory.createPeerConnection(rtcConfiguration, observer);
+                        PeerConnectionFactory factory = useScreenFactory ? mScreenFactory : mFactory;
+                        PeerConnection peerConnection = factory.createPeerConnection(rtcConfiguration, observer);
                         if (peerConnection == null) {
                             return false;
                         }
+                        Log.d(TAG, "Created " + (useScreenFactory ? "screen" : "voice")
+                                + " PeerConnection " + id);
                         observer.setPeerConnection(peerConnection);
                         mPeerConnectionObservers.put(id, observer);
                         return true;
@@ -680,7 +901,10 @@ public class WebRTCModule extends ReactContextBaseJavaModule {
                 }
 
                 MediaStreamTrack track = getLocalTrack(trackId);
-                sender.setTrack(track, false);
+                if (!sender.setTrack(track, false)) {
+                    promise.reject(new Exception("Could not replace sender track"));
+                    return;
+                }
                 promise.resolve(true);
             } catch (Exception e) {
                 Log.d(TAG, "senderReplaceTrack(): " + e.getMessage());

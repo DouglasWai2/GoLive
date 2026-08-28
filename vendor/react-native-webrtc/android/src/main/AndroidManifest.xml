@@ -5,7 +5,7 @@
     <application>
         <service
                 android:name=".MediaProjectionService"
-                android:foregroundServiceType="mediaProjection">
+                android:foregroundServiceType="mediaProjection|microphone">
         </service>
     </application>
 </manifest>

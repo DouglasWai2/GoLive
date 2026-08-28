@@ -110,11 +110,6 @@ class GetUserMediaImpl {
     }
 
     private AudioTrack createAudioTrack(ReadableMap constraints) {
-        if (displayAudioCaptureConfigured) {
-            throw new IllegalStateException(
-                    "Microphone capture is unavailable while display audio is active.");
-        }
-
         ReadableMap audioConstraintsMap = constraints.getMap("audio");
 
         Log.d(TAG, "getUserMedia(audio): " + audioConstraintsMap);
@@ -131,7 +126,11 @@ class GetUserMediaImpl {
         AudioTrack track = pcFactory.createAudioTrack(id, audioSource);
 
         // surfaceTextureHelper is initialized for videoTrack only, so its null here.
-        tracks.put(id, new TrackPrivate(track, audioSource, /* videoCapturer */ null, /* surfaceTextureHelper */ null));
+        TrackPrivate trackPrivate = new TrackPrivate(
+                track, audioSource, /* videoCapturer */ null, /* surfaceTextureHelper */ null);
+        trackPrivate.setDisposeCallback(webRTCModule::onMicrophoneTrackDisposed);
+        tracks.put(id, trackPrivate);
+        webRTCModule.onMicrophoneTrackCreated();
 
         return track;
     }
@@ -433,16 +432,17 @@ class GetUserMediaImpl {
                     if (mediaProjection == null) {
                         throw new RuntimeException("MediaProjection is unavailable for audio capture.");
                     }
-                    if (!(webRTCModule.mAudioDeviceModule instanceof JavaAudioDeviceModule)
-                            || !((JavaAudioDeviceModule) webRTCModule.mAudioDeviceModule)
-                                    .setAudioPlaybackCaptureMediaProjection(mediaProjection)) {
-                        throw new RuntimeException(
-                                "WebRTC audio input could not enable playback capture.");
-                    }
 
+                    JavaAudioDeviceModule screenAdm = webRTCModule.getScreenAdm();
+                    if (screenAdm == null
+                            || !screenAdm.setAudioPlaybackCaptureMediaProjection(mediaProjection)) {
+                        throw new RuntimeException(
+                                "WebRTC screen audio input could not enable playback capture.");
+                    }
                     displayAudioCaptureConfigured = true;
+                    audioTrack = createDisplayAudioTrack(webRTCModule.getScreenFactory());
+
                     videoPrivate.setDisposeCallback(this::disableDisplayAudioCapture);
-                    audioTrack = createDisplayAudioTrack();
                 } catch (RuntimeException audioError) {
                     Log.e(TAG, "Display audio is unavailable; continuing with video only.",
                             audioError);
@@ -454,7 +454,7 @@ class GetUserMediaImpl {
                     ? new MediaStreamTrack[] {videoTrack}
                     : new MediaStreamTrack[] {videoTrack, audioTrack};
 
-            createStream(streamTracks, (streamId, tracksInfo) -> {
+            createStream(webRTCModule.getScreenFactory(), streamTracks, (streamId, tracksInfo) -> {
                 WritableMap data = Arguments.createMap();
 
                 data.putString("streamId", streamId);
@@ -483,7 +483,7 @@ class GetUserMediaImpl {
         }
     }
 
-    private AudioTrack createDisplayAudioTrack() {
+    private AudioTrack createDisplayAudioTrack(PeerConnectionFactory factory) {
         String id = UUID.randomUUID().toString();
         MediaConstraints constraints = new MediaConstraints();
         constraints.optional.add(new MediaConstraints.KeyValuePair("googEchoCancellation", "false"));
@@ -494,8 +494,8 @@ class GetUserMediaImpl {
         AudioSource audioSource = null;
 
         try {
-            audioSource = webRTCModule.mFactory.createAudioSource(constraints);
-            AudioTrack track = webRTCModule.mFactory.createAudioTrack(id, audioSource);
+            audioSource = factory.createAudioSource(constraints);
+            AudioTrack track = factory.createAudioTrack(id, audioSource);
             TrackPrivate trackPrivate = new TrackPrivate(
                     track, audioSource, null, null);
             trackPrivate.setDisposeCallback(this::disableDisplayAudioCapture);
@@ -510,16 +510,20 @@ class GetUserMediaImpl {
     }
 
     private void disableDisplayAudioCapture() {
-        if (webRTCModule.mAudioDeviceModule instanceof JavaAudioDeviceModule) {
-            ((JavaAudioDeviceModule) webRTCModule.mAudioDeviceModule)
-                    .setAudioPlaybackCaptureMediaProjection(null);
+        if (webRTCModule.getScreenAdm() != null) {
+            webRTCModule.getScreenAdm().setAudioPlaybackCaptureMediaProjection(null);
         }
         displayAudioCaptureConfigured = false;
     }
 
     void createStream(MediaStreamTrack[] tracks, BiConsumer<String, ArrayList<WritableMap>> successCallback) {
+        createStream(webRTCModule.mFactory, tracks, successCallback);
+    }
+
+    private void createStream(PeerConnectionFactory factory, MediaStreamTrack[] tracks,
+            BiConsumer<String, ArrayList<WritableMap>> successCallback) {
         String streamId = UUID.randomUUID().toString();
-        MediaStream mediaStream = webRTCModule.mFactory.createLocalMediaStream(streamId);
+        MediaStream mediaStream = factory.createLocalMediaStream(streamId);
 
         ArrayList<WritableMap> tracksInfo = new ArrayList<>();
 
@@ -572,10 +576,15 @@ class GetUserMediaImpl {
         ScreenCaptureController screenCaptureController = new ScreenCaptureController(
                 reactContext.getCurrentActivity(), width, height, mediaProjectionPermissionResultData,
                 resolutionScale, this::disableDisplayAudioCapture);
-        return createVideoTrack(screenCaptureController);
+        return createVideoTrack(screenCaptureController, webRTCModule.getScreenFactory());
     }
 
     VideoTrack createVideoTrack(AbstractVideoCaptureController videoCaptureController) {
+        return createVideoTrack(videoCaptureController, webRTCModule.mFactory);
+    }
+
+    private VideoTrack createVideoTrack(AbstractVideoCaptureController videoCaptureController,
+            PeerConnectionFactory pcFactory) {
         videoCaptureController.initializeVideoCapturer();
 
         VideoCapturer videoCapturer = videoCaptureController.videoCapturer;
@@ -583,7 +592,6 @@ class GetUserMediaImpl {
             return null;
         }
 
-        PeerConnectionFactory pcFactory = webRTCModule.mFactory;
         EglBase.Context eglContext = EglUtils.getRootEglBaseContext();
         SurfaceTextureHelper surfaceTextureHelper = SurfaceTextureHelper.create("CaptureThread", eglContext);
 

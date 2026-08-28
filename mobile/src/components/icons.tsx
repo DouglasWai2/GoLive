@@ -98,3 +98,20 @@ export function CloseIcon({ size = 18, color = "currentColor" }: IconProps) {
     </Svg>
   );
 }
+
+export function MicrophoneIcon({ size = 18, color = "currentColor" }: IconProps) {
+  return (
+    <Svg {...common(size, color)}>
+      <Rect x="9" y="3" width="6" height="11" rx="3" stroke={color} strokeWidth="1.8" />
+      <Path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M8.5 21h7" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+    </Svg>
+  );
+}
+
+export function MicrophoneMutedIcon({ size = 18, color = "currentColor" }: IconProps) {
+  return (
+    <Svg {...common(size, color)}>
+      <Path d="M9 8V6a3 3 0 0 1 5.8-1M15 10v1a3 3 0 0 1-4.5 2.6M5.5 11a6.5 6.5 0 0 0 10.8 4.9M12 17.5V21M8.5 21h7M4 4l16 16" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+    </Svg>
+  );
+}
