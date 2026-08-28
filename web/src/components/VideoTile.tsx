@@ -117,33 +117,65 @@ export function VideoTile({ stream, name, local = false, state, qualityLabel, st
     if (!video) return;
 
     let active = true;
-    let frameRequest: number | null = null;
-    const resumeAfterFullscreen = () => {
-      if (frameRequest !== null) window.cancelAnimationFrame(frameRequest);
+    let resumeTimer: number | null = null;
+    const isCurrent = () => (
+      active
+      && document.visibilityState === "visible"
+      && video.srcObject === stream
+      && stream.getVideoTracks().some((track) => track.readyState !== "ended")
+    );
+    const resumePlayback = () => {
+      if (resumeTimer !== null) window.clearTimeout(resumeTimer);
 
-      frameRequest = window.requestAnimationFrame(() => {
-        frameRequest = null;
-        if (!active || video.srcObject !== stream) return;
+      resumeTimer = window.setTimeout(() => {
+        resumeTimer = null;
+        if (!isCurrent() || !video.paused) return;
+
+        const shouldMute = local || muted || audioBlocked;
+        video.volume = volume;
+        video.muted = shouldMute;
 
         void video.play().then(
           () => {
-            if (active && video.srcObject === stream) setPlaybackBlocked(false);
+            if (isCurrent()) setPlaybackBlocked(false);
           },
-          () => {
-            if (active && video.srcObject === stream) setPlaybackBlocked(true);
+          async (error: unknown) => {
+            if (!isCurrent()) return;
+
+            if (!shouldMute && hasAudio && isNotAllowedError(error)) {
+              video.muted = true;
+              setAudioBlocked(true);
+
+              try {
+                await video.play();
+                if (isCurrent()) setPlaybackBlocked(false);
+              } catch {
+                if (isCurrent()) setPlaybackBlocked(true);
+              }
+              return;
+            }
+
+            setPlaybackBlocked(true);
           },
         );
-      });
+      }, 0);
+    };
+    const resumeWhenVisible = () => {
+      if (document.visibilityState === "visible" && video.paused) resumePlayback();
     };
 
-    video.addEventListener("webkitendfullscreen", resumeAfterFullscreen);
+    video.addEventListener("pause", resumePlayback);
+    video.addEventListener("webkitendfullscreen", resumePlayback);
+    document.addEventListener("visibilitychange", resumeWhenVisible);
 
     return () => {
       active = false;
-      if (frameRequest !== null) window.cancelAnimationFrame(frameRequest);
-      video.removeEventListener("webkitendfullscreen", resumeAfterFullscreen);
+      if (resumeTimer !== null) window.clearTimeout(resumeTimer);
+      video.removeEventListener("pause", resumePlayback);
+      video.removeEventListener("webkitendfullscreen", resumePlayback);
+      document.removeEventListener("visibilitychange", resumeWhenVisible);
     };
-  }, [stream]);
+  }, [audioBlocked, hasAudio, local, muted, stream, volume]);
 
   const hearAudio = async () => {
     const video = videoRef.current;
