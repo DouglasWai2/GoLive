@@ -35,6 +35,9 @@ export type RoomSessionDeps = {
 export type RoomSessionCallbacks = {
   onStatus: (status: SocketStatus) => void;
   onPeers: (peers: Peer[]) => void;
+  onPeerJoined?: (peer: Peer) => void;
+  onPeerLeft?: (peer: Peer) => void;
+  onPeerSharingChanged?: (peer: Peer) => void;
   onLocalStream: (stream: MediaStream | null) => void;
   onIsStartingShare: (isStarting: boolean) => void;
   onRemoteStream: (peerId: string, stream: MediaStream | null) => void;
@@ -364,6 +367,13 @@ export class RoomSession {
     this.emitVoiceState();
   }
 
+  handleAppBackground() {
+    // MediaProjection backgrounds the activity while its consent UI is shown and
+    // while the user views another app. Keep voice active during screen sharing.
+    if (this.startingShare || this.localStream) return;
+    void this.setMicrophoneMuted(true);
+  }
+
   async setMicrophoneMuted(muted: boolean) {
     if (!this.voiceDesired || this.requestingMicrophone) return;
 
@@ -489,6 +499,14 @@ export class RoomSession {
     this.micMuted = muted;
     this.announceVoiceState();
     this.emitVoiceState();
+
+    if (!muted) {
+      for (const peer of this.peers) {
+        if (peer.voiceJoined) {
+          void this.createVoiceOffer(peer.id, true);
+        }
+      }
+    }
   }
 
   async startSharing(settings: ShareSettings) {
@@ -1023,6 +1041,7 @@ export class RoomSession {
 
     const connection = this.deps.adapter.createPeerConnection({
       iceServers: this.iceServers,
+      purpose: "voice",
     });
     const transceiver = connection.addTransceiver?.("audio", {
       direction: "sendrecv",
@@ -1077,11 +1096,11 @@ export class RoomSession {
     return connection;
   }
 
-  private async createVoiceOffer(peerId: string) {
+  private async createVoiceOffer(peerId: string, allowNonElected = false) {
     if (
       this.voicePendingOffers.has(peerId)
       || !this.voiceJoined
-      || !this.shouldOfferVoice(peerId)
+      || (!allowNonElected && !this.shouldOfferVoice(peerId))
       || !this.peers.some((peer) => peer.id === peerId && peer.voiceJoined)
     ) {
       return;
@@ -1221,6 +1240,11 @@ export class RoomSession {
     }
 
     if (data.type === "offer") {
+      if (connection.signalingState === "have-local-offer") {
+        if (this.shouldOfferVoice(from)) return;
+        this.clearVoiceOfferAnswerTimer(from);
+        await connection.setLocalDescription({ type: "rollback" });
+      }
       if (connection.signalingState !== "stable") return;
 
       this.clearVoiceRecoveryTimer(from);
@@ -1422,6 +1446,7 @@ export class RoomSession {
 
     const connection = this.deps.adapter.createPeerConnection({
       iceServers: this.iceServers,
+      purpose: "screen",
     });
 
     if (this.hasTurnServers(this.iceServers)) {
@@ -2113,6 +2138,8 @@ export class RoomSession {
     }
 
     if (message.type === "peer-joined") {
+      const isNewPeer = !this.peers.some((peer) => peer.id === message.peer.id);
+
       this.signalQueues.delete(message.peer.id);
       this.closePeer(message.peer.id);
       this.voiceSignalQueues.delete(message.peer.id);
@@ -2124,6 +2151,7 @@ export class RoomSession {
       ];
 
       this.callbacks.onPeers(this.peers);
+      if (isNewPeer) this.callbacks.onPeerJoined?.(message.peer);
 
       /*
        * If we're currently sharing, the new viewer
@@ -2137,6 +2165,8 @@ export class RoomSession {
     }
 
     if (message.type === "peer-left") {
+      const departingPeer = this.peers.find((peer) => peer.id === message.peerId);
+
       this.signalQueues.delete(message.peerId);
       this.voiceSignalQueues.delete(message.peerId);
 
@@ -2146,6 +2176,7 @@ export class RoomSession {
       this.peers = this.peers.filter((peer) => peer.id !== message.peerId);
 
       this.callbacks.onPeers(this.peers);
+      if (departingPeer) this.callbacks.onPeerLeft?.(departingPeer);
 
       return;
     }
@@ -2157,6 +2188,9 @@ export class RoomSession {
       );
 
       this.callbacks.onPeers(this.peers);
+      if (previous && previous.sharing !== message.peer.sharing) {
+        this.callbacks.onPeerSharingChanged?.(message.peer);
+      }
 
       if (!message.peer.sharing) {
         this.signalQueues.delete(message.peer.id);
@@ -2168,7 +2202,10 @@ export class RoomSession {
         this.closeVoicePeer(message.peer.id);
       } else if (
         this.voiceJoined
-        && (!previous?.voiceJoined || !this.voicePeerConnections.has(message.peer.id))
+        && (
+          !previous?.voiceJoined
+          || !this.voicePeerConnections.has(message.peer.id)
+        )
         && this.shouldOfferVoice(message.peer.id)
       ) {
         void this.createVoiceOffer(message.peer.id);

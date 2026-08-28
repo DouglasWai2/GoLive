@@ -74,6 +74,7 @@ export type PlatformAdapter = {
   serializeCandidate: (candidate: unknown) => IceCandidateInit;
   createPeerConnection: (config: {
     iceServers: IceServer[];
+    purpose: "screen" | "voice";
   }) => RTCPeerConnection;
   configureVideoCodecs?: (
     connection: RTCPeerConnection,

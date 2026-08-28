@@ -170,6 +170,89 @@ test("joins without TURN and only the elected owner pings", () => {
   }
 });
 
+test("reports semantic peer lifecycle changes without replaying room state", () => {
+  const originalWebSocket = globalThis.WebSocket;
+  const joined: string[] = [];
+  const left: string[] = [];
+  const sharing: boolean[] = [];
+
+  globalThis.WebSocket = FakeSocket as unknown as typeof WebSocket;
+  const session = new RoomSession(
+    {
+      onStatus: () => {},
+      onPeers: () => {},
+      onPeerJoined: (peer) => joined.push(peer.name),
+      onPeerLeft: (peer) => left.push(peer.name),
+      onPeerSharingChanged: (peer) => sharing.push(peer.sharing),
+      onLocalStream: () => {},
+      onIsStartingShare: () => {},
+      onRemoteStream: () => {},
+      onConnectionState: () => {},
+      onRemoteStats: () => {},
+      onOutboundStats: () => {},
+      onError: () => {},
+    },
+    { baseUrl: "https://signal.example.com", adapter: {} as PlatformAdapter },
+  );
+
+  try {
+    session.start("room-id", "Viewer", "room-token");
+    const socket = FakeSocket.instance;
+    assert.ok(socket);
+    socket.open();
+    socket.receive({ type: "authenticated" });
+    socket.receive({
+      type: "room-state",
+      selfId: "viewer",
+      isHost: false,
+      heartbeatOwnerId: "existing",
+      peers: [{
+        id: "existing",
+        name: "Existing",
+        sharing: false,
+        voiceJoined: false,
+        micMuted: true,
+      }],
+    });
+
+    assert.deepEqual(joined, []);
+    assert.deepEqual(sharing, []);
+
+    const existing = {
+      id: "existing",
+      name: "Existing",
+      sharing: true,
+      voiceJoined: false,
+      micMuted: true,
+    };
+    socket.receive({ type: "peer-updated", peer: existing });
+    socket.receive({ type: "peer-updated", peer: existing });
+    socket.receive({ type: "peer-updated", peer: { ...existing, sharing: false } });
+
+    assert.deepEqual(sharing, [true, false]);
+
+    const newcomer = {
+      id: "newcomer",
+      name: "Newcomer",
+      sharing: false,
+      voiceJoined: false,
+      micMuted: true,
+    };
+    socket.receive({ type: "peer-joined", peer: newcomer });
+    socket.receive({ type: "peer-joined", peer: newcomer });
+    socket.receive({ type: "peer-left", peerId: "unknown" });
+    socket.receive({ type: "peer-left", peerId: newcomer.id });
+    socket.receive({ type: "peer-left", peerId: newcomer.id });
+
+    assert.deepEqual(joined, ["Newcomer"]);
+    assert.deepEqual(left, ["Newcomer"]);
+  } finally {
+    session.stop();
+    globalThis.WebSocket = originalWebSocket;
+    FakeSocket.instance = null;
+  }
+});
+
 test("clears a session rejected before WebSocket authentication", () => {
   const originalWebSocket = globalThis.WebSocket;
   let rejected = 0;
@@ -217,6 +300,7 @@ test("requests TURN only after direct ICE fails and rebuilds the viewer", async 
   const originalFetch = globalThis.fetch;
   const connections: FakePeerConnection[] = [];
   const configurations: IceServer[][] = [];
+  const purposes: Array<"screen" | "voice"> = [];
   let fetchCount = 0;
 
   globalThis.WebSocket = FakeSocket as unknown as typeof WebSocket;
@@ -232,8 +316,12 @@ test("requests TURN only after direct ICE fails and rebuilds the viewer", async 
   };
 
   const adapter = {
-    createPeerConnection: ({ iceServers }: { iceServers: IceServer[] }) => {
+    createPeerConnection: ({ iceServers, purpose }: {
+      iceServers: IceServer[];
+      purpose: "screen" | "voice";
+    }) => {
       configurations.push(iceServers);
+      purposes.push(purpose);
       const connection = new FakePeerConnection();
       connections.push(connection);
       return connection as unknown as RTCPeerConnection;
@@ -282,6 +370,7 @@ test("requests TURN only after direct ICE fails and rebuilds the viewer", async 
 
     assert.equal(fetchCount, 0);
     assert.equal(connections.length, 1);
+    assert.equal(purposes[0], "screen");
     assert.equal(
       configurations[0]?.some((server) => String(server.urls).startsWith("turn:")),
       false,
@@ -324,6 +413,7 @@ test("auto-joins voice muted and requests the microphone only on unmute", async 
   const originalWebSocket = globalThis.WebSocket;
   const originalFetch = globalThis.fetch;
   const connections: FakePeerConnection[] = [];
+  const purposes: Array<"screen" | "voice"> = [];
   let microphoneRequests = 0;
 
   const microphoneTrack: MediaTrack = {
@@ -339,6 +429,23 @@ test("auto-joins voice muted and requests the microphone only on unmute", async 
     getVideoTracks: () => [],
     getAudioTracks: () => [microphoneTrack],
   };
+  const displayTrack: MediaTrack = {
+    id: "display-video",
+    kind: "video",
+    enabled: true,
+    stop: () => {},
+    addEventListener: () => {},
+  };
+  const displayStream: MediaStream = {
+    id: "display-stream",
+    getTracks: () => [displayTrack],
+    getVideoTracks: () => [displayTrack],
+    getAudioTracks: () => [],
+  };
+  let resolveDisplay!: (stream: MediaStream) => void;
+  const displayRequest = new Promise<MediaStream>((resolve) => {
+    resolveDisplay = resolve;
+  });
 
   globalThis.WebSocket = FakeSocket as unknown as typeof WebSocket;
   globalThis.fetch = async () => Response.json({
@@ -350,13 +457,18 @@ test("auto-joins voice muted and requests the microphone only on unmute", async 
   });
 
   const adapter = {
+    getDisplayMedia: () => displayRequest,
     getUserMedia: async () => {
       microphoneRequests += 1;
       return microphoneStream;
     },
     isCaptureRejected: () => false,
     serializeCandidate: () => ({}),
-    createPeerConnection: () => {
+    createPeerConnection: ({ purpose }: {
+      iceServers: IceServer[];
+      purpose: "screen" | "voice";
+    }) => {
+      purposes.push(purpose);
       const connection = new FakePeerConnection();
       connections.push(connection);
       return connection as unknown as RTCPeerConnection;
@@ -410,20 +522,47 @@ test("auto-joins voice muted and requests the microphone only on unmute", async 
     await flushAsyncWork();
 
     assert.equal(connections.length, 1);
+    assert.equal(purposes[0], "voice");
     assert.equal(connections[0]?.transceiverCount, 1);
     assert.ok(socket.sent.some((message) =>
       message.type === "signal" && message.channel === "voice",
     ));
     assert.equal(microphoneRequests, 0);
 
+    socket.receive({
+      type: "signal",
+      from: "b",
+      channel: "voice",
+      data: { type: "answer", sdp: "answer" },
+    });
+    await flushAsyncWork();
+    const voiceOffersBeforeUnmute = socket.sent.filter((message) =>
+      message.type === "signal" && message.channel === "voice",
+    ).length;
+
     await session.setMicrophoneMuted(false);
+    await flushAsyncWork();
 
     assert.equal(microphoneRequests, 1);
     assert.equal(microphoneTrack.enabled, true);
     assert.equal(connections[0]?.sender.track, microphoneTrack);
+    assert.ok(socket.sent.filter((message) =>
+      message.type === "signal" && message.channel === "voice",
+    ).length > voiceOffersBeforeUnmute);
     assert.ok(socket.sent.some((message) =>
       message.type === "voice" && message.micMuted === false,
     ));
+
+    const sharing = session.startSharing(DEFAULT_SHARE_SETTINGS);
+    session.handleAppBackground();
+    assert.equal(microphoneTrack.enabled, true);
+
+    session.stopSharing();
+    resolveDisplay(displayStream);
+    await sharing;
+
+    session.handleAppBackground();
+    assert.equal(microphoneTrack.enabled, false);
   } finally {
     session.stop();
     globalThis.WebSocket = originalWebSocket;
