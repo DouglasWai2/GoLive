@@ -4,16 +4,19 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as ScreenOrientation from "expo-screen-orientation";
 import { RTCView } from "react-native-webrtc";
 import type { MediaStream as RNMediaStream } from "react-native-webrtc";
-import type { MediaStream, RemoteVideoStats } from "@golive/core";
+import type { MediaStream, PeerConnectionState, RemoteVideoStats } from "@golive/core";
 import { FullscreenExitIcon } from "./icons";
 import { StreamStats } from "./StreamStats";
 import { StatsButton } from "./StatsButton";
 import { VolumeControl } from "./VolumeControl";
 import { colors, radii } from "../theme";
+import { useVideoPlaybackState } from "../hooks/useVideoPlaybackState";
+import { VideoLoadingOverlay } from "./VideoLoadingOverlay";
 
 type FullscreenViewProps = {
   visible: boolean;
   stream: MediaStream | null;
+  connectionState?: PeerConnectionState | null;
   name: string;
   stats?: RemoteVideoStats | null;
   statsEnabled: boolean;
@@ -28,6 +31,7 @@ type FullscreenViewProps = {
 export function FullscreenView({
   visible,
   stream,
+  connectionState,
   name,
   stats,
   statsEnabled,
@@ -72,6 +76,7 @@ export function FullscreenView({
 
   const rnStream = stream as unknown as RNMediaStream | null;
   const hasAudio = Boolean(rnStream?.getAudioTracks().length);
+  const { phase: playbackPhase, onDimensionsChange } = useVideoPlaybackState(stream, visible);
 
   useEffect(() => {
     for (const track of rnStream?.getAudioTracks() ?? []) {
@@ -83,8 +88,15 @@ export function FullscreenView({
     <Modal visible={visible} animationType="fade" onRequestClose={onClose} supportedOrientations={["portrait", "landscape"]}>
       <View style={styles.shell}>
         {rnStream ? (
-          <RTCView style={styles.video} streamURL={rnStream.toURL()} objectFit="contain" mirror={false} />
+          <RTCView
+            style={styles.video}
+            streamURL={rnStream.toURL()}
+            objectFit="contain"
+            mirror={false}
+            onDimensionsChange={onDimensionsChange}
+          />
         ) : null}
+        {rnStream ? <VideoLoadingOverlay phase={playbackPhase} connectionState={connectionState} /> : null}
 
         <Pressable
           style={styles.revealTap}
@@ -129,7 +141,7 @@ const styles = StyleSheet.create({
   shell: { flex: 1, backgroundColor: colors.black, alignItems: "center", justifyContent: "center" },
   video: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, backgroundColor: colors.black },
   revealTap: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0 },
-  overlay: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, opacity: 1 },
+  overlay: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, opacity: 1, zIndex: 3 },
   overlayHidden: { opacity: 0 },
   meta: { position: "absolute", maxWidth: "45%", minHeight: 38, backgroundColor: "rgba(16,16,14,0.9)", paddingHorizontal: 13, flexDirection: "row", alignItems: "center", gap: 9 },
   liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.red },

@@ -68,7 +68,7 @@ export function ControlDock({
             accessibilityRole="button"
             accessibilityLabel={voiceState.micMuted ? "Unmute microphone" : "Mute microphone"}
           >
-            {voiceState.micMuted ? <MicrophoneMutedIcon size={20} color={colors.paper} /> : <MicrophoneIcon size={20} color={colors.acidInk} />}
+            {voiceState.micMuted ? <MicrophoneMutedIcon size={20} color={colors.muted} /> : <MicrophoneIcon size={20} color={colors.paper} />}
             {showVoiceLabels ? (
               <Text style={styles.voiceButtonText}>
                 {voiceState.requestingMicrophone ? "Starting..." : voiceState.micMuted ? "Unmute" : "Mute"}
@@ -86,10 +86,11 @@ export function ControlDock({
             accessibilityRole="button"
             accessibilityLabel={deafened ? "Hear room voice" : "Deafen room voice"}
           >
-            {deafened ? <VolumeMutedIcon size={20} color={colors.paper} /> : <VolumeIcon size={20} color={colors.acidInk} />}
+            {deafened ? <VolumeMutedIcon size={20} color={colors.muted} /> : <VolumeIcon size={20} color={colors.paper} />}
             {showVoiceLabels ? (
               <Text style={styles.voiceButtonText}>
                 {deafened ? "Undeafen" : "Deafen"}
+                
               </Text>
             ) : null}
           </Pressable>
@@ -198,7 +199,7 @@ const styles = StyleSheet.create({
   voiceButtonActive: { borderWidth: 1, borderColor: "rgba(201,255,66,0.55)" },
   voiceButtonMuted: { borderWidth: 1, borderColor: "#3b3b36" },
   voiceButtonBusy: { opacity: 0.5 },
-  voiceButtonText: { color: "#b5b5ad", fontSize: 11, fontWeight: "700" },
+  voiceButtonText: { color: "white", fontSize: 11, fontWeight: "700" },
   shareControl: { flexGrow: 1, alignItems: "center", paddingHorizontal: 8 },
   sharingState: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10 },
   qualityBadge: { minHeight: 34, borderWidth: 1, borderColor: "#3b3b36", borderRadius: radii.control, backgroundColor: colors.surfaceControl, paddingHorizontal: 10, flexDirection: "row", alignItems: "center", gap: 7 },

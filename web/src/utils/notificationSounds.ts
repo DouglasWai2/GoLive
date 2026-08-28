@@ -1,55 +1,9 @@
-export type NotificationSound =
-  | "share-start"
-  | "share-stop"
-  | "peer-join"
-  | "peer-leave"
-  | "mic-mute"
-  | "mic-unmute"
-  | "deafen"
-  | "undeafen";
+import { notificationSoundDefinition } from "@golive/core";
+import type { NotificationSound } from "@golive/core";
+
+export type { NotificationSound } from "@golive/core";
 
 type AudioContextConstructor = new () => AudioContext;
-type Tone = readonly [frequency: number, delay: number, duration: number, volume: number];
-
-const tones: Record<NotificationSound, readonly Tone[]> = {
-  "share-start": [
-    [100, 0, 0.1, 0.13],
-    [220, 0.05, 0.11, 0.17],
-    [440, 0.1, 0.16, 0.17],
-    [660, 0.16, 0.16, 0.17],
-  ],
-  "share-stop": [
-    [620, 0, 0.1, 0.13],
-    [370, 0.1, 0.17, 0.16],
-  ],
-  "peer-join": [
-    [300, 0, 0.08, 0.12],
-    [450, 0.08, 0.08, 0.14],
-    [620, 0.16, 0.13, 0.15],
-   
-  ],
-  "peer-leave": [
-    [400, 0, 0.08, 0.12],
-    [280, 0.08, 0.08, 0.14],
-    [240, 0.16, 0.13, 0.15],
-  ],
-  "mic-mute": [
-    [700, 0, 0.07, 0.11],
-    [400, 0.07, 0.12, 0.14],
-  ],
-  "mic-unmute": [
-    [200, 0, 0.07, 0.11],
-    [900, 0.07, 0.12, 0.14],
-  ],
-  deafen: [
-    [540, 0, 0.08, 0.11],
-    [360, 0.08, 0.14, 0.14],
-  ],
-  undeafen: [
-    [520, 0, 0.08, 0.11],
-    [700, 0.08, 0.13, 0.14],
-  ],
-};
 
 let context: AudioContext | null = null;
 const activeOscillators = new Set<OscillatorNode>();
@@ -78,8 +32,9 @@ function getAudioContext(): AudioContext | null {
 
 function scheduleSound(audioContext: AudioContext, sound: NotificationSound) {
   const start = audioContext.currentTime + 0.01;
+  const { attackDuration, gainFloor, sounds } = notificationSoundDefinition;
 
-  for (const [frequency, delay, duration, volume] of tones[sound]) {
+  for (const [frequency, delay, duration, volume] of sounds[sound]) {
     const oscillator = audioContext.createOscillator();
     const gain = audioContext.createGain();
     const toneStart = start + delay;
@@ -87,9 +42,9 @@ function scheduleSound(audioContext: AudioContext, sound: NotificationSound) {
 
     oscillator.type = "sine";
     oscillator.frequency.setValueAtTime(frequency, toneStart);
-    gain.gain.setValueAtTime(0.0001, toneStart);
-    gain.gain.exponentialRampToValueAtTime(volume, toneStart + 0.012);
-    gain.gain.exponentialRampToValueAtTime(0.0001, toneEnd);
+    gain.gain.setValueAtTime(gainFloor, toneStart);
+    gain.gain.exponentialRampToValueAtTime(volume, toneStart + Math.min(attackDuration, duration));
+    gain.gain.exponentialRampToValueAtTime(gainFloor, toneEnd);
 
     oscillator.connect(gain);
     gain.connect(audioContext.destination);

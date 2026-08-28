@@ -8,6 +8,8 @@ import { StatsButton } from "./StatsButton";
 import { VolumeControl } from "./VolumeControl";
 import { FullscreenIcon } from "./icons";
 import { colors, radii, technicalText } from "../theme";
+import { useVideoPlaybackState } from "../hooks/useVideoPlaybackState";
+import { VideoLoadingOverlay } from "./VideoLoadingOverlay";
 
 type VideoTileProps = {
   stream: MediaStream;
@@ -46,6 +48,7 @@ export function VideoTile({
 }: VideoTileProps) {
   const rnStream = stream as unknown as RNMediaStream;
   const hasAudio = rnStream.getAudioTracks().length > 0;
+  const { phase: playbackPhase, onDimensionsChange } = useVideoPlaybackState(stream, !local);
 
   useEffect(() => {
     if (local) return;
@@ -66,7 +69,9 @@ export function VideoTile({
         streamURL={rnStream.toURL()}
         objectFit="contain"
         mirror={false}
+        onDimensionsChange={onDimensionsChange}
       />
+      {!local ? <VideoLoadingOverlay phase={playbackPhase} connectionState={state} /> : null}
       <View style={styles.meta}>
         <View style={styles.liveDot} />
         <Text style={styles.name} numberOfLines={1}>
@@ -134,6 +139,7 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(16,16,14,0.9)",
     minHeight: 34,
     paddingHorizontal: 10,
+    zIndex: 3,
   },
   liveDot: {
     width: 6,
@@ -163,6 +169,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
+    zIndex: 3,
   },
   button: {
     backgroundColor: "rgba(16,16,14,0.88)",

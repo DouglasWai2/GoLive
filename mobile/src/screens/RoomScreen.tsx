@@ -76,6 +76,7 @@ export function RoomScreen({
     startSharing,
     stopSharing,
     setMicrophoneMuted,
+    playNotificationSound,
   } = useRoom(roomId, name, token, onSessionRejected, onSessionReplaced);
 
   useEffect(() => {
@@ -147,6 +148,12 @@ export function RoomScreen({
     setShareSettings(settings);
     setShareVisible(false);
     startSharing(settings);
+  };
+
+  const toggleDeafen = () => {
+    const nextDeafened = !deafened;
+    setDeafened(nextDeafened);
+    playNotificationSound(nextDeafened ? "deafen" : "undeafen");
   };
 
   const handleInvite = async () => {
@@ -262,7 +269,7 @@ export function RoomScreen({
                   : status === "disconnected"
                     ? "Connection lost"
                     : activeSharer
-                      ? "Connecting to the screen..."
+                      ? "Negotiating secure connection..."
                       : status === "connected"
                         ? "No screen on air"
                         : "Connecting to the room..."}
@@ -273,7 +280,7 @@ export function RoomScreen({
                   : status === "disconnected"
                     ? "Leave and rejoin the room to start a new session."
                     : activeSharer
-                      ? "A secure peer-to-peer connection is being established."
+                      ? "Checking available peer and relay paths."
                       : "Invite someone, then choose a window or display to begin."}
               </Text>
             </View>
@@ -333,7 +340,7 @@ export function RoomScreen({
         onOpenSettings={() => setShareVisible(true)}
         onStopShare={stopSharing}
         onSetMicrophoneMuted={setMicrophoneMuted}
-        onToggleDeafen={() => setDeafened((v) => !v)}
+        onToggleDeafen={toggleDeafen}
       />
 
       <ShareSheet
@@ -346,6 +353,7 @@ export function RoomScreen({
       <FullscreenView
         visible={fullscreenPeerId !== null}
         stream={fullscreenPeerId ? remoteStreams[fullscreenPeerId] ?? null : null}
+        connectionState={fullscreenPeerId ? connectionStates[fullscreenPeerId] ?? null : null}
         name={peers.find((peer) => peer.id === fullscreenPeerId)?.name ?? fullscreenPeerId?.slice(0, 4) ?? ""}
         stats={fullscreenPeerId ? remoteStats[fullscreenPeerId] ?? null : null}
         statsEnabled={statsEnabled}

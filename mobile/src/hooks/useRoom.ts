@@ -13,6 +13,7 @@ import type {
 } from "@golive/core";
 import { SIGNALING_URL } from "../config";
 import { nativeAdapter } from "../adapter";
+import { useRoomAudio } from "./useRoomAudio";
 
 export function useRoom(
   roomId: string,
@@ -38,13 +39,34 @@ export function useRoom(
   const [remoteVoiceTracks, setRemoteVoiceTracks] = useState<Record<string, any>>({});
 
   const sessionRef = useRef<RoomSession | null>(null);
+  const { startRoomAudio, stopRoomAudio, playNotificationSound } = useRoomAudio(roomId);
 
   useEffect(() => {
+    let hasLocalStream = false;
+    let micMuted = true;
+    let playLifecycleSounds = true;
+
+    void startRoomAudio();
+
     const session = new RoomSession(
       {
         onStatus: setStatus,
         onPeers: setPeers,
-        onLocalStream: setLocalStream,
+        onPeerJoined: () => playNotificationSound("peer-join"),
+        onPeerLeft: () => playNotificationSound("peer-leave"),
+        onPeerSharingChanged: (peer) => {
+          playNotificationSound(peer.sharing ? "share-start" : "share-stop");
+        },
+        onLocalStream: (stream) => {
+          const nextHasLocalStream = Boolean(stream);
+
+          if (nextHasLocalStream !== hasLocalStream) {
+            playNotificationSound(nextHasLocalStream ? "share-start" : "share-stop");
+            hasLocalStream = nextHasLocalStream;
+          }
+
+          setLocalStream(stream);
+        },
         onIsStartingShare: setIsStartingShare,
         onRemoteStream: (peerId, stream) => {
           for (const track of stream?.getAudioTracks() ?? []) {
@@ -103,7 +125,14 @@ export function useRoom(
             return next;
           });
         },
-        onVoiceState: setVoiceState,
+        onVoiceState: (state) => {
+          if (playLifecycleSounds && state.micMuted !== micMuted) {
+            playNotificationSound(state.micMuted ? "mic-mute" : "mic-unmute");
+          }
+
+          micMuted = state.micMuted;
+          setVoiceState(state);
+        },
         onRemoteVoiceTrack: (peerId, track) => {
           setRemoteVoiceTracks((current) => {
             const next = { ...current };
@@ -140,10 +169,12 @@ export function useRoom(
 
     return () => {
       appStateSubscription.remove();
+      playLifecycleSounds = false;
       session.stop();
+      stopRoomAudio();
       sessionRef.current = null;
     };
-  }, [roomId, name, token]);
+  }, [name, playNotificationSound, roomId, startRoomAudio, stopRoomAudio, token]);
 
   const startSharing = (settings: ShareSettings) => sessionRef.current?.startSharing(settings);
   const stopSharing = () => sessionRef.current?.stopSharing();
@@ -165,5 +196,6 @@ export function useRoom(
     startSharing,
     stopSharing,
     setMicrophoneMuted,
+    playNotificationSound,
   };
 }
