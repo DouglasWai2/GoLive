@@ -518,14 +518,13 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
         {statsEnabled && cinemaStats && <StreamStats stats={cinemaStats} />}
         <div className="cinema-controls">
           <StatsButton statsEnabled={statsEnabled} toggleStats={toggleStats} />
-          {cinemaHasAudio && (
-            <VolumeControl
-              volume={volume}
-              muted={muted}
-              onVolumeChange={changeVolume}
-              onToggleMute={toggleMute}
-            />
-          )}
+          <VolumeControl
+            volume={volume}
+            muted={muted}
+            disabled={!cinemaHasAudio}
+            onVolumeChange={changeVolume}
+            onToggleMute={toggleMute}
+          />
           <button className="icon-button" onClick={() => void exitFullscreen()} title="Exit fullscreen">
             <FullscreenExitIcon /> Exit fullscreen
           </button>

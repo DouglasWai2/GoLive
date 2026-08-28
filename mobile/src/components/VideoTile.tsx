@@ -1,4 +1,3 @@
-import { useEffect } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { RTCView } from "react-native-webrtc";
 import type { MediaStream as RNMediaStream } from "react-native-webrtc";
@@ -50,14 +49,6 @@ export function VideoTile({
   const hasAudio = rnStream.getAudioTracks().length > 0;
   const { phase: playbackPhase, onDimensionsChange } = useVideoPlaybackState(stream, !local);
 
-  useEffect(() => {
-    if (local) return;
-
-    for (const track of rnStream.getAudioTracks()) {
-      track._setVolume(muted ? 0 : volume);
-    }
-  }, [local, volume, muted, stream]);
-
   const showControls = local
     ? Boolean(onToggleStats)
     : Boolean(onVolumeChange || onToggleStats || onFullscreen);
@@ -89,10 +80,11 @@ export function VideoTile({
           {onToggleStats ? (
             <StatsButton statsEnabled={statsEnabled} onToggle={onToggleStats} />
           ) : null}
-          {hasAudio && onVolumeChange && onToggleMute ? (
+          {onVolumeChange && onToggleMute ? (
             <VolumeControl
               volume={volume}
               muted={muted}
+              disabled={!hasAudio}
               onVolumeChange={onVolumeChange}
               onToggleMute={onToggleMute}
             />

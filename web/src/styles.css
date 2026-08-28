@@ -160,9 +160,13 @@ button.active:hover {
 .tile-controls { position: absolute; z-index: 3; right: 12px; bottom: 12px; display: flex; align-items: center; gap: 10px; }
 .volume-control { position: relative; display: inline-flex; }
 .volume-control.is-muted .icon-button { opacity: .55; }
+.volume-control.is-disabled .icon-button { opacity: .38; }
 .volume-popover { position: absolute; top: calc(100% + 8px); right: 0; display: block; background: rgba(16,16,14,.94); backdrop-filter: blur(8px); border: 1px solid #3b3b36; border-radius: 6px; padding: 10px 12px; box-shadow: 0 18px 45px rgba(0,0,0,.45); z-index: 20; }
 .video-tile .volume-popover, .cinema .volume-popover { top: auto; bottom: calc(100% + 8px); }
 .volume-popover input[type="range"] { width: 130px; margin: 0; accent-color: var(--acid); cursor: pointer; }
+.volume-popover-head { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-bottom: 7px; color: var(--muted); font-family: var(--mono); font-size: 9px; }
+.volume-mute-button { display: inline-flex; align-items: center; gap: 6px; padding: 0; border: 0; background: none; color: var(--acid); font-size: 11px; font-weight: 700; line-height: 1; cursor: pointer; }
+.volume-unavailable { display: block; min-width: 120px; color: var(--muted); font-size: 11px; font-weight: 600; line-height: 1.4; }
 .stream-stats { display: flex; flex-wrap: wrap; gap: 22px; max-width: calc(100% - 24px); background: rgba(16,16,14,.9); backdrop-filter: blur(8px); border: 1px solid #3b3b36; border-radius: 6px; padding: 14px 18px; transition: opacity .2s; }
 .outbound-stream-stats { flex-direction: column; gap: 10px; }
 .outbound-stream-stats-row { display: flex; flex-direction: column !important; flex-wrap: wrap; gap: 14px; }

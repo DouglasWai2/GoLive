@@ -53,8 +53,8 @@ export function ShareSettingsPanel({ isStarting, onStart, onCancel }: ShareSetti
 
       <div className="setting-row audio-setting">
         <div>
-          <label>Tab audio</label>
-          <small>Only browser-tab audio is allowed. Windows system audio may include private calls.</small>
+          <label>Share audio</label>
+          <small>Your browser controls which sources can include audio. System audio may include calls or private sounds.</small>
         </div>
         <button
           type="button"

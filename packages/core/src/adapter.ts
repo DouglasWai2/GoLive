@@ -68,7 +68,6 @@ export function orderVideoCodecs<T extends VideoCodecCapability>(
 export type PlatformAdapter = {
   getDisplayMedia: (constraints: DisplayMediaConstraints) => Promise<MediaStream>;
   getUserMedia?: (constraints: UserMediaConstraints) => Promise<MediaStream>;
-  removeUnsafeDisplayAudio?: (stream: MediaStream) => boolean;
   releaseMediaStream?: (stream: MediaStream) => void;
   isCaptureRejected: (error: unknown) => boolean;
   serializeCandidate: (candidate: unknown) => IceCandidateInit;

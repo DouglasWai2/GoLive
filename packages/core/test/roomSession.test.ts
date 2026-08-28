@@ -68,8 +68,11 @@ class FakePeerConnection {
     },
   };
   transceiverCount = 0;
+  readonly addedTracks: Array<{ track: MediaTrack; stream: MediaStream }> = [];
 
-  addTrack(): void {}
+  addTrack(track: MediaTrack, stream: MediaStream): void {
+    this.addedTracks.push({ track, stream });
+  }
   addTransceiver() {
     this.transceiverCount += 1;
     return { sender: this.sender };
@@ -571,10 +574,120 @@ test("auto-joins voice muted and requests the microphone only on unmute", async 
   }
 });
 
-test("defaults display audio off and sanitizes requested display audio before sharing", async () => {
+test("keeps a late viewer screen offer alive across voice state updates", async () => {
   const originalWebSocket = globalThis.WebSocket;
-  let sanitized = false;
+  const connections: FakePeerConnection[] = [];
+
+  const videoTrack: MediaTrack = {
+    id: "display-video",
+    kind: "video",
+    enabled: true,
+    stop: () => {},
+    addEventListener: () => {},
+  };
+  const displayStream: MediaStream = {
+    id: "display-stream",
+    getTracks: () => [videoTrack],
+    getVideoTracks: () => [videoTrack],
+    getAudioTracks: () => [],
+  };
+
+  globalThis.WebSocket = FakeSocket as unknown as typeof WebSocket;
+  const adapter = {
+    getDisplayMedia: async () => displayStream,
+    isCaptureRejected: () => false,
+    serializeCandidate: () => ({}),
+    createPeerConnection: () => {
+      const connection = new FakePeerConnection();
+      connections.push(connection);
+      return connection as unknown as RTCPeerConnection;
+    },
+  } as PlatformAdapter;
+  const session = new RoomSession(
+    {
+      onStatus: () => {},
+      onPeers: () => {},
+      onLocalStream: () => {},
+      onIsStartingShare: () => {},
+      onRemoteStream: () => {},
+      onConnectionState: () => {},
+      onRemoteStats: () => {},
+      onOutboundStats: () => {},
+      onError: () => {},
+    },
+    { baseUrl: "https://signal.example.com", adapter },
+  );
+
+  try {
+    session.start("room-id", "Sharer", "room-token");
+    const socket = FakeSocket.instance;
+    assert.ok(socket);
+    socket.open();
+    socket.receive({ type: "authenticated" });
+    socket.receive({
+      type: "room-state",
+      selfId: "sharer",
+      isHost: true,
+      heartbeatOwnerId: "sharer",
+      peers: [],
+    });
+
+    const sharing = session.startSharing({
+      ...DEFAULT_SHARE_SETTINGS,
+      includeAudio: false,
+    });
+    await flushAsyncWork();
+    socket.receive({ type: "sharing-accepted", sharing: true });
+    await sharing;
+
+    const viewer = {
+      id: "viewer",
+      name: "Viewer",
+      sharing: false,
+      voiceJoined: false,
+      micMuted: true,
+    };
+    socket.receive({ type: "peer-joined", peer: viewer });
+    socket.receive({
+      type: "peer-updated",
+      peer: { ...viewer, voiceJoined: true },
+    });
+    await flushAsyncWork();
+
+    assert.equal(connections.length, 1);
+    assert.notEqual(connections[0]?.signalingState, "closed");
+    assert.ok(socket.sent.some((message) => {
+      const data = message.data as Record<string, unknown> | undefined;
+      return message.type === "signal"
+        && message.target === viewer.id
+        && data?.type === "offer";
+    }));
+
+    socket.receive({
+      type: "signal",
+      from: viewer.id,
+      data: { type: "answer", sdp: "late-viewer-answer" },
+    });
+    await flushAsyncWork();
+    assert.equal(connections[0]?.remoteDescription?.sdp, "late-viewer-answer");
+
+    socket.receive({
+      type: "peer-updated",
+      peer: { ...viewer, voiceJoined: true, micMuted: false },
+    });
+    assert.notEqual(connections[0]?.signalingState, "closed");
+  } finally {
+    session.stop();
+    globalThis.WebSocket = originalWebSocket;
+    FakeSocket.instance = null;
+  }
+});
+
+test("defaults display audio on and publishes the captured audio track", async () => {
+  const originalWebSocket = globalThis.WebSocket;
+  let requestedConstraints: Parameters<PlatformAdapter["getDisplayMedia"]>[0] | null = null;
   let publishedStream: MediaStream | null = null;
+  const connections: FakePeerConnection[] = [];
 
   const videoTrack: MediaTrack = {
     id: "display-video",
@@ -599,12 +712,17 @@ test("defaults display audio off and sanitizes requested display audio before sh
 
   globalThis.WebSocket = FakeSocket as unknown as typeof WebSocket;
   const adapter = {
-    getDisplayMedia: async () => displayStream,
-    removeUnsafeDisplayAudio: () => {
-      sanitized = true;
-      return true;
+    getDisplayMedia: async (constraints: Parameters<PlatformAdapter["getDisplayMedia"]>[0]) => {
+      requestedConstraints = constraints;
+      return displayStream;
     },
     isCaptureRejected: () => false,
+    serializeCandidate: () => ({}),
+    createPeerConnection: () => {
+      const connection = new FakePeerConnection();
+      connections.push(connection);
+      return connection as unknown as RTCPeerConnection;
+    },
   } as PlatformAdapter;
   const session = new RoomSession(
     {
@@ -624,7 +742,7 @@ test("defaults display audio off and sanitizes requested display audio before sh
   );
 
   try {
-    assert.equal(DEFAULT_SHARE_SETTINGS.includeAudio, false);
+    assert.equal(DEFAULT_SHARE_SETTINGS.includeAudio, true);
     session.start("room-id", "Sharer", "room-token");
     const socket = FakeSocket.instance;
     assert.ok(socket);
@@ -635,19 +753,30 @@ test("defaults display audio off and sanitizes requested display audio before sh
       selfId: "sharer",
       isHost: true,
       heartbeatOwnerId: "sharer",
-      peers: [],
+      peers: [{
+        id: "viewer",
+        name: "Viewer",
+        sharing: false,
+        voiceJoined: false,
+        micMuted: true,
+      }],
     });
 
-    const sharing = session.startSharing({
-      ...DEFAULT_SHARE_SETTINGS,
-      includeAudio: true,
-    });
+    const sharing = session.startSharing(DEFAULT_SHARE_SETTINGS);
     await flushAsyncWork();
 
-    assert.equal(sanitized, true);
+    assert.equal(requestedConstraints?.audio, true);
     socket.receive({ type: "sharing-accepted", sharing: true });
     await sharing;
     assert.equal(publishedStream, displayStream);
+    assert.equal(connections.length, 1);
+    assert.deepEqual(
+      connections[0]?.addedTracks.map(({ track, stream }) => [track.id, stream.id]),
+      [
+        ["display-video", "display-stream"],
+        ["display-audio", "display-stream"],
+      ],
+    );
   } finally {
     session.stop();
     globalThis.WebSocket = originalWebSocket;

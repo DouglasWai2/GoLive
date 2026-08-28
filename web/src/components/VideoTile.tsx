@@ -173,10 +173,11 @@ export function VideoTile({ stream, name, local = false, state, qualityLabel, st
         (!local && (onVolumeChange || onToggleStats || onFullscreen))) && (
         <div className="tile-controls">
           {onToggleStats && <StatsButton statsEnabled={statsEnabled} toggleStats={onToggleStats} />}
-          {hasAudio && onVolumeChange && onToggleMute && (
+          {onVolumeChange && onToggleMute && (
             <VolumeControl
               volume={volume}
               muted={muted}
+              disabled={!hasAudio}
               onVolumeChange={onVolumeChange}
               onToggleMute={onToggleMute}
             />

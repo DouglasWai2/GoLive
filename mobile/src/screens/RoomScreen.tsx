@@ -108,6 +108,17 @@ export function RoomScreen({
     if (fullscreenPeerId && !remoteStreams[fullscreenPeerId]) setFullscreenPeerId(null);
   }, [fullscreenPeerId, remoteStreams]);
 
+  useEffect(() => {
+    const streamVolume = audioPreferencesReady && !muted ? volume : 0;
+
+    for (const stream of Object.values(remoteStreams)) {
+      for (const track of stream.getAudioTracks()) {
+        (track as typeof track & { _setVolume?: (volume: number) => void })
+          ._setVolume?.(streamVolume);
+      }
+    }
+  }, [audioPreferencesReady, muted, remoteStreams, volume]);
+
   const changeVolume = (next: number) => {
     setVolume(next);
     AsyncStorage.setItem(VOLUME_STORAGE_KEY, String(next)).catch(() => {});

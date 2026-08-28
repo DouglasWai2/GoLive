@@ -78,12 +78,6 @@ export function FullscreenView({
   const hasAudio = Boolean(rnStream?.getAudioTracks().length);
   const { phase: playbackPhase, onDimensionsChange } = useVideoPlaybackState(stream, visible);
 
-  useEffect(() => {
-    for (const track of rnStream?.getAudioTracks() ?? []) {
-      track._setVolume(muted ? 0 : volume);
-    }
-  }, [muted, rnStream, volume]);
-
   return (
     <Modal visible={visible} animationType="fade" onRequestClose={onClose} supportedOrientations={["portrait", "landscape"]}>
       <View style={styles.shell}>
@@ -124,9 +118,13 @@ export function FullscreenView({
             onTouchCancel={revealControls}
           >
             <StatsButton statsEnabled={statsEnabled} onToggle={onToggleStats} />
-            {hasAudio ? (
-              <VolumeControl volume={volume} muted={muted} onVolumeChange={onVolumeChange} onToggleMute={onToggleMute} />
-            ) : null}
+            <VolumeControl
+              volume={volume}
+              muted={muted}
+              disabled={!hasAudio}
+              onVolumeChange={onVolumeChange}
+              onToggleMute={onToggleMute}
+            />
             <Pressable style={({ pressed }) => [styles.closeButton, pressed && styles.pressed]} onPress={onClose} accessibilityRole="button" accessibilityLabel="Exit fullscreen">
               <FullscreenExitIcon color="#b5b5ad" />
             </Pressable>

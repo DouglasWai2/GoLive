@@ -548,15 +548,6 @@ export class RoomSession {
         audio: settings.includeAudio,
       });
 
-      const removedUnsafeAudio = settings.includeAudio
-        && this.deps.adapter.removeUnsafeDisplayAudio?.(stream);
-
-      if (removedUnsafeAudio) {
-        this.callbacks.onError(
-          "For privacy, audio is shared only when you choose a browser tab. Window and screen audio can include calls and other system sounds.",
-        );
-      }
-
       if (!this.active || generation !== this.sharingGeneration) {
         this.disposeCapturedStream(stream);
         return;
@@ -2192,7 +2183,7 @@ export class RoomSession {
         this.callbacks.onPeerSharingChanged?.(message.peer);
       }
 
-      if (!message.peer.sharing) {
+      if (previous?.sharing && !message.peer.sharing) {
         this.signalQueues.delete(message.peer.id);
         this.closePeer(message.peer.id);
       }
