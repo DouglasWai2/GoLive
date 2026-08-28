@@ -18,6 +18,8 @@ import {
 } from "../../utils/fullscreen";
 import StatsButton from "./StatsButton";
 import { VolumeControl } from "./VolumeControl";
+import { useVideoPlaybackState } from "../../hooks/useVideoPlaybackState";
+import { VideoLoadingOverlay } from "../VideoLoadingOverlay";
 
 type VideoStageProps = {
   localStream: MediaStream | null;
@@ -45,6 +47,7 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showCinemaControls, setShowCinemaControls] = useState(false);
   const [cinemaAudioBlocked, setCinemaAudioBlocked] = useState(false);
+  const [cinemaPlaybackBlocked, setCinemaPlaybackBlocked] = useState(false);
   const [showParticipants, setShowParticipants] = useState(false);
   const [statsEnabled, setStatsEnabled] = useState(() => {
     try {
@@ -82,6 +85,12 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
   const cinemaHasAudio = Boolean(cinemaStream?.getAudioTracks().length);
   const cinemaName = cinemaPeer?.name ?? "";
   const cinemaStats = cinemaPeer ? remoteStats[cinemaPeer.id] ?? null : null;
+  const cinemaConnectionState = cinemaPeer ? connectionStates[cinemaPeer.id] : undefined;
+  const cinemaPlaybackPhase = useVideoPlaybackState(
+    cinemaVideoRef,
+    cinemaStream,
+    isFullscreen && Boolean(cinemaStream),
+  );
   const localOutboundStats = peers.flatMap((peer) => {
     const stats = outboundStats[peer.id];
     return stats ? [{ peerId: peer.id, peerName: peer.name, stats }] : [];
@@ -89,18 +98,18 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
   const emptyTitle =
     status === "reconnecting"
       ? "Reconnecting to the room..."
-      : status === "disconnected"
-        ? "Connection lost"
-        : activeSharer
-          ? "Connecting to the screen..."
+        : status === "disconnected"
+          ? "Connection lost"
+          : activeSharer
+          ? "Negotiating secure connection..."
           : "No screen on air";
   const emptyMessage =
     status === "reconnecting"
       ? "Your session will resume automatically when the connection returns."
-      : status === "disconnected"
-        ? "Leave and rejoin the room to start a new session."
-        : activeSharer
-          ? "A secure peer-to-peer connection is being established."
+        : status === "disconnected"
+          ? "Leave and rejoin the room to start a new session."
+          : activeSharer
+          ? "Checking available peer and relay paths."
           : "Share this room link, then choose a window or display to begin.";
 
   const clearCinemaControlsTimer = () => {
@@ -175,6 +184,7 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
     if (!video) return;
 
     if (isFullscreen && cinemaStream) {
+      setCinemaPlaybackBlocked(false);
       video.volume = volume;
       video.muted = muted;
       video.srcObject = cinemaStream;
@@ -183,10 +193,15 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
         () => {
           if (active && video.srcObject === cinemaStream) {
             setCinemaAudioBlocked(false);
+            setCinemaPlaybackBlocked(false);
           }
         },
         async (error: unknown) => {
-          if (!isNotAllowedError(error) || !active || video.srcObject !== cinemaStream) {
+          if (!active || video.srcObject !== cinemaStream) {
+            return;
+          }
+
+          if (!isNotAllowedError(error)) {
             return;
           }
 
@@ -195,14 +210,20 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
 
           try {
             await video.play();
+            if (active && video.srcObject === cinemaStream) {
+              setCinemaPlaybackBlocked(false);
+            }
           } catch {
-            // The gesture-driven audio action remains visible if autoplay still fails.
+            if (active && video.srcObject === cinemaStream) {
+              setCinemaPlaybackBlocked(true);
+            }
           }
         },
       );
     } else {
       video.srcObject = null;
       setCinemaAudioBlocked(false);
+      setCinemaPlaybackBlocked(false);
     }
 
     return () => {
@@ -281,8 +302,24 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
     try {
       await video.play();
       setCinemaAudioBlocked(false);
+      setCinemaPlaybackBlocked(false);
     } catch {
       setCinemaAudioBlocked(true);
+    }
+  };
+
+  const retryCinemaPlayback = async () => {
+    const video = cinemaVideoRef.current;
+    if (!video) return;
+
+    video.volume = volume;
+    video.muted = muted || cinemaAudioBlocked;
+
+    try {
+      await video.play();
+      setCinemaPlaybackBlocked(false);
+    } catch {
+      setCinemaPlaybackBlocked(true);
     }
   };
 
@@ -460,6 +497,14 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
         onMouseMove={revealCinemaControls}
       >
         <video ref={cinemaVideoRef} autoPlay playsInline />
+        {isFullscreen && cinemaStream && (
+          <VideoLoadingOverlay
+            phase={cinemaPlaybackPhase}
+            connectionState={cinemaConnectionState}
+            playbackBlocked={cinemaPlaybackBlocked}
+            onRetryPlayback={() => void retryCinemaPlayback()}
+          />
+        )}
         {cinemaHasAudio && cinemaAudioBlocked && !muted && (
           <button type="button" className="audio-playback-action" onClick={() => void hearCinemaAudio()}>
             Tap to hear shared audio

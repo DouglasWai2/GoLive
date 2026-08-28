@@ -6,6 +6,7 @@ import { Room } from "./components/Room";
 import { SessionReplaced } from "./components/SessionReplaced";
 import { Admin } from "./components/Admin";
 import { clearSession, loadSession } from "./utils/session";
+import { primeNotificationAudio } from "./utils/notificationSounds";
 
 type Join = {
   name: string;
@@ -85,6 +86,23 @@ function RoomApp() {
 }
 
 export default function App() {
+  useEffect(() => {
+    const removeAudioPrimingListeners = () => {
+      window.removeEventListener("pointerdown", primeAudio);
+      window.removeEventListener("keydown", primeAudio);
+    };
+    const primeAudio = () => {
+      void primeNotificationAudio().then((ready) => {
+        if (ready) removeAudioPrimingListeners();
+      });
+    };
+
+    window.addEventListener("pointerdown", primeAudio);
+    window.addEventListener("keydown", primeAudio);
+
+    return removeAudioPrimingListeners;
+  }, []);
+
   if (window.location.pathname === "/admin" || window.location.pathname.startsWith("/admin/")) {
     return <Admin />;
   }

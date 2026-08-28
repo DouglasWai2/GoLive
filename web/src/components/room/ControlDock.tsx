@@ -63,7 +63,7 @@ export function ControlDock({
             onClick={() => onSetMicrophoneMuted(!voiceState.micMuted)}
           >
             {voiceState.micMuted ? <MicrophoneMutedIcon /> : <MicrophoneIcon />}
-            {voiceState.requestingMicrophone ? "Starting..." : voiceState.micMuted ? "Unmute" : "Mute"}
+            {voiceState.requestingMicrophone ? "Starting..." : " " }
           </button>
           <button
             type="button"
@@ -73,7 +73,6 @@ export function ControlDock({
             onClick={onToggleDeafen}
           >
             {deafened ? <VolumeMutedIcon /> : <VolumeIcon />}
-            {deafened ? "Undeafen" : "Deafen"}
           </button>
         </div>
       </div>

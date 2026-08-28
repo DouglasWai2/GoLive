@@ -10,6 +10,7 @@ import type {
   VoiceState,
 } from "@golive/core";
 import { createSessionDeps } from "../services/sessionDeps";
+import { playNotificationSound } from "../utils/notificationSounds";
 
 export function useRoom(
   roomId: string,
@@ -37,11 +38,26 @@ export function useRoom(
   const sessionRef = useRef<RoomSession | null>(null);
 
   useEffect(() => {
+    let hasLocalStream = false;
+    let micMuted = true;
+    let playLifecycleSounds = true;
     const session = new RoomSession(
       {
         onStatus: setStatus,
         onPeers: setPeers,
+        onPeerJoined: () => playNotificationSound("peer-join"),
+        onPeerLeft: () => playNotificationSound("peer-leave"),
+        onPeerSharingChanged: (peer) => {
+          playNotificationSound(peer.sharing ? "share-start" : "share-stop");
+        },
         onLocalStream: (stream) => {
+          const nextHasLocalStream = Boolean(stream);
+
+          if (nextHasLocalStream !== hasLocalStream) {
+            playNotificationSound(nextHasLocalStream ? "share-start" : "share-stop");
+            hasLocalStream = nextHasLocalStream;
+          }
+
           setLocalStream(stream as MediaStream | null);
         },
         onIsStartingShare: setIsStartingShare,
@@ -97,7 +113,14 @@ export function useRoom(
             return next;
           });
         },
-        onVoiceState: setVoiceState,
+        onVoiceState: (state) => {
+          if (playLifecycleSounds && state.micMuted !== micMuted) {
+            playNotificationSound(state.micMuted ? "mic-mute" : "mic-unmute");
+          }
+
+          micMuted = state.micMuted;
+          setVoiceState(state);
+        },
         onRemoteVoiceTrack: (peerId, track) => {
           setRemoteVoiceStreams((current) => {
             const next = { ...current };
@@ -136,6 +159,7 @@ export function useRoom(
     return () => {
       window.removeEventListener("online", resume);
       document.removeEventListener("visibilitychange", resumeWhenVisible);
+      playLifecycleSounds = false;
       session.stop();
       sessionRef.current = null;
     };

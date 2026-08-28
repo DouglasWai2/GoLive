@@ -4,6 +4,8 @@ import { FullscreenIcon } from "./icons";
 import { StreamStats, type OutboundStatsEntry } from "./room/StreamStats";
 import StatsButton from "./room/StatsButton";
 import { VolumeControl } from "./room/VolumeControl";
+import { useVideoPlaybackState } from "../hooks/useVideoPlaybackState";
+import { VideoLoadingOverlay } from "./VideoLoadingOverlay";
 
 type VideoTileProps = {
   stream: MediaStream;
@@ -32,6 +34,7 @@ async function startPlayback(
   hasAudio: boolean,
   isCurrent: () => boolean,
   setAudioBlocked: (blocked: boolean) => void,
+  setPlaybackBlocked: (blocked: boolean) => void,
 ) {
   video.muted = muted;
 
@@ -39,16 +42,19 @@ async function startPlayback(
     await video.play();
     if (!isCurrent()) return;
     setAudioBlocked(false);
+    setPlaybackBlocked(false);
   } catch (error) {
-    if (!isNotAllowedError(error) || !isCurrent()) return;
+    if (!isCurrent()) return;
+    if (!isNotAllowedError(error)) return;
 
     video.muted = true;
     setAudioBlocked(hasAudio && !muted);
 
     try {
       await video.play();
+      if (isCurrent()) setPlaybackBlocked(false);
     } catch {
-      // The user-facing action below remains available for a gesture-driven retry.
+      if (isCurrent()) setPlaybackBlocked(true);
     }
   }
 }
@@ -56,19 +62,24 @@ async function startPlayback(
 export function VideoTile({ stream, name, local = false, state, qualityLabel, stats, outboundStats = [], volume = 1, muted = false, statsEnabled = true, onVolumeChange, onToggleMute, onToggleStats, onFullscreen }: VideoTileProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [audioBlocked, setAudioBlocked] = useState(false);
+  const [playbackBlocked, setPlaybackBlocked] = useState(false);
   const hasAudio = stream.getAudioTracks().length > 0;
+  const playbackPhase = useVideoPlaybackState(videoRef, stream, !local);
 
   useEffect(() => {
     const video = videoRef.current;
     let active = true;
 
     if (video) {
+      setPlaybackBlocked(false);
       video.srcObject = stream;
       video.volume = volume;
       void startPlayback(video, local || muted, hasAudio, () => (
         active && video.srcObject === stream
       ), (blocked) => {
         if (active) setAudioBlocked(blocked);
+      }, (blocked) => {
+        if (active) setPlaybackBlocked(blocked);
       });
     }
 
@@ -111,14 +122,38 @@ export function VideoTile({ stream, name, local = false, state, qualityLabel, st
     try {
       await video.play();
       setAudioBlocked(false);
+      setPlaybackBlocked(false);
     } catch {
       setAudioBlocked(true);
+    }
+  };
+
+  const retryPlayback = async () => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    video.volume = volume;
+    video.muted = local || muted || audioBlocked;
+
+    try {
+      await video.play();
+      setPlaybackBlocked(false);
+    } catch {
+      setPlaybackBlocked(true);
     }
   };
 
   return (
     <article className="video-tile">
       <video ref={videoRef} autoPlay playsInline muted={local || muted || audioBlocked} />
+      {!local && (
+        <VideoLoadingOverlay
+          phase={playbackPhase}
+          connectionState={state}
+          playbackBlocked={playbackBlocked}
+          onRetryPlayback={() => void retryPlayback()}
+        />
+      )}
       {!local && hasAudio && audioBlocked && !muted && (
         <button type="button" className="audio-playback-action" onClick={() => void hearAudio()}>
           Tap to hear shared audio

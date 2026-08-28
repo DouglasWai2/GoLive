@@ -7,6 +7,7 @@ import { ErrorBanner } from "./room/ErrorBanner";
 import { VideoStage } from "./room/VideoStage";
 import { ControlDock } from "./room/ControlDock";
 import { VoiceAudio } from "./room/VoiceAudio";
+import { playNotificationSound } from "../utils/notificationSounds";
 
 type RoomProps = {
   roomId: string;
@@ -37,6 +38,12 @@ export function Room({
   const stopShare = () => {
     setShareSettings(null);
     room.stopSharing();
+  };
+
+  const toggleDeafen = () => {
+    const nextDeafened = !deafened;
+    setDeafened(nextDeafened);
+    playNotificationSound(nextDeafened ? "deafen" : "undeafen");
   };
 
   const localQuality =
@@ -80,7 +87,7 @@ export function Room({
         onStartShare={startShare}
         onStopShare={stopShare}
         onSetMicrophoneMuted={(muted) => void room.setMicrophoneMuted(muted)}
-        onToggleDeafen={() => setDeafened((current) => !current)}
+        onToggleDeafen={toggleDeafen}
       />
     </main>
   );
