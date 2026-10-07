@@ -4,6 +4,8 @@ import { RoomSession } from "../src/roomSession";
 import type { PlatformAdapter } from "../src/adapter";
 import type {
   IceServer,
+  MediaStream,
+  ShareSettings,
   RTCPeerConnection,
   SessionDescriptionInit,
   WebSocketLike,
@@ -91,11 +93,26 @@ class FakePeerConnection {
   }
 }
 
+class FakeMediaTrack {
+  readonly id = "screen-track";
+  readonly kind = "video";
+  enabled = true;
+  readyState: "live" | "ended" = "live";
+  stopCount = 0;
+
+  addEventListener(): void {}
+
+  stop(): void {
+    this.stopCount += 1;
+    this.readyState = "ended";
+  }
+}
+
 function flushAsyncWork(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-test("joins without TURN and only the elected owner pings", () => {
+test("joins without TURN and keeps every room WebSocket alive", () => {
   const originalWebSocket = globalThis.WebSocket;
   const originalFetch = globalThis.fetch;
   let fetchCount = 0;
@@ -132,18 +149,18 @@ test("joins without TURN and only the elected owner pings", () => {
     socket.receive({ type: "authenticated" });
     socket.receive({
       type: "room-state",
-      selfId: "self",
-      isHost: false,
-      heartbeatOwnerId: "other",
       peers: [],
     });
 
-    assert.equal(socket.sent.filter((message) => message.type === "ping").length, 0);
+    const pings = () => socket.sent.filter((message) => message.type === "ping");
+    assert.equal(pings().length, 1);
+    socket.receive({ type: "pong", timestamp: pings()[0]?.timestamp });
 
-    socket.receive({ type: "heartbeat-owner", peerId: "self" });
-    assert.equal(socket.sent.filter((message) => message.type === "ping").length, 1);
+    session.resume();
+    assert.equal(pings().length, 2);
+    assert.equal(socket.sent.some((message) => message.type === "heartbeat-reclaim"), false);
 
-    socket.receive({ type: "pong", timestamp: Date.now() });
+    socket.receive({ type: "pong", timestamp: pings()[1]?.timestamp });
     assert.equal(fetchCount, 0);
   } finally {
     session.stop();
@@ -188,6 +205,89 @@ test("clears a session rejected before WebSocket authentication", () => {
 
     assert.equal(rejected, 1);
     assert.deepEqual(errors, []);
+  } finally {
+    session.stop();
+    globalThis.WebSocket = originalWebSocket;
+    FakeSocket.instance = null;
+  }
+});
+
+test("keeps captured media alive and restores sharing after signaling reconnects", async () => {
+  const originalWebSocket = globalThis.WebSocket;
+  const track = new FakeMediaTrack();
+  const stream = {
+    id: "screen-stream",
+    getTracks: () => [track],
+    getVideoTracks: () => [track],
+    getAudioTracks: () => [],
+  } as unknown as MediaStream;
+  const adapter = {
+    getDisplayMedia: async () => stream,
+  } as unknown as PlatformAdapter;
+  const localStreams: Array<MediaStream | null> = [];
+
+  globalThis.WebSocket = FakeSocket as unknown as typeof WebSocket;
+  const session = new RoomSession(
+    {
+      onStatus: () => {},
+      onPeers: () => {},
+      onLocalStream: (localStream) => localStreams.push(localStream),
+      onIsStartingShare: () => {},
+      onRemoteStream: () => {},
+      onConnectionState: () => {},
+      onRemoteStats: () => {},
+      onOutboundStats: () => {},
+      onError: () => {},
+    },
+    { baseUrl: "https://signal.example.com", adapter },
+  );
+  const settings: ShareSettings = {
+    width: 1280,
+    height: 720,
+    frameRate: 30,
+    maxBitrate: 4_000_000,
+    includeAudio: false,
+  };
+
+  try {
+    session.start("room-id", "Sharer", "room-token");
+    const firstSocket = FakeSocket.instance;
+    assert.ok(firstSocket);
+    firstSocket.open();
+    firstSocket.receive({ type: "authenticated" });
+    firstSocket.receive({
+      type: "room-state",
+      peers: [],
+    });
+
+    const startSharing = session.startSharing(settings);
+    await flushAsyncWork();
+    firstSocket.receive({ type: "sharing-accepted", sharing: true });
+    await startSharing;
+    assert.equal(localStreams.at(-1), stream);
+
+    firstSocket.readyState = 3;
+    firstSocket.onclose?.({ code: 1006 });
+    assert.equal(track.stopCount, 0);
+
+    session.resume();
+    const reconnectedSocket = FakeSocket.instance;
+    assert.ok(reconnectedSocket);
+    assert.notEqual(reconnectedSocket, firstSocket);
+    reconnectedSocket.open();
+    reconnectedSocket.receive({ type: "authenticated" });
+    reconnectedSocket.receive({
+      type: "room-state",
+      peers: [],
+    });
+    assert.ok(reconnectedSocket.sent.some((message) => (
+      message.type === "sharing" && message.sharing === true
+    )));
+
+    reconnectedSocket.receive({ type: "sharing-accepted", sharing: true });
+    await flushAsyncWork();
+    assert.equal(track.stopCount, 0);
+    assert.equal(localStreams.at(-1), stream);
   } finally {
     session.stop();
     globalThis.WebSocket = originalWebSocket;
@@ -245,9 +345,6 @@ test("requests TURN only after direct ICE fails and rebuilds the viewer", async 
     socket.receive({ type: "authenticated" });
     socket.receive({
       type: "room-state",
-      selfId: "viewer",
-      isHost: false,
-      heartbeatOwnerId: "sharer",
       peers: [{ id: "sharer", name: "Sharer", sharing: true }],
     });
     socket.receive({

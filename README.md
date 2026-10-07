@@ -159,10 +159,10 @@ ExpressTURN enforces its free-plan traffic cap; `EXPRESSTURN_DISABLED` provides
 a manual emergency cutoff. If no relay can establish the connection, clients
 show a temporary stream-unavailable message.
 
-One participant per room sends a ping every minute and the server replies with
-pong to keep the Render service active. The creator owns this heartbeat while
-connected; a connected guest is elected temporarily when the creator leaves or
-misses the heartbeat lease. The creator reclaims it after resuming activity.
+Every connected participant sends a ping every 30 seconds and the server replies
+with a pong. This keeps idle WebSocket connections active and sends traffic to
+Render while a room has connected participants. A client reconnects if its pong
+does not arrive.
 
 ## Project structure
 

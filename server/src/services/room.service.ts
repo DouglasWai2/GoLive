@@ -5,7 +5,6 @@ export class RoomService {
   private readonly rooms = new Map<string, Map<string, Client>>();
   private readonly hosts = new Map<string, string>();
   private readonly roomInstances = new Map<string, string>();
-  private readonly heartbeatOwners = new Map<string, string>();
 
   createRoomSession(roomId: string, name: string): RoomSession | undefined {
     if (this.hosts.has(roomId) || this.rooms.has(roomId)) return undefined;
@@ -17,62 +16,8 @@ export class RoomService {
     return session;
   }
 
-  isHost(roomId: string, sessionId: string): boolean {
-    return this.hosts.get(roomId) === sessionId;
-  }
-
   isCurrentRoomInstance(roomId: string, roomInstanceId: string): boolean {
     return this.roomInstances.get(roomId) === roomInstanceId;
-  }
-
-  getHeartbeatOwner(roomId: string): string | undefined {
-    return this.heartbeatOwners.get(roomId);
-  }
-
-  refreshHeartbeatOwner(roomId: string): string | undefined {
-    const room = this.rooms.get(roomId);
-
-    if (!room?.size) {
-      this.heartbeatOwners.delete(roomId);
-      return undefined;
-    }
-
-    const currentOwnerId = this.heartbeatOwners.get(roomId);
-    const hostId = this.hosts.get(roomId);
-    const ownerId = currentOwnerId && room.has(currentOwnerId)
-      ? currentOwnerId
-      : hostId && room.has(hostId)
-        ? hostId
-        : room.keys().next().value as string;
-
-    this.heartbeatOwners.set(roomId, ownerId);
-    return ownerId;
-  }
-
-  reclaimHostHeartbeat(roomId: string, sessionId: string): string | undefined {
-    const room = this.rooms.get(roomId);
-    if (!room?.has(sessionId) || !this.isHost(roomId, sessionId)) {
-      return this.refreshHeartbeatOwner(roomId);
-    }
-
-    this.heartbeatOwners.set(roomId, sessionId);
-    return sessionId;
-  }
-
-  rotateHeartbeatOwner(roomId: string): string | undefined {
-    const room = this.rooms.get(roomId);
-    if (!room?.size) {
-      this.heartbeatOwners.delete(roomId);
-      return undefined;
-    }
-
-    const peerIds = [...room.keys()];
-    const currentOwnerId = this.heartbeatOwners.get(roomId);
-    const currentIndex = currentOwnerId ? peerIds.indexOf(currentOwnerId) : -1;
-    const ownerId = peerIds[(currentIndex + 1) % peerIds.length]!;
-
-    this.heartbeatOwners.set(roomId, ownerId);
-    return ownerId;
   }
 
   createSession(roomId: string, name: string, roomInstanceId: string): RoomSession {
@@ -115,11 +60,8 @@ export class RoomService {
       this.rooms.delete(roomId);
       this.hosts.delete(roomId);
       this.roomInstances.delete(roomId);
-      this.heartbeatOwners.delete(roomId);
       return;
     }
-
-    this.refreshHeartbeatOwner(roomId);
   }
 
   getSnapshot(): RoomsSnapshot {

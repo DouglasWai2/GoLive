@@ -88,12 +88,8 @@ export type ServerMessage =
   | { type: "authenticated" }
   | {
       type: "room-state";
-      selfId: string;
-      isHost: boolean;
-      heartbeatOwnerId: string;
       peers: Peer[];
     }
-  | { type: "heartbeat-owner"; peerId: string }
   | { type: "pong"; timestamp: number }
   | { type: "peer-joined"; peer: Peer }
   | { type: "peer-left"; peerId: string }
@@ -107,8 +103,7 @@ export type ClientMessage =
   | { type: "join"; room: string; name: string }
   | { type: "signal"; target: string; data: unknown }
   | { type: "sharing"; sharing: boolean }
-  | { type: "ping"; timestamp: number }
-  | { type: "heartbeat-reclaim" };
+  | { type: "ping"; timestamp: number };
 
 /*
  * Media stream surface used by the room session.

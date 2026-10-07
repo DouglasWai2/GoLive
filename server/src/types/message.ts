@@ -5,9 +5,7 @@ export type ClientMessage =
   | { type: "join"; room: string; name: string }
   | { type: "signal"; target: string; data: unknown }
   | { type: "sharing"; sharing: boolean }
-  | { type: "ping"; timestamp: number }
-  | { type: "heartbeat-reclaim" };
-  
+  | { type: "ping"; timestamp: number };
 
 export type Membership = {
   roomId: string;

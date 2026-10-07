@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { FullscreenExitIcon, ScreenIcon, UsersIcon } from "../icons";
+import { ScreenIcon, UsersIcon } from "../icons";
 import { VideoTile } from "../VideoTile";
 import { StreamStats } from "./StreamStats";
 import type {
@@ -16,8 +16,6 @@ import {
   requestFullscreen,
   requestVideoFullscreen,
 } from "../../utils/fullscreen";
-import StatsButton from "./StatsButton";
-import { VolumeControl } from "./VolumeControl";
 
 type VideoStageProps = {
   localStream: MediaStream | null;
@@ -35,14 +33,9 @@ const STATS_STORAGE_KEY = "golive.stats.enabled";
 const VOLUME_STORAGE_KEY = "golive.volume";
 const MUTED_STORAGE_KEY = "golive.muted";
 
-function isNotAllowedError(error: unknown): boolean {
-  return error instanceof DOMException && error.name === "NotAllowedError";
-}
-
 export function VideoStage({ localStream, peers, remoteStreams, connectionStates, remoteStats, outboundStats, localQuality, localName, status }: VideoStageProps) {
-  const [isFullscreen, setIsFullscreen] = useState(false);
-  const [showCinemaControls, setShowCinemaControls] = useState(false);
-  const [cinemaAudioBlocked, setCinemaAudioBlocked] = useState(false);
+  const [fullscreenPeerId, setFullscreenPeerId] = useState<string | null>(null);
+  const [showFullscreenControls, setShowFullscreenControls] = useState(false);
   const [showParticipants, setShowParticipants] = useState(false);
   const [statsEnabled, setStatsEnabled] = useState(() => {
     try {
@@ -66,20 +59,13 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
       return false;
     }
   });
-  const cinemaRef = useRef<HTMLDivElement>(null);
-  const cinemaVideoRef = useRef<HTMLVideoElement>(null);
-  const cinemaControlsTimer = useRef<number | null>(null);
+  const fullscreenControlsTimer = useRef<number | null>(null);
   const participantsRef = useRef<HTMLDivElement>(null);
   const participantsButtonRef = useRef<HTMLButtonElement>(null);
 
   const activeSharer = peers.find((peer) => peer.sharing);
   const remoteTiles = peers.filter((peer) => remoteStreams[peer.id]);
 
-  const cinemaPeer = remoteTiles[0];
-  const cinemaStream = cinemaPeer ? remoteStreams[cinemaPeer.id]! : null;
-  const cinemaHasAudio = Boolean(cinemaStream?.getAudioTracks().length);
-  const cinemaName = cinemaPeer?.name ?? "";
-  const cinemaStats = cinemaPeer ? remoteStats[cinemaPeer.id] ?? null : null;
   const localOutboundStats = peers.flatMap((peer) => {
     const stats = outboundStats[peer.id];
     return stats ? [{ peerId: peer.id, peerName: peer.name, stats }] : [];
@@ -101,32 +87,37 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
           ? "A secure peer-to-peer connection is being established."
           : "Share this room link, then choose a window or display to begin.";
 
-  const clearCinemaControlsTimer = () => {
-    if (cinemaControlsTimer.current !== null) {
-      window.clearTimeout(cinemaControlsTimer.current);
-      cinemaControlsTimer.current = null;
+  const clearFullscreenControlsTimer = () => {
+    if (fullscreenControlsTimer.current !== null) {
+      window.clearTimeout(fullscreenControlsTimer.current);
+      fullscreenControlsTimer.current = null;
     }
   };
 
-  const revealCinemaControls = () => {
-    setShowCinemaControls(true);
-    clearCinemaControlsTimer();
-    cinemaControlsTimer.current = window.setTimeout(() => {
-      setShowCinemaControls(false);
+  const revealFullscreenControls = () => {
+    setShowFullscreenControls(true);
+    clearFullscreenControlsTimer();
+    fullscreenControlsTimer.current = window.setTimeout(() => {
+      setShowFullscreenControls(false);
     }, 2500);
   };
 
   useEffect(() => {
     const onChange = () => {
-      setIsFullscreen(Boolean(getFullscreenElement()));
+      const element = getFullscreenElement();
+      setFullscreenPeerId(
+        element instanceof HTMLElement ? element.dataset.peerId ?? null : null,
+      );
     };
 
     document.addEventListener("fullscreenchange", onChange);
     document.addEventListener("webkitfullscreenchange", onChange);
+    document.addEventListener("mozfullscreenchange", onChange);
 
     return () => {
       document.removeEventListener("fullscreenchange", onChange);
       document.removeEventListener("webkitfullscreenchange", onChange);
+      document.removeEventListener("mozfullscreenchange", onChange);
     };
   }, []);
 
@@ -155,142 +146,22 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
   }, [showParticipants]);
 
   useEffect(() => {
-    if (!isFullscreen) {
-      clearCinemaControlsTimer();
-      setShowCinemaControls(false);
+    if (!fullscreenPeerId) {
+      clearFullscreenControlsTimer();
+      setShowFullscreenControls(false);
       return;
     }
 
-    revealCinemaControls();
+    revealFullscreenControls();
 
-    return () => clearCinemaControlsTimer();
-  }, [isFullscreen]);
+    return () => clearFullscreenControlsTimer();
+  }, [fullscreenPeerId]);
 
-  useEffect(() => {
-    const video = cinemaVideoRef.current;
-    let active = true;
-
-    if (!video) return;
-
-    if (isFullscreen && cinemaStream) {
-      video.volume = volume;
-      video.muted = muted;
-      video.srcObject = cinemaStream;
-
-      void video.play().then(
-        () => {
-          if (active && video.srcObject === cinemaStream) {
-            setCinemaAudioBlocked(false);
-          }
-        },
-        async (error: unknown) => {
-          if (!isNotAllowedError(error) || !active || video.srcObject !== cinemaStream) {
-            return;
-          }
-
-          video.muted = true;
-          if (active) setCinemaAudioBlocked(cinemaHasAudio && !muted);
-
-          try {
-            await video.play();
-          } catch {
-            // The gesture-driven audio action remains visible if autoplay still fails.
-          }
-        },
-      );
-    } else {
-      video.srcObject = null;
-      setCinemaAudioBlocked(false);
-    }
-
-    return () => {
-      active = false;
-      if (video.srcObject === cinemaStream) video.srcObject = null;
-    };
-  }, [cinemaHasAudio, cinemaStream, isFullscreen]);
-
-  useEffect(() => {
-    const video = cinemaVideoRef.current;
-    const container = cinemaRef.current;
-    if (!video || !container) return;
-
-    const fit = () => {
-      const videoWidth = video.videoWidth;
-      const videoHeight = video.videoHeight;
-      if (!videoWidth || !videoHeight) return;
-
-      const containerWidth = container.clientWidth;
-      const containerHeight = container.clientHeight;
-      if (!containerWidth || !containerHeight) return;
-
-      const scale = Math.min(containerWidth / videoWidth, containerHeight / videoHeight);
-      video.style.width = `${Math.max(1, Math.floor(videoWidth * scale))}px`;
-      video.style.height = `${Math.max(1, Math.floor(videoHeight * scale))}px`;
-    };
-
-    const fitNextFrame = () => window.requestAnimationFrame(fit);
-
-    fit();
-    video.addEventListener("resize", fit);
-    video.addEventListener("loadedmetadata", fit);
-    window.addEventListener("resize", fit);
-    document.addEventListener("fullscreenchange", fitNextFrame);
-
-    return () => {
-      video.style.width = "";
-      video.style.height = "";
-      video.removeEventListener("resize", fit);
-      video.removeEventListener("loadedmetadata", fit);
-      window.removeEventListener("resize", fit);
-      document.removeEventListener("fullscreenchange", fitNextFrame);
-    };
-  }, [cinemaStream]);
-
-  useEffect(() => {
-    const video = cinemaVideoRef.current;
-    if (!video) return;
-
-    let active = true;
-    const shouldMute = muted || cinemaAudioBlocked;
-    video.volume = volume;
-    video.muted = shouldMute;
-
-    if (isFullscreen && cinemaHasAudio && !shouldMute) {
-      void video.play().catch((error: unknown) => {
-        if (active && video.srcObject === cinemaStream && isNotAllowedError(error)) {
-          video.muted = true;
-          setCinemaAudioBlocked(true);
-        }
-      });
-    }
-
-    return () => {
-      active = false;
-    };
-  }, [cinemaAudioBlocked, cinemaHasAudio, cinemaStream, isFullscreen, muted, volume]);
-
-  const hearCinemaAudio = async () => {
-    const video = cinemaVideoRef.current;
-    if (!video) return;
-
-    video.volume = volume;
-    video.muted = false;
-
-    try {
-      await video.play();
-      setCinemaAudioBlocked(false);
-    } catch {
-      setCinemaAudioBlocked(true);
-    }
-  };
-
-  const toggleFullscreen = async (sourceVideo: HTMLVideoElement) => {
+  const toggleFullscreen = async (sourceVideo: HTMLVideoElement, tile: HTMLElement) => {
     if (getFullscreenElement()) {
       await exitFullscreen();
       return;
     }
-
-    if (!cinemaRef.current) return;
 
     if (!isElementFullscreenSupported()) {
       try {
@@ -301,17 +172,9 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
       return;
     }
 
-    if (cinemaVideoRef.current) {
-      cinemaVideoRef.current.volume = volume;
-      cinemaVideoRef.current.muted = muted || cinemaAudioBlocked;
-      cinemaVideoRef.current.srcObject = cinemaStream;
-    }
-
     try {
-      await requestFullscreen(cinemaRef.current);
+      await requestFullscreen(tile);
     } catch {
-      if (cinemaVideoRef.current) cinemaVideoRef.current.srcObject = null;
-
       try {
         await requestVideoFullscreen(sourceVideo);
       } catch (caught) {
@@ -425,9 +288,7 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
             onToggleStats={toggleStats}
           />
         )}
-        {remoteTiles
-          .filter((peer) => !isFullscreen || peer.id !== cinemaPeer?.id)
-          .map((peer) => (
+        {remoteTiles.map((peer) => (
           <VideoTile
             key={peer.id}
             stream={remoteStreams[peer.id]!}
@@ -437,12 +298,16 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
             volume={volume}
             muted={muted}
             statsEnabled={statsEnabled}
+            fullscreenId={peer.id}
+            isFullscreen={fullscreenPeerId === peer.id}
+            fullscreenControlsVisible={showFullscreenControls}
             onVolumeChange={changeVolume}
             onToggleMute={toggleMute}
             onToggleStats={toggleStats}
-            onFullscreen={(video) => void toggleFullscreen(video)}
+            onFullscreen={(video, tile) => void toggleFullscreen(video, tile)}
+            onRevealFullscreenControls={revealFullscreenControls}
           />
-          ))}
+        ))}
         {!localStream && remoteTiles.length === 0 && (
           <div className="empty-stage">
             <div className="screen-outline"><ScreenIcon size={38} /><span className="scan-line" /></div>
@@ -450,39 +315,6 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
             <p>{emptyMessage}</p>
           </div>
         )}
-      </div>
-
-      <div
-        className={`cinema ${isFullscreen && !showCinemaControls ? "controls-hidden" : ""}`}
-        ref={cinemaRef}
-        onMouseMove={revealCinemaControls}
-      >
-        <video ref={cinemaVideoRef} autoPlay playsInline />
-        {cinemaHasAudio && cinemaAudioBlocked && !muted && (
-          <button type="button" className="audio-playback-action" onClick={() => void hearCinemaAudio()}>
-            Tap to hear shared audio
-          </button>
-        )}
-        <div className="cinema-meta">
-          <span className="live-dot" />
-          <strong>{cinemaName ? `${cinemaName}'s screen` : "Screen"}</strong>
-          <small>Press Esc to exit</small>
-        </div>
-        {statsEnabled && cinemaStats && <StreamStats stats={cinemaStats} />}
-        <div className="cinema-controls">
-          <StatsButton statsEnabled={statsEnabled} toggleStats={toggleStats} />
-          {cinemaHasAudio && (
-            <VolumeControl
-              volume={volume}
-              muted={muted}
-              onVolumeChange={changeVolume}
-              onToggleMute={toggleMute}
-            />
-          )}
-          <button className="icon-button" onClick={() => void exitFullscreen()} title="Exit fullscreen">
-            <FullscreenExitIcon /> Exit fullscreen
-          </button>
-        </div>
       </div>
     </section>
   );
