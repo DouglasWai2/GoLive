@@ -360,6 +360,21 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
       }
     }
 
+    const userAgent = navigator.userAgent;
+    const isChrome = /Chrome\//.test(userAgent)
+      && !/(?:Edg|OPR|Chromium|SamsungBrowser|Vivaldi|YaBrowser)\//.test(userAgent)
+      && !("brave" in navigator);
+    if (isChrome && isElementFullscreenSupported()) {
+      // Chrome can render a second video for the same WebRTC stream black in
+      // fullscreen. Keep the active tile as its fullscreen video on Chrome.
+      try {
+        await requestFullscreen(tile);
+        return;
+      } catch {
+        // Fall back to the cinema video if tile fullscreen is unavailable.
+      }
+    }
+
     if (!isElementFullscreenSupported()) {
       try {
         await requestVideoFullscreen(sourceVideo);
