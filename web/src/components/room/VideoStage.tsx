@@ -33,6 +33,7 @@ type VideoStageProps = {
   status: SocketStatus;
   localMicMuted: boolean;
   deafened: boolean;
+  onLeaveDisconnected: () => void;
 };
 
 const STATS_STORAGE_KEY = "golive.stats.enabled";
@@ -43,8 +44,9 @@ function isNotAllowedError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "NotAllowedError";
 }
 
-export function VideoStage({ localStream, peers, remoteStreams, connectionStates, remoteStats, outboundStats, localQuality, localName, status, localMicMuted, deafened }: VideoStageProps) {
+export function VideoStage({ localStream, peers, remoteStreams, connectionStates, remoteStats, outboundStats, localQuality, localName, status, localMicMuted, deafened, onLeaveDisconnected }: VideoStageProps) {
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [fullscreenPeerId, setFullscreenPeerId] = useState<string | null>(null);
   const [showCinemaControls, setShowCinemaControls] = useState(false);
   const [cinemaAudioBlocked, setCinemaAudioBlocked] = useState(false);
   const [cinemaPlaybackBlocked, setCinemaPlaybackBlocked] = useState(false);
@@ -129,15 +131,19 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
 
   useEffect(() => {
     const onChange = () => {
-      setIsFullscreen(Boolean(getFullscreenElement()));
+      const element = getFullscreenElement();
+      setIsFullscreen(element === cinemaRef.current);
+      setFullscreenPeerId(element instanceof HTMLElement ? element.dataset.peerId ?? null : null);
     };
 
     document.addEventListener("fullscreenchange", onChange);
     document.addEventListener("webkitfullscreenchange", onChange);
+    document.addEventListener("mozfullscreenchange", onChange);
 
     return () => {
       document.removeEventListener("fullscreenchange", onChange);
       document.removeEventListener("webkitfullscreenchange", onChange);
+      document.removeEventListener("mozfullscreenchange", onChange);
     };
   }, []);
 
@@ -258,6 +264,7 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
     video.addEventListener("loadedmetadata", fit);
     window.addEventListener("resize", fit);
     document.addEventListener("fullscreenchange", fitNextFrame);
+    document.addEventListener("mozfullscreenchange", fitNextFrame);
 
     return () => {
       video.style.width = "";
@@ -266,6 +273,7 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
       video.removeEventListener("loadedmetadata", fit);
       window.removeEventListener("resize", fit);
       document.removeEventListener("fullscreenchange", fitNextFrame);
+      document.removeEventListener("mozfullscreenchange", fitNextFrame);
     };
   }, [cinemaStream]);
 
@@ -323,13 +331,22 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
     }
   };
 
-  const toggleFullscreen = async (sourceVideo: HTMLVideoElement) => {
+  const toggleFullscreen = async (sourceVideo: HTMLVideoElement, tile: HTMLElement) => {
     if (getFullscreenElement()) {
       await exitFullscreen();
       return;
     }
 
-    if (!cinemaRef.current) return;
+    // Firefox can render a second video for the same WebRTC stream black in
+    // fullscreen. Keep the active tile as its fullscreen video on that browser.
+    if (/Firefox\//.test(navigator.userAgent) && isElementFullscreenSupported()) {
+      try {
+        await requestFullscreen(tile);
+        return;
+      } catch {
+        // Fall back to the native video fullscreen API below.
+      }
+    }
 
     if (!isElementFullscreenSupported()) {
       try {
@@ -339,6 +356,8 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
       }
       return;
     }
+
+    if (!cinemaRef.current) return;
 
     if (cinemaVideoRef.current) {
       cinemaVideoRef.current.volume = volume;
@@ -350,7 +369,6 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
       await requestFullscreen(cinemaRef.current);
     } catch {
       if (cinemaVideoRef.current) cinemaVideoRef.current.srcObject = null;
-
       try {
         await requestVideoFullscreen(sourceVideo);
       } catch (caught) {
@@ -476,25 +494,38 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
             volume={volume}
             muted={muted}
             statsEnabled={statsEnabled}
+            fullscreenId={peer.id}
+            isFullscreen={fullscreenPeerId === peer.id}
             onVolumeChange={changeVolume}
             onToggleMute={toggleMute}
             onToggleStats={toggleStats}
-            onFullscreen={(video) => void toggleFullscreen(video)}
+            onFullscreen={(video, tile) => void toggleFullscreen(video, tile)}
           />
-          ))}
+        ))}
         {!localStream && remoteTiles.length === 0 && (
           <div className="empty-stage">
             <div className="screen-outline"><ScreenIcon size={38} /><span className="scan-line" /></div>
             <h2>{emptyTitle}</h2>
             <p>{emptyMessage}</p>
+            {status === "disconnected" && <button className="leave-button empty-leave-button" type="button" onClick={onLeaveDisconnected}>Leave room</button>}
           </div>
         )}
       </div>
-
       <div
         className={`cinema ${isFullscreen && !showCinemaControls ? "controls-hidden" : ""}`}
         ref={cinemaRef}
-        onMouseMove={revealCinemaControls}
+        onPointerMove={(event) => {
+          if (event.pointerType !== "touch") revealCinemaControls();
+        }}
+        onPointerDown={(event) => {
+          if (event.pointerType !== "touch") return;
+          if (event.target instanceof Element && event.target.closest("button, input")) {
+            revealCinemaControls();
+          } else {
+            setShowCinemaControls((visible) => !visible);
+            clearCinemaControlsTimer();
+          }
+        }}
       >
         <video ref={cinemaVideoRef} autoPlay playsInline />
         {isFullscreen && cinemaStream && (

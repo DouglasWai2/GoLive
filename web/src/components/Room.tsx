@@ -14,6 +14,7 @@ type RoomProps = {
   name: string;
   token: string;
   onLeave: () => void;
+  onLeaveDisconnected: () => void;
   onSessionRejected?: () => void;
   onSessionReplaced?: () => void;
 };
@@ -23,6 +24,7 @@ export function Room({
   name,
   token,
   onLeave,
+  onLeaveDisconnected,
   onSessionRejected,
   onSessionReplaced,
 }: RoomProps) {
@@ -71,6 +73,7 @@ export function Room({
         status={room.status}
         localMicMuted={room.voiceState.micMuted}
         deafened={deafened}
+        onLeaveDisconnected={onLeaveDisconnected}
       />
 
       <VoiceAudio streams={room.remoteVoiceStreams} deafened={deafened} />

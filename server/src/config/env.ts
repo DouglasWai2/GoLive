@@ -60,4 +60,8 @@ export const env = {
   get adminSecret(): string | undefined {
     return process.env.ADMIN_SECRET;
   },
+
+  get databaseUrl(): string | undefined {
+    return process.env.DATABASE_URL;
+  },
 }

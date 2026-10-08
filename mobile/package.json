@@ -1,6 +1,6 @@
 {
   "name": "@golive/mobile",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "main": "index.ts",
   "scripts": {
@@ -19,7 +19,7 @@
   },
   "dependencies": {
     "@config-plugins/react-native-webrtc": "^15.0.2",
-    "@golive/core": "1.1.0",
+    "@golive/core": "1.2.0",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-native-community/slider": "^5.2.0",
     "babel-preset-expo": "~57.0.0",

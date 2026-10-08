@@ -97,11 +97,8 @@ export type ServerMessage =
   | {
       type: "room-state";
       selfId: string;
-      isHost: boolean;
-      heartbeatOwnerId: string;
       peers: Peer[];
     }
-  | { type: "heartbeat-owner"; peerId: string }
   | { type: "pong"; timestamp: number }
   | { type: "peer-joined"; peer: Peer }
   | { type: "peer-left"; peerId: string }
@@ -127,8 +124,7 @@ export type ClientMessage =
     }
   | { type: "sharing"; sharing: boolean }
   | { type: "voice"; joined: boolean; micMuted: boolean }
-  | { type: "ping"; timestamp: number }
-  | { type: "heartbeat-reclaim" };
+  | { type: "ping"; timestamp: number };
 
 /*
  * Media stream surface used by the room session.

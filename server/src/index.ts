@@ -4,6 +4,10 @@ import { env } from "./config/env.js";
 
 dotenv.config();
 
+if (!env.databaseUrl) {
+  throw new Error("DATABASE_URL is required");
+}
+
 const app = await buildApp();
 
 try {

@@ -11,9 +11,7 @@ export type ClientMessage =
     }
   | { type: "sharing"; sharing: boolean }
   | { type: "voice"; joined: boolean; micMuted: boolean }
-  | { type: "ping"; timestamp: number }
-  | { type: "heartbeat-reclaim" };
-  
+  | { type: "ping"; timestamp: number };
 
 export type Membership = {
   roomId: string;

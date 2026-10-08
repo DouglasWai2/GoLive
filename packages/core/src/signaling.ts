@@ -45,19 +45,25 @@ export type JoinRoomResult = {
     name: string;
   };
   token: string;
+  deviceToken?: string;
 };
+
+export class DeviceRequestError extends Error {
+  constructor(readonly status: number, message: string) { super(message); }
+}
 
 export async function joinRoom(
   baseUrl: string,
   roomId: string,
   name: string,
+  deviceToken?: string,
 ): Promise<JoinRoomResult> {
   const response = await fetch(signalingHttpUrl(baseUrl, "/room"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ roomId, name }),
+    body: JSON.stringify({ roomId, name, deviceToken }),
   });
 
   if (!response.ok) {
@@ -143,13 +149,14 @@ export async function verifyInvite(
   roomId: string,
   name: string,
   inviteToken: string,
+  deviceToken?: string,
 ): Promise<JoinRoomResult> {
   const response = await fetch(signalingHttpUrl(baseUrl, "/invite/verify"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ roomId, name, inviteToken }),
+    body: JSON.stringify({ roomId, name, inviteToken, deviceToken }),
   });
 
   if (!response.ok) {
@@ -157,6 +164,22 @@ export async function verifyInvite(
   }
 
   return (await response.json()) as JoinRoomResult;
+}
+
+export async function restoreRoom(baseUrl: string, deviceToken: string): Promise<JoinRoomResult> {
+  const response = await fetch(signalingHttpUrl(baseUrl, "/device/room"), {
+    headers: { Authorization: `Bearer ${deviceToken}` },
+  });
+  if (!response.ok) throw new DeviceRequestError(response.status, await errorFrom(response));
+  return (await response.json()) as JoinRoomResult;
+}
+
+export async function leaveRoom(baseUrl: string, deviceToken: string): Promise<void> {
+  const response = await fetch(signalingHttpUrl(baseUrl, "/device/room"), {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${deviceToken}` },
+  });
+  if (!response.ok) throw new DeviceRequestError(response.status, await errorFrom(response));
 }
 
 export function buildInviteUrl(

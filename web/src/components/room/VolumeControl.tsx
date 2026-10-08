@@ -1,5 +1,4 @@
 import { VolumeIcon, VolumeMutedIcon } from "../icons";
-import { useEffect, useRef, useState } from "react";
 
 type VolumeControlProps = {
   volume: number;
@@ -13,72 +12,32 @@ export function VolumeControl({ volume, muted, disabled = false, onVolumeChange,
   const handleVolumeChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     onVolumeChange(Number(event.target.value));
   };
-  const [active, setActive] = useState(false);
-  const timer = useRef<number | null>(null);
-
-  const clearCloseTimer = () => {
-    if (timer.current !== null) {
-      window.clearTimeout(timer.current);
-      timer.current = null;
-    }
-  };
-
-  const handleMouseEnter = (): void => {
-    clearCloseTimer();
-    setActive(true);
-  };
-
-  const handleMouseLeave = (): void => {
-    clearCloseTimer();
-    timer.current = window.setTimeout(() => setActive(false), 400);
-  };
-
-  useEffect(() => () => clearCloseTimer(), []);
+  const level = muted || disabled ? 0 : volume;
 
   return (
-    <div
-      onMouseEnter={handleMouseEnter}
-      onMouseLeave={handleMouseLeave}
-      onBlur={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setActive(false);
-      }}
-      className={`volume-control ${muted ? "is-muted" : ""} ${disabled ? "is-disabled" : ""}`}
-    >
+    <div className={`volume-control ${muted ? "is-muted" : ""} ${disabled ? "is-disabled" : ""}`}>
       <button
+        type="button"
         className="icon-button"
-        onClick={() => setActive(true)}
-        title={disabled ? "No shared audio" : "Stream volume"}
-        aria-label={disabled ? "No shared audio" : "Open stream volume controls"}
-        aria-expanded={active}
+        onClick={onToggleMute}
+        disabled={disabled}
+        title={disabled ? "No shared audio" : muted ? "Unmute" : "Mute"}
+        aria-label={disabled ? "No shared audio" : muted ? "Unmute" : "Mute"}
+        aria-pressed={muted}
       >
         {muted ? <VolumeMutedIcon /> : <VolumeIcon />}
       </button>
-      {active && (
-        <div className="volume-popover" role="group" aria-label="Stream volume controls">
-          {disabled ? (
-            <span className="volume-unavailable">No shared audio</span>
-          ) : (
-            <>
-              <div className="volume-popover-head">
-                <button type="button" className="volume-mute-button" onClick={onToggleMute}>
-                  {muted ? <VolumeMutedIcon size={16} /> : <VolumeIcon size={16} />}
-                  {muted ? "Unmute" : "Mute"}
-                </button>
-                <span>{muted ? 0 : Math.round(volume * 100)}%</span>
-              </div>
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.05"
-                value={muted ? 0 : volume}
-                onChange={handleVolumeChange}
-                aria-label="Stream volume"
-              />
-            </>
-          )}
-        </div>
-      )}
+      <input
+        type="range"
+        min="0"
+        max="1"
+        step="0.05"
+        value={level}
+        disabled={disabled}
+        onChange={handleVolumeChange}
+        aria-label={disabled ? "No shared audio" : "Stream volume"}
+        style={{ backgroundImage: `linear-gradient(to right, var(--acid) ${level * 100}%, #45453f ${level * 100}%)` }}
+      />
     </div>
   );
 }

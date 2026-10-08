@@ -104,7 +104,7 @@ export function FullscreenView({
           importantForAccessibility={controlsVisible ? "auto" : "no-hide-descendants"}
           style={[styles.overlay, !controlsVisible && styles.overlayHidden]}
         >
-          <View pointerEvents="none" style={[styles.meta, { left: Math.max(insets.left, 18), bottom: Math.max(insets.bottom, 18) }]}>
+          <View pointerEvents="none" style={[styles.meta, { left: Math.max(insets.left, 18), top: Math.max(insets.top, 18) }]}>
             <View style={styles.liveDot} />
             <Text style={styles.name} numberOfLines={1}>{name}'s screen</Text>
           </View>

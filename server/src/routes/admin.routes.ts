@@ -6,6 +6,8 @@ import {
 import { RoomService } from "../services/room.service.js";
 import { SystemMetricsService } from "../services/system-metrics.service.js";
 import { TurnService } from "../services/turn.service.js";
+import type { CatalogService } from "../services/catalog.service.js";
+import { registerCatalogRoutes } from "./catalog.routes.js";
 
 async function requireAdmin(
   request: FastifyRequest,
@@ -34,6 +36,7 @@ export function registerAdminRoutes(
   roomService: RoomService,
   turnService: TurnService,
   systemMetrics: SystemMetricsService,
+  catalog?: CatalogService,
 ): void {
   const controller = createAdminController(
     app,
@@ -102,4 +105,6 @@ export function registerAdminRoutes(
     },
     controller.turnUsage,
   );
+
+  registerCatalogRoutes(app, roomService, catalog);
 }

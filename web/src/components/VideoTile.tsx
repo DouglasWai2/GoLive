@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { PeerConnectionState, RemoteVideoStats } from "@golive/core";
-import { FullscreenIcon } from "./icons";
+import { FullscreenExitIcon, FullscreenIcon } from "./icons";
 import { StreamStats, type OutboundStatsEntry } from "./room/StreamStats";
 import StatsButton from "./room/StatsButton";
 import { VolumeControl } from "./room/VolumeControl";
@@ -18,11 +18,15 @@ type VideoTileProps = {
   volume?: number;
   muted?: boolean;
   statsEnabled?: boolean;
+  fullscreenId?: string;
+  isFullscreen?: boolean;
   onVolumeChange?: (volume: number) => void;
   onToggleMute?: () => void;
   onToggleStats?: () => void;
-  onFullscreen?: (video: HTMLVideoElement) => void;
+  onFullscreen?: (video: HTMLVideoElement, tile: HTMLElement) => void;
 };
+
+const CONTROLS_HIDE_DELAY = 2500;
 
 function isNotAllowedError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "NotAllowedError";
@@ -59,12 +63,41 @@ async function startPlayback(
   }
 }
 
-export function VideoTile({ stream, name, local = false, state, qualityLabel, stats, outboundStats = [], volume = 1, muted = false, statsEnabled = true, onVolumeChange, onToggleMute, onToggleStats, onFullscreen }: VideoTileProps) {
+export function VideoTile({ stream, name, local = false, state, qualityLabel, stats, outboundStats = [], volume = 1, muted = false, statsEnabled = true, fullscreenId, isFullscreen = false, onVolumeChange, onToggleMute, onToggleStats, onFullscreen }: VideoTileProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const tileRef = useRef<HTMLElement>(null);
+  const controlsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [audioBlocked, setAudioBlocked] = useState(false);
   const [playbackBlocked, setPlaybackBlocked] = useState(false);
+  const [controlsVisible, setControlsVisible] = useState(true);
   const hasAudio = stream.getAudioTracks().length > 0;
   const playbackPhase = useVideoPlaybackState(videoRef, stream, !local);
+
+  const clearControlsTimer = () => {
+    if (controlsTimer.current !== null) {
+      clearTimeout(controlsTimer.current);
+      controlsTimer.current = null;
+    }
+  };
+
+  const scheduleControlsHide = () => {
+    clearControlsTimer();
+    controlsTimer.current = setTimeout(() => {
+      controlsTimer.current = null;
+      if (!tileRef.current?.querySelector(":focus-visible")) setControlsVisible(false);
+    }, CONTROLS_HIDE_DELAY);
+  };
+
+  const revealControls = () => {
+    clearControlsTimer();
+    setControlsVisible(true);
+  };
+
+  useEffect(() => {
+    setControlsVisible(true);
+    if (isFullscreen || !tileRef.current?.matches(":hover")) scheduleControlsHide();
+    return clearControlsTimer;
+  }, [isFullscreen]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -209,7 +242,45 @@ export function VideoTile({ stream, name, local = false, state, qualityLabel, st
   };
 
   return (
-    <article className="video-tile">
+    <article
+      ref={tileRef}
+      className={`video-tile ${isFullscreen ? "fullscreen-tile" : ""} ${!controlsVisible ? "controls-hidden" : ""}`}
+      data-peer-id={fullscreenId}
+      onPointerEnter={(event) => {
+        if (event.pointerType !== "touch") {
+          revealControls();
+          if (isFullscreen) scheduleControlsHide();
+        }
+      }}
+      onPointerMove={(event) => {
+        if (isFullscreen && event.pointerType !== "touch") {
+          revealControls();
+          scheduleControlsHide();
+        } else if (!controlsVisible && event.pointerType !== "touch") {
+          revealControls();
+        }
+      }}
+      onPointerLeave={(event) => {
+        if (event.pointerType !== "touch") scheduleControlsHide();
+      }}
+      onPointerDown={(event) => {
+        if (isFullscreen && event.pointerType !== "touch") {
+          revealControls();
+          scheduleControlsHide();
+          return;
+        }
+        if (event.pointerType !== "touch" || (event.target instanceof Element && event.target.closest("button, input"))) return;
+        clearControlsTimer();
+        setControlsVisible((visible) => !visible);
+      }}
+      onFocusCapture={revealControls}
+      onClickCapture={(event) => {
+        if (event.target instanceof Element && event.target.closest(".tile-controls")) scheduleControlsHide();
+      }}
+      onBlurCapture={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget) && (isFullscreen || !event.currentTarget.matches(":hover"))) scheduleControlsHide();
+      }}
+    >
       <video ref={videoRef} autoPlay playsInline muted={local || muted || audioBlocked} />
       {!local && (
         <VideoLoadingOverlay
@@ -251,12 +322,12 @@ export function VideoTile({ stream, name, local = false, state, qualityLabel, st
             <button
               className="icon-button"
               onClick={() => {
-                if (videoRef.current) onFullscreen(videoRef.current);
+                if (videoRef.current && tileRef.current) onFullscreen(videoRef.current, tileRef.current);
               }}
-              title="Fullscreen"
-              aria-label="Fullscreen"
+              title={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+              aria-label={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
             >
-              <FullscreenIcon />
+              {isFullscreen ? <FullscreenExitIcon /> : <FullscreenIcon />}
             </button>
           )}
         </div>

@@ -56,7 +56,8 @@ const SOCKET_OPEN = 1;
 const SESSION_REJECTED_CODE = 4003;
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 15_000;
-const CAPTURE_RECOVERY_MS = 30_000;
+const SOCKET_PING_INTERVAL_MS = 30_000;
+const SOCKET_PONG_TIMEOUT_MS = 15_000;
 const ICE_DISCONNECTED_GRACE_MS = 5000;
 const ICE_RESTART_COOLDOWN_MS = 10_000;
 const OFFER_ANSWER_TIMEOUT_MS = 10_000;
@@ -142,7 +143,6 @@ export class RoomSession {
   private reconnectTimer: TimerHandle | null = null;
   private reconnectAttempt = 0;
   private signalingGeneration = 0;
-  private captureRecoveryTimer: TimerHandle | null = null;
   private iceRecoveryTimers = new Map<string, TimerHandle>();
   private lastIceRestartAt = new Map<string, number>();
   private offerAnswerTimers = new Map<string, TimerHandle>();
@@ -153,16 +153,17 @@ export class RoomSession {
   private restoringShare = false;
   private sharingAnnounced = false;
   private joined = false;
+  private pendingPingTimestamp: number | null = null;
+  private lastPingTimestamp = 0;
+  private pingTimeout: TimerHandle | null = null;
 
   private roomId = "";
   private name = "";
   private token = "";
   private selfId = "";
-  private isHost = false;
-  private heartbeatOwnerId = "";
   private authenticated = false;
 
-  private heartbeatInterval: TimerHandle | null = null;
+  private keepaliveInterval: TimerHandle | null = null;
 
   constructor(callbacks: RoomSessionCallbacks, deps: RoomSessionDeps) {
     this.callbacks = callbacks;
@@ -201,9 +202,8 @@ export class RoomSession {
       clearInterval(timer);
     }
 
-    this.clearPingTimer();
+    this.clearKeepalive();
     this.clearReconnectTimer();
-    this.clearCaptureRecoveryTimer();
 
     for (const timer of this.iceRecoveryTimers.values()) {
       clearTimeout(timer);
@@ -289,8 +289,6 @@ export class RoomSession {
 
     this.peers = [];
     this.selfId = "";
-    this.isHost = false;
-    this.heartbeatOwnerId = "";
     this.voiceDesired = false;
     this.voiceJoined = false;
     this.micMuted = true;
@@ -306,8 +304,8 @@ export class RoomSession {
 
     const socketState = this.socket?.readyState;
 
-    if (socketState === SOCKET_OPEN && this.joined && this.isHost) {
-      this.send({ type: "heartbeat-reclaim" });
+    if (socketState === SOCKET_OPEN && this.joined) {
+      this.sendKeepalivePing();
     }
 
     if (socketState !== SOCKET_CONNECTING && socketState !== SOCKET_OPEN) {
@@ -679,7 +677,6 @@ export class RoomSession {
     this.sharingRequest = null;
     this.restoringShare = false;
     this.sharingAnnounced = false;
-    this.clearCaptureRecoveryTimer();
 
     this.startingShare = false;
 
@@ -751,7 +748,7 @@ export class RoomSession {
         }),
       );
 
-      this.clearPingTimer();
+      this.clearKeepalive();
     };
 
     ws.onmessage = (event) => {
@@ -773,10 +770,8 @@ export class RoomSession {
       this.authenticated = false;
       this.joined = false;
       this.selfId = "";
-      this.isHost = false;
-      this.heartbeatOwnerId = "";
       this.sharingAnnounced = false;
-      this.clearPingTimer();
+      this.clearKeepalive();
 
       this.sharingRequest?.("disconnected");
       this.sharingRequest = null;
@@ -837,7 +832,6 @@ export class RoomSession {
       }
 
       this.callbacks.onStatus("reconnecting");
-      this.startCaptureRecoveryTimer();
       this.scheduleReconnect();
     };
   }
@@ -863,25 +857,6 @@ export class RoomSession {
       this.reconnectTimer = null;
       this.connectSocket();
     }, delay);
-  }
-
-  private startCaptureRecoveryTimer() {
-    if (!this.localStream || this.captureRecoveryTimer) {
-      return;
-    }
-
-    this.captureRecoveryTimer = setTimeout(() => {
-      this.captureRecoveryTimer = null;
-
-      if (!this.localStream || this.sharingAnnounced) {
-        return;
-      }
-
-      this.callbacks.onError(
-        "Screen sharing stopped because the connection could not recover within 30 seconds.",
-      );
-      this.stopSharing();
-    }, CAPTURE_RECOVERY_MS);
   }
 
   private requestSharing(): Promise<ShareRequestResult> {
@@ -963,7 +938,6 @@ export class RoomSession {
       }
 
       this.sharingAnnounced = true;
-      this.clearCaptureRecoveryTimer();
       this.callbacks.onError("");
 
       for (const peer of this.peers) {
@@ -2095,13 +2069,12 @@ export class RoomSession {
 
     if (message.type === "room-state") {
       this.joined = true;
+      this.selfId = message.selfId;
       this.reconnectAttempt = 0;
       this.clearReconnectTimer();
 
       this.peers = message.peers;
-      this.selfId = message.selfId;
-      this.isHost = message.isHost;
-      this.setHeartbeatOwner(message.heartbeatOwnerId);
+      this.startKeepalive();
       this.callbacks.onPeers(message.peers);
       this.callbacks.onStatus("connected");
 
@@ -2119,12 +2092,15 @@ export class RoomSession {
       return;
     }
 
-    if (message.type === "heartbeat-owner") {
-      this.setHeartbeatOwner(message.peerId);
-      return;
-    }
-
     if (message.type === "pong") {
+      if (message.timestamp === this.pendingPingTimestamp) {
+        this.pendingPingTimestamp = null;
+        if (this.pingTimeout) {
+          clearTimeout(this.pingTimeout);
+          this.pingTimeout = null;
+        }
+      }
+
       return;
     }
 
@@ -2376,34 +2352,64 @@ export class RoomSession {
     }
   }
 
-  private clearPingTimer() {
-    const timer = this.heartbeatInterval
+  private clearKeepalive() {
+    const timer = this.keepaliveInterval;
 
     if (timer != null) {
       clearInterval(timer);
-      this.heartbeatInterval = null;
+      this.keepaliveInterval = null;
     }
+
+    if (this.pingTimeout) {
+      clearTimeout(this.pingTimeout);
+      this.pingTimeout = null;
+    }
+
+    this.pendingPingTimestamp = null;
   }
 
-  private setHeartbeatOwner(peerId: string) {
-    this.heartbeatOwnerId = peerId;
-    this.clearPingTimer();
+  private startKeepalive() {
+    this.clearKeepalive();
 
-    if (
-      !this.joined
-      || !this.selfId
-      || this.selfId !== this.heartbeatOwnerId
-      || this.socket?.readyState !== SOCKET_OPEN
-    ) {
+    if (!this.joined || this.socket?.readyState !== SOCKET_OPEN) {
       return;
     }
 
-    const ping = () => {
-      this.send({ type: "ping", timestamp: Date.now() });
-    };
+    this.sendKeepalivePing();
+    this.keepaliveInterval = setInterval(
+      () => this.sendKeepalivePing(),
+      SOCKET_PING_INTERVAL_MS,
+    );
+  }
 
-    ping();
-    this.heartbeatInterval = setInterval(ping, 60_000);
+  private sendKeepalivePing() {
+    if (this.socket?.readyState !== SOCKET_OPEN || !this.joined) {
+      return;
+    }
+
+    if (this.pingTimeout) {
+      clearTimeout(this.pingTimeout);
+      this.pingTimeout = null;
+    }
+
+    const timestamp = Math.max(Date.now(), this.lastPingTimestamp + 1);
+    this.lastPingTimestamp = timestamp;
+    this.pendingPingTimestamp = timestamp;
+    this.send({ type: "ping", timestamp });
+
+    this.pingTimeout = setTimeout(() => {
+      if (
+        this.pendingPingTimestamp !== timestamp
+        || this.socket?.readyState !== SOCKET_OPEN
+      ) {
+        return;
+      }
+
+      console.warn("Signaling keepalive timed out; reconnecting WebSocket");
+      this.pendingPingTimestamp = null;
+      this.pingTimeout = null;
+      this.socket.close();
+    }, SOCKET_PONG_TIMEOUT_MS);
   }
 
   private hasTurnServers(servers: IceServer[]): boolean {
@@ -2592,13 +2598,6 @@ export class RoomSession {
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
-    }
-  }
-
-  private clearCaptureRecoveryTimer() {
-    if (this.captureRecoveryTimer) {
-      clearTimeout(this.captureRecoveryTimer);
-      this.captureRecoveryTimer = null;
     }
   }
 

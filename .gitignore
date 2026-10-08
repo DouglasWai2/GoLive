@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .env
+.env.local
 *.log
 .DS_Store
 
@@ -8,3 +9,4 @@ dist/
 
 /vendor/react-native-webrtc/android/.gradle/
 /vendor/react-native-webrtc/android/build/
+.neon
