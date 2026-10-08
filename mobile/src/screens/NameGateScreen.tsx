@@ -15,7 +15,7 @@ import { joinRoom, verifyInvite } from "@golive/core";
 import { Brand } from "../components/Brand";
 import { BackIcon } from "../components/icons";
 import { SIGNALING_URL } from "../config";
-import { saveSession } from "../session";
+import { loadDeviceToken, saveDeviceToken } from "../session";
 import { colors, radii, raisedSurface, technicalText } from "../theme";
 
 type NameGateScreenProps = {
@@ -46,11 +46,13 @@ export function NameGateScreen({
     setError("");
 
     try {
-      const { token } = inviteToken
-        ? await verifyInvite(SIGNALING_URL, roomId, trimmed, inviteToken)
-        : await joinRoom(SIGNALING_URL, roomId, trimmed);
+      const currentDeviceToken = await loadDeviceToken();
+      const { token, deviceToken } = inviteToken
+        ? await verifyInvite(SIGNALING_URL, roomId, trimmed, inviteToken, currentDeviceToken ?? undefined)
+        : await joinRoom(SIGNALING_URL, roomId, trimmed, currentDeviceToken ?? undefined);
 
-      await saveSession(roomId, trimmed, token, inviteToken);
+      if (!deviceToken) throw new Error("Missing device credential");
+      await saveDeviceToken(deviceToken);
       onJoined(trimmed, token);
     } catch (caught) {
       if (caught instanceof TypeError) {

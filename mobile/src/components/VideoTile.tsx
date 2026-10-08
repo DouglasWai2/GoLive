@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { RTCView } from "react-native-webrtc";
 import type { MediaStream as RNMediaStream } from "react-native-webrtc";
@@ -46,6 +46,7 @@ export function VideoTile({
 }: VideoTileProps) {
   const rnStream = stream as unknown as RNMediaStream;
   const hasAudio = rnStream.getAudioTracks().length > 0;
+  const [controlsVisible, setControlsVisible] = useState(true);
 
   useEffect(() => {
     if (local) return;
@@ -67,19 +68,29 @@ export function VideoTile({
         objectFit="contain"
         mirror={false}
       />
-      <View style={styles.meta}>
-        <View style={styles.liveDot} />
-        <Text style={styles.name} numberOfLines={1}>
-          {local ? "Your screen" : `${name}'s screen`}
-        </Text>
-        {local && qualityLabel ? <Text style={styles.state} numberOfLines={1}>{qualityLabel}</Text> : null}
-        {state ? <Text style={styles.state}>{state}</Text> : null}
-      </View>
-      {statsEnabled && stats ? <StreamStats stats={stats} /> : null}
-      {local && statsEnabled && outboundStats.length > 0 ? (
+      {showControls ? (
+        <Pressable
+          style={styles.tapArea}
+          onPress={() => setControlsVisible((visible) => !visible)}
+          accessibilityRole="button"
+          accessibilityLabel={controlsVisible ? "Hide stream controls" : "Show stream controls"}
+        />
+      ) : null}
+      {controlsVisible ? (
+        <View pointerEvents="none" style={styles.meta}>
+          <View style={styles.liveDot} />
+          <Text style={styles.name} numberOfLines={1}>
+            {local ? "Your screen" : `${name}'s screen`}
+          </Text>
+          {local && qualityLabel ? <Text style={styles.state} numberOfLines={1}>{qualityLabel}</Text> : null}
+          {state ? <Text style={styles.state}>{state}</Text> : null}
+        </View>
+      ) : null}
+      {controlsVisible && statsEnabled && stats ? <StreamStats stats={stats} /> : null}
+      {controlsVisible && local && statsEnabled && outboundStats.length > 0 ? (
         <StreamStats outbound={outboundStats} />
       ) : null}
-      {showControls ? (
+      {showControls && controlsVisible ? (
         <View style={styles.controls}>
           {onToggleStats ? (
             <StatsButton statsEnabled={statsEnabled} onToggle={onToggleStats} />
@@ -124,10 +135,11 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#000",
   },
+  tapArea: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0 },
   meta: {
     position: "absolute",
     left: 12,
-    bottom: 12,
+    top: 12,
     flexDirection: "row",
     alignItems: "center",
     gap: 6,

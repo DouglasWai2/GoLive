@@ -32,6 +32,7 @@ type RoomScreenProps = {
   name: string;
   token: string;
   onLeave: () => void;
+  onLeaveDisconnected: () => void;
   onSessionRejected: () => void;
   onSessionReplaced: () => void;
 };
@@ -41,6 +42,7 @@ export function RoomScreen({
   name,
   token,
   onLeave,
+  onLeaveDisconnected,
   onSessionRejected,
   onSessionReplaced,
 }: RoomScreenProps) {
@@ -271,6 +273,11 @@ export function RoomScreen({
                       ? "A secure peer-to-peer connection is being established."
                       : "Invite someone, then choose a window or display to begin."}
               </Text>
+              {status === "disconnected" ? (
+                <Pressable style={({ pressed }) => [styles.emptyLeaveButton, pressed && styles.pressed]} onPress={onLeaveDisconnected} accessibilityRole="button">
+                  <Text style={styles.leaveText}>Leave room</Text>
+                </Pressable>
+              ) : null}
             </View>
           ) : null}
 
@@ -387,6 +394,7 @@ const styles = StyleSheet.create({
   scanLine: { position: "absolute", left: 0, right: 0, top: "50%", height: 1, backgroundColor: colors.acid, opacity: 0.45 },
   emptyTitle: { color: colors.paper, fontSize: 19, fontWeight: "700", marginBottom: 9, textAlign: "center" },
   emptyBody: { color: "#7e7e76", fontSize: 12, lineHeight: 19, textAlign: "center", maxWidth: 340 },
+  emptyLeaveButton: { minHeight: 44, marginTop: 22, paddingHorizontal: 18, borderWidth: 1, borderColor: "rgba(255,93,74,0.35)", borderRadius: radii.control, alignItems: "center", justifyContent: "center" },
   pressed: { opacity: 0.7 },
   disabled: { opacity: 0.45 },
 });

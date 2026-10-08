@@ -44,7 +44,7 @@
     ],
     "android": {
       "package": "com.golive.mobile",
-      "versionCode": 2,
+      "versionCode": 4,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#11110f"
