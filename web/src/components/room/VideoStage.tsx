@@ -337,6 +337,18 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
       return;
     }
 
+    // iPhone Safari: fullscreen the original video element to avoid
+    // black-screen when a second video clones the WebRTC stream.
+    if (/iPhone/.test(navigator.userAgent) && /Safari/.test(navigator.userAgent)) {
+      try {
+        await requestVideoFullscreen(sourceVideo);
+        return;
+      } catch (caught) {
+        console.warn("Could not enter fullscreen video mode on iPhone", caught);
+      }
+      return;
+    }
+
     // Firefox can render a second video for the same WebRTC stream black in
     // fullscreen. Keep the active tile as its fullscreen video on that browser.
     if (/Firefox\//.test(navigator.userAgent) && isElementFullscreenSupported()) {
