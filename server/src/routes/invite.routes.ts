@@ -3,12 +3,14 @@ import { createInviteController } from "../controllers/invite.controller.js";
 import { RoomService } from "../services/room.service.js";
 import { isRoomToken } from "../types/room.js";
 import { ROOM_ID_PATTERN } from "../utils/room-id.js";
+import type { CatalogService } from "../services/catalog.service.js";
 
 export function registerInviteRoutes(
   app: FastifyInstance,
   roomService: RoomService,
+  catalog?: CatalogService,
 ): void {
-  const controller = createInviteController(roomService, app);
+  const controller = createInviteController(roomService, app, catalog);
 
   app.post(
     "/invite",
@@ -77,6 +79,7 @@ export function registerInviteRoutes(
             inviteToken: {
               type: "string",
             },
+            deviceToken: { type: "string", minLength: 45, maxLength: 100 },
           },
         },
       },

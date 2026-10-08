@@ -7,6 +7,8 @@ import jwt from "@fastify/jwt";
 import { env } from "./config/env.js";
 import { registerErrorHandler } from "./middlewares/error-handler.js";
 import { registerRoutes } from "./routes/index.js";
+import { CatalogService } from "./services/catalog.service.js";
+import { connectDatabase } from "./db/connection.js";
 
 export async function buildApp() {
   const jwtSecret = env.jwtSecret;
@@ -14,7 +16,12 @@ export async function buildApp() {
     throw new Error("JWT_SECRET is required");
   }
 
+  const pool = env.databaseUrl ? await connectDatabase(env.databaseUrl) : undefined;
+  const catalog = pool ? new CatalogService(pool) : undefined;
+
   const app = Fastify({ logger: true });
+
+  if (pool) app.addHook("onClose", async () => pool.end());
 
   await app.register(websocket, {
     options: {
@@ -44,7 +51,7 @@ export async function buildApp() {
   });
 
   registerErrorHandler(app);
-  registerRoutes(app);
+  registerRoutes(app, catalog);
 
   return app;
 }

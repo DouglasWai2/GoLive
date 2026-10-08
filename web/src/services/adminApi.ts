@@ -16,6 +16,13 @@ export type AdminRoom = {
   participants: AdminParticipant[];
 };
 
+export type CatalogRecord = {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type AdminOverview = {
   generatedAt: string;
   serverStartedAt: string;
@@ -143,6 +150,38 @@ export function getAdminOverview(token: string, signal: AbortSignal) {
     { method: "GET", headers: bearer(token) },
     signal,
   );
+}
+
+export function listCatalog(token: string, kind: "rooms" | "profiles", signal?: AbortSignal) {
+  return requestJson<{ rooms?: CatalogRecord[]; profiles?: CatalogRecord[] }>(
+    `/admin/${kind}`, { method: "GET", headers: bearer(token) }, signal,
+  ).then((result) => kind === "rooms" ? result.rooms ?? [] : result.profiles ?? []);
+}
+
+export function createCatalogRecord(token: string, kind: "rooms" | "profiles", data: { id?: string; name: string }) {
+  return requestJson<CatalogRecord>(`/admin/${kind}`, {
+    method: "POST", headers: { ...bearer(token), "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+export function renameCatalogRecord(token: string, kind: "rooms" | "profiles", id: string, name: string) {
+  return requestJson<CatalogRecord>(`/admin/${kind}/${encodeURIComponent(id)}`, {
+    method: "PATCH", headers: { ...bearer(token), "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+}
+
+export function deleteCatalogRecord(token: string, kind: "rooms" | "profiles", id: string) {
+  return requestJson<void>(`/admin/${kind}/${encodeURIComponent(id)}`, {
+    method: "DELETE", headers: bearer(token),
+  });
+}
+
+export function createAdminRoomInvite(token: string, id: string) {
+  return requestJson<{ inviteToken: string }>(`/admin/rooms/${encodeURIComponent(id)}/invite`, {
+    method: "POST", headers: bearer(token),
+  });
 }
 
 export async function getTurnUsage(

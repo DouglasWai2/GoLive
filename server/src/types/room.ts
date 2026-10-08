@@ -9,6 +9,7 @@ export type Peer = {
 
 export type Client = Peer & {
   sessionId: string;
+  userId?: string;
   socket: WebSocket;
   connectedAt: string;
 };
@@ -42,12 +43,14 @@ export type RoomSession = {
 
 export type RoomToken = RoomSession & {
   host: boolean;
+  userId?: string;
 };
 
 export type InviteToken = {
   kind: "invite";
   roomId: string;
-  roomInstanceId: string;
+  roomInstanceId?: string;
+  generation?: string;
 };
 
 const UUID_PATTERN =
@@ -68,7 +71,8 @@ export function isRoomToken(value: unknown): value is RoomToken {
     && token.name.length > 0
     && token.name.length <= 32
     && token.name === token.name.trim()
-    && typeof token.host === "boolean";
+    && typeof token.host === "boolean"
+    && (token.userId === undefined || (typeof token.userId === "string" && UUID_PATTERN.test(token.userId)));
 }
 
 export function isInviteToken(value: unknown): value is InviteToken {
@@ -78,6 +82,6 @@ export function isInviteToken(value: unknown): value is InviteToken {
   return token.kind === "invite"
     && typeof token.roomId === "string"
     && isValidRoomId(token.roomId)
-    && typeof token.roomInstanceId === "string"
-    && UUID_PATTERN.test(token.roomInstanceId);
+    && ((typeof token.generation === "string" && UUID_PATTERN.test(token.generation))
+      || (typeof token.roomInstanceId === "string" && UUID_PATTERN.test(token.roomInstanceId)));
 }

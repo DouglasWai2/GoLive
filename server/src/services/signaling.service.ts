@@ -3,6 +3,7 @@ import type { ClientMessage, Membership } from "../types/message.js";
 import type { RoomToken } from "../types/room.js";
 import { send } from "../utils/ws.js";
 import { RoomService } from "./room.service.js";
+import type { CatalogService } from "./catalog.service.js";
 
 const MAX_CONNECTIONS_PER_IP = 20;
 const MAX_MESSAGES_PER_WINDOW = 120;
@@ -18,6 +19,7 @@ export class SignalingService {
   constructor(
     private readonly rooms: RoomService,
     private readonly verifyRoomToken: (token: string) => RoomToken | null,
+    private readonly catalog?: CatalogService,
   ) {}
 
   handleConnection(socket: WebSocket, ip: string): void {
@@ -69,7 +71,7 @@ export class SignalingService {
       else connectionsByIp.set(ip, count - 1);
     };
 
-    socket.on("message", (raw) => {
+    const handleMessage = async (raw: Buffer | ArrayBuffer | Buffer[]) => {
       const now = Date.now();
       messageTimestamps.push(now);
       while ((messageTimestamps[0] ?? 0) < now - MESSAGE_WINDOW_MS) {
@@ -109,6 +111,20 @@ export class SignalingService {
           return;
         }
 
+        if (this.catalog) {
+          try {
+            if (!verified.userId || !await this.catalog.isMember(verified.userId, verified.roomId)) {
+              socket.close(SESSION_REJECTED_CODE, "Room access revoked");
+              return;
+            }
+          } catch {
+            socket.close(1011, "Membership unavailable");
+            return;
+          }
+        }
+
+        if (socket.readyState !== socket.OPEN) return;
+
         session = verified;
         clearTimeout(authTimeout);
         send(socket, { type: "authenticated" });
@@ -124,6 +140,18 @@ export class SignalingService {
       }
 
       if (message.type === "join") {
+        if (this.catalog) {
+          try {
+            if (!session.userId || !await this.catalog.isMember(session.userId, session.roomId)) {
+              socket.close(SESSION_REJECTED_CODE, "Room access revoked");
+              return;
+            }
+          } catch {
+            socket.close(1011, "Membership unavailable");
+            return;
+          }
+        }
+        if (socket.readyState !== socket.OPEN) return;
         const joined = this.handleJoin(socket, message, session, leaveRoom);
         if (joined) membership = joined;
         return;
@@ -138,7 +166,29 @@ export class SignalingService {
         return;
       }
 
+      if (this.catalog) {
+        try {
+          if (!session.userId || !await this.catalog.isMember(session.userId, session.roomId)) {
+            socket.close(SESSION_REJECTED_CODE, "Room access revoked");
+            return;
+          }
+        } catch {
+          socket.close(1011, "Membership unavailable");
+          return;
+        }
+      }
+      if (socket.readyState !== socket.OPEN) return;
+
       this.handleMessage(socket, message, membership);
+    };
+
+    // Database authorization is asynchronous; preserve message order for
+    // auth, join, and WebRTC offers/candidates on each socket.
+    let pending = Promise.resolve();
+    socket.on("message", (raw) => {
+      pending = pending.then(() => handleMessage(raw)).catch(() => {
+        socket.close(1011, "Signaling unavailable");
+      });
     });
 
     socket.on("close", cleanup);
@@ -213,6 +263,7 @@ export class SignalingService {
     const client = {
       id: peerId,
       sessionId: peerId,
+      userId: session.userId,
       name,
       sharing: false,
       socket,

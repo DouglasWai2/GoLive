@@ -16,6 +16,36 @@ export class RoomService {
     return session;
   }
 
+  isReserved(roomId: string): boolean {
+    return this.hosts.has(roomId) || this.rooms.has(roomId);
+  }
+
+  getOrCreateInstance(roomId: string): string {
+    let instance = this.roomInstances.get(roomId);
+    if (!instance) {
+      instance = randomUUID();
+      this.roomInstances.set(roomId, instance);
+    }
+    return instance;
+  }
+
+  disconnectUser(userId: string): void {
+    for (const room of this.rooms.values()) {
+      for (const client of room.values()) {
+        if (client.userId === userId) client.socket.close(4003, "Room access revoked");
+      }
+    }
+  }
+
+  invalidateRoom(roomId: string): void {
+    for (const client of this.rooms.get(roomId)?.values() ?? []) {
+      client.socket.close(4003, "Room deleted");
+    }
+    this.rooms.delete(roomId);
+    this.hosts.delete(roomId);
+    this.roomInstances.delete(roomId);
+  }
+
   isCurrentRoomInstance(roomId: string, roomInstanceId: string): boolean {
     return this.roomInstances.get(roomId) === roomInstanceId;
   }

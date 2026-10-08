@@ -18,13 +18,13 @@ type VideoTileProps = {
   statsEnabled?: boolean;
   fullscreenId?: string;
   isFullscreen?: boolean;
-  fullscreenControlsVisible?: boolean;
   onVolumeChange?: (volume: number) => void;
   onToggleMute?: () => void;
   onToggleStats?: () => void;
   onFullscreen?: (video: HTMLVideoElement, tile: HTMLElement) => void;
-  onRevealFullscreenControls?: () => void;
 };
+
+const CONTROLS_HIDE_DELAY = 2500;
 
 function isNotAllowedError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "NotAllowedError";
@@ -57,11 +57,39 @@ async function startPlayback(
   }
 }
 
-export function VideoTile({ stream, name, local = false, state, qualityLabel, stats, outboundStats = [], volume = 1, muted = false, statsEnabled = true, fullscreenId, isFullscreen = false, fullscreenControlsVisible = true, onVolumeChange, onToggleMute, onToggleStats, onFullscreen, onRevealFullscreenControls }: VideoTileProps) {
+export function VideoTile({ stream, name, local = false, state, qualityLabel, stats, outboundStats = [], volume = 1, muted = false, statsEnabled = true, fullscreenId, isFullscreen = false, onVolumeChange, onToggleMute, onToggleStats, onFullscreen }: VideoTileProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const tileRef = useRef<HTMLElement>(null);
+  const controlsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [audioBlocked, setAudioBlocked] = useState(false);
+  const [controlsVisible, setControlsVisible] = useState(true);
   const hasAudio = stream.getAudioTracks().length > 0;
+
+  const clearControlsTimer = () => {
+    if (controlsTimer.current !== null) {
+      clearTimeout(controlsTimer.current);
+      controlsTimer.current = null;
+    }
+  };
+
+  const scheduleControlsHide = () => {
+    clearControlsTimer();
+    controlsTimer.current = setTimeout(() => {
+      controlsTimer.current = null;
+      if (!tileRef.current?.querySelector(":focus-visible")) setControlsVisible(false);
+    }, CONTROLS_HIDE_DELAY);
+  };
+
+  const revealControls = () => {
+    clearControlsTimer();
+    setControlsVisible(true);
+  };
+
+  useEffect(() => {
+    setControlsVisible(true);
+    if (isFullscreen || !tileRef.current?.matches(":hover")) scheduleControlsHide();
+    return clearControlsTimer;
+  }, [isFullscreen]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -124,13 +152,41 @@ export function VideoTile({ stream, name, local = false, state, qualityLabel, st
   return (
     <article
       ref={tileRef}
-      className={`video-tile ${isFullscreen ? "fullscreen-tile" : ""} ${isFullscreen && !fullscreenControlsVisible ? "controls-hidden" : ""}`}
+      className={`video-tile ${isFullscreen ? "fullscreen-tile" : ""} ${!controlsVisible ? "controls-hidden" : ""}`}
       data-peer-id={fullscreenId}
-      onPointerMove={() => {
-        if (isFullscreen) onRevealFullscreenControls?.();
+      onPointerEnter={(event) => {
+        if (event.pointerType !== "touch") {
+          revealControls();
+          if (isFullscreen) scheduleControlsHide();
+        }
       }}
-      onPointerDown={() => {
-        if (isFullscreen) onRevealFullscreenControls?.();
+      onPointerMove={(event) => {
+        if (isFullscreen && event.pointerType !== "touch") {
+          revealControls();
+          scheduleControlsHide();
+        } else if (!controlsVisible && event.pointerType !== "touch") {
+          revealControls();
+        }
+      }}
+      onPointerLeave={(event) => {
+        if (event.pointerType !== "touch") scheduleControlsHide();
+      }}
+      onPointerDown={(event) => {
+        if (isFullscreen) {
+          revealControls();
+          scheduleControlsHide();
+          return;
+        }
+        if (event.pointerType !== "touch" || (event.target instanceof Element && event.target.closest("button, input"))) return;
+        clearControlsTimer();
+        setControlsVisible((visible) => !visible);
+      }}
+      onFocusCapture={revealControls}
+      onClickCapture={(event) => {
+        if (event.target instanceof Element && event.target.closest(".tile-controls")) scheduleControlsHide();
+      }}
+      onBlurCapture={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget) && (isFullscreen || !event.currentTarget.matches(":hover"))) scheduleControlsHide();
       }}
     >
       <video ref={videoRef} autoPlay playsInline muted={local || muted || audioBlocked} />

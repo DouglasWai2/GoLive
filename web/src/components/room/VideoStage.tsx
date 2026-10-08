@@ -27,15 +27,15 @@ type VideoStageProps = {
   localQuality: string | null;
   localName: string;
   status: SocketStatus;
+  onLeaveDisconnected: () => void;
 };
 
 const STATS_STORAGE_KEY = "golive.stats.enabled";
 const VOLUME_STORAGE_KEY = "golive.volume";
 const MUTED_STORAGE_KEY = "golive.muted";
 
-export function VideoStage({ localStream, peers, remoteStreams, connectionStates, remoteStats, outboundStats, localQuality, localName, status }: VideoStageProps) {
+export function VideoStage({ localStream, peers, remoteStreams, connectionStates, remoteStats, outboundStats, localQuality, localName, status, onLeaveDisconnected }: VideoStageProps) {
   const [fullscreenPeerId, setFullscreenPeerId] = useState<string | null>(null);
-  const [showFullscreenControls, setShowFullscreenControls] = useState(false);
   const [showParticipants, setShowParticipants] = useState(false);
   const [statsEnabled, setStatsEnabled] = useState(() => {
     try {
@@ -59,7 +59,6 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
       return false;
     }
   });
-  const fullscreenControlsTimer = useRef<number | null>(null);
   const participantsRef = useRef<HTMLDivElement>(null);
   const participantsButtonRef = useRef<HTMLButtonElement>(null);
 
@@ -86,21 +85,6 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
         : activeSharer
           ? "A secure peer-to-peer connection is being established."
           : "Share this room link, then choose a window or display to begin.";
-
-  const clearFullscreenControlsTimer = () => {
-    if (fullscreenControlsTimer.current !== null) {
-      window.clearTimeout(fullscreenControlsTimer.current);
-      fullscreenControlsTimer.current = null;
-    }
-  };
-
-  const revealFullscreenControls = () => {
-    setShowFullscreenControls(true);
-    clearFullscreenControlsTimer();
-    fullscreenControlsTimer.current = window.setTimeout(() => {
-      setShowFullscreenControls(false);
-    }, 2500);
-  };
 
   useEffect(() => {
     const onChange = () => {
@@ -144,18 +128,6 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
       document.removeEventListener("keydown", closeOnEscape);
     };
   }, [showParticipants]);
-
-  useEffect(() => {
-    if (!fullscreenPeerId) {
-      clearFullscreenControlsTimer();
-      setShowFullscreenControls(false);
-      return;
-    }
-
-    revealFullscreenControls();
-
-    return () => clearFullscreenControlsTimer();
-  }, [fullscreenPeerId]);
 
   const toggleFullscreen = async (sourceVideo: HTMLVideoElement, tile: HTMLElement) => {
     if (getFullscreenElement()) {
@@ -300,12 +272,10 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
             statsEnabled={statsEnabled}
             fullscreenId={peer.id}
             isFullscreen={fullscreenPeerId === peer.id}
-            fullscreenControlsVisible={showFullscreenControls}
             onVolumeChange={changeVolume}
             onToggleMute={toggleMute}
             onToggleStats={toggleStats}
             onFullscreen={(video, tile) => void toggleFullscreen(video, tile)}
-            onRevealFullscreenControls={revealFullscreenControls}
           />
         ))}
         {!localStream && remoteTiles.length === 0 && (
@@ -313,6 +283,7 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
             <div className="screen-outline"><ScreenIcon size={38} /><span className="scan-line" /></div>
             <h2>{emptyTitle}</h2>
             <p>{emptyMessage}</p>
+            {status === "disconnected" && <button className="leave-button empty-leave-button" type="button" onClick={onLeaveDisconnected}>Leave room</button>}
           </div>
         )}
       </div>

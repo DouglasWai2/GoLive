@@ -17,10 +17,12 @@
     "@fastify/rate-limit": "^11.2.0",
     "@fastify/websocket": "^11.2.0",
     "dotenv": "^17.4.2",
-    "fastify": "^5.6.1"
+    "fastify": "^5.6.1",
+    "pg": "^8.23.1"
   },
   "devDependencies": {
     "@types/node": "^24.5.2",
+    "@types/pg": "^8.23.1",
     "@types/ws": "^8.18.1",
     "tsx": "^4.20.5",
     "typescript": "^5.9.2"

@@ -36,6 +36,9 @@ export default defineConfig({
       "/session": {
         target: "http://localhost:3000",
       },
+      "/device": {
+        target: "http://localhost:3000",
+      },
       "/admin": {
         target: "http://localhost:3000",
         bypass: (req) => {

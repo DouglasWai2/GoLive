@@ -1,5 +1,6 @@
 import { type FormEvent, type ReactNode, useEffect, useState } from "react";
 import { Brand } from "./Brand";
+import { CatalogManager } from "./CatalogManager";
 import {
   AdminApiError,
   type AdminOverview,
@@ -394,6 +395,8 @@ function AdminDashboard({ token, onLogout }: DashboardProps) {
             </DataSection>
           </>
         )}
+        <CatalogManager token={token} kind="rooms" onUnauthorized={onLogout} />
+        <CatalogManager token={token} kind="profiles" onUnauthorized={onLogout} />
       </div>
     </main>
   );

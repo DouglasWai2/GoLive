@@ -11,8 +11,10 @@ import { isRoomToken } from "../types/room.js";
 import { TurnService } from "../services/turn.service.js";
 import { SystemMetricsService } from "../services/system-metrics.service.js";
 import { registerAdminRoutes } from "./admin.routes.js";
+import type { CatalogService } from "../services/catalog.service.js";
+import { registerDeviceRoutes } from "./device.routes.js";
 
-export function registerRoutes(app: FastifyInstance): void {
+export function registerRoutes(app: FastifyInstance, catalog?: CatalogService): void {
   const roomService = new RoomService();
   const turnService = new TurnService();
   const systemMetrics = new SystemMetricsService();
@@ -26,12 +28,13 @@ export function registerRoutes(app: FastifyInstance): void {
     }
   };
 
-  const signalingService = new SignalingService(roomService, verifyRoomToken);
+  const signalingService = new SignalingService(roomService, verifyRoomToken, catalog);
 
   registerHealthRoutes(app);
   registerSignalingRoutes(app, signalingService);
   registerTurnRoutes(app, roomService, turnService);
-  registerRoomRoutes(app, roomService);
-  registerInviteRoutes(app, roomService);
-  registerAdminRoutes(app, roomService, turnService, systemMetrics);
+  registerRoomRoutes(app, roomService, catalog);
+  registerInviteRoutes(app, roomService, catalog);
+  registerDeviceRoutes(app, roomService, catalog);
+  registerAdminRoutes(app, roomService, turnService, systemMetrics, catalog);
 }

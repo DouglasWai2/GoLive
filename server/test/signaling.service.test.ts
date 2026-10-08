@@ -11,7 +11,9 @@ class FakeWebSocket extends EventEmitter {
   readonly sent: Array<Record<string, unknown>> = [];
 
   send(data: string): void {
-    this.sent.push(JSON.parse(data) as Record<string, unknown>);
+    const message = JSON.parse(data) as Record<string, unknown>;
+    this.sent.push(message);
+    this.emit("sent", message);
   }
 
   close(code = 1000): void {
@@ -25,7 +27,23 @@ class FakeWebSocket extends EventEmitter {
   }
 }
 
-test("answers keepalive pings from every room member after the host leaves", () => {
+function waitForMessage(socket: FakeWebSocket, type: string, timestamp?: number): Promise<Record<string, unknown>> {
+  const matches = (message: Record<string, unknown>) =>
+    message.type === type && (timestamp === undefined || message.timestamp === timestamp);
+  const existing = socket.sent.find(matches);
+  if (existing) return Promise.resolve(existing);
+
+  return new Promise((resolve) => {
+    const onSent = (message: Record<string, unknown>) => {
+      if (!matches(message)) return;
+      socket.off("sent", onSent);
+      resolve(message);
+    };
+    socket.on("sent", onSent);
+  });
+}
+
+test("answers keepalive pings from every room member after the host leaves", { timeout: 5000 }, async () => {
   const rooms = new RoomService();
   const host = rooms.createRoomSession("keepalive-room", "Host");
   assert.ok(host);
@@ -43,31 +61,28 @@ test("answers keepalive pings from every room member after the host leaves", () 
 
   try {
     hostSocket.receive({ type: "auth", token: "host-token" });
+    await waitForMessage(hostSocket, "authenticated");
     hostSocket.receive({ type: "join", room: "keepalive-room", name: "Host" });
+    await waitForMessage(hostSocket, "room-state");
     guestSocket.receive({ type: "auth", token: "guest-token" });
+    await waitForMessage(guestSocket, "authenticated");
     guestSocket.receive({ type: "join", room: "keepalive-room", name: "Guest" });
 
-    const guestRoomState = guestSocket.sent.find((message) => message.type === "room-state");
+    const guestRoomState = await waitForMessage(guestSocket, "room-state");
     assert.deepEqual(guestRoomState, {
       type: "room-state",
       peers: [{ id: host.sessionId, name: "Host", sharing: false }],
     });
 
     guestSocket.receive({ type: "ping", timestamp: 123 });
-    assert.ok(guestSocket.sent.some((message) => (
-      message.type === "pong" && message.timestamp === 123
-    )));
+    assert.deepEqual(await waitForMessage(guestSocket, "pong", 123), { type: "pong", timestamp: 123 });
 
     hostSocket.receive({ type: "ping", timestamp: 456 });
-    assert.ok(hostSocket.sent.some((message) => (
-      message.type === "pong" && message.timestamp === 456
-    )));
+    assert.deepEqual(await waitForMessage(hostSocket, "pong", 456), { type: "pong", timestamp: 456 });
 
     hostSocket.close();
     guestSocket.receive({ type: "ping", timestamp: 789 });
-    assert.ok(guestSocket.sent.some((message) => (
-      message.type === "pong" && message.timestamp === 789
-    )));
+    assert.deepEqual(await waitForMessage(guestSocket, "pong", 789), { type: "pong", timestamp: 789 });
   } finally {
     hostSocket.close();
     guestSocket.close();

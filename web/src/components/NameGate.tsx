@@ -2,7 +2,7 @@ import { FormEvent, useState } from "react";
 import { Brand } from "./Brand";
 import { joinRoom, verifyInvite } from "@golive/core";
 import { configuredBaseUrl } from "../services/sessionDeps";
-import { saveSession } from "../utils/session";
+import { loadDeviceToken, saveDeviceRoom } from "../utils/session";
 
 type NameGateProps = {
   roomId: string;
@@ -24,18 +24,20 @@ export function NameGate({ roomId, inviteToken = null, onJoin }: NameGateProps) 
     setError("");
 
     try {
-      const { token } = inviteToken
-        ? await verifyInvite(configuredBaseUrl(), roomId, trimmed, inviteToken)
-        : await joinRoom(configuredBaseUrl(), roomId, trimmed);
+      const { token, deviceToken } = inviteToken
+        ? await verifyInvite(configuredBaseUrl(), roomId, trimmed, inviteToken, loadDeviceToken() ?? undefined)
+        : await joinRoom(configuredBaseUrl(), roomId, trimmed, loadDeviceToken() ?? undefined);
+      if (!deviceToken) throw new Error("Missing device credential");
       localStorage.setItem("golive-name", trimmed);
-      saveSession(roomId, trimmed, token, inviteToken ?? undefined);
+      saveDeviceRoom(roomId, deviceToken);
       onJoin(trimmed, token);
     } catch (caught) {
-      setError(
-        inviteToken
-          ? "This invite is invalid or has expired."
-          : "This room requires an invite link to join.",
-      );
+      const message = caught instanceof Error ? caught.message : "Could not enter the room.";
+      setError(message.includes(": 403")
+        ? "This room requires a valid invite link."
+        : message.includes(": 409")
+          ? "Leave your current room before creating another."
+          : message);
     } finally {
       setJoining(false);
     }

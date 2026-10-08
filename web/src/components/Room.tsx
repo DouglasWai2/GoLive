@@ -12,6 +12,7 @@ type RoomProps = {
   name: string;
   token: string;
   onLeave: () => void;
+  onLeaveDisconnected: () => void;
   onSessionRejected?: () => void;
   onSessionReplaced?: () => void;
 };
@@ -21,6 +22,7 @@ export function Room({
   name,
   token,
   onLeave,
+  onLeaveDisconnected,
   onSessionRejected,
   onSessionReplaced,
 }: RoomProps) {
@@ -60,6 +62,7 @@ export function Room({
         localQuality={localQuality}
         localName={name}
         status={room.status}
+        onLeaveDisconnected={onLeaveDisconnected}
       />
 
       <ControlDock
