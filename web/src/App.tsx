@@ -9,6 +9,8 @@ import { Admin } from "./components/Admin";
 import { primeNotificationAudio } from "./utils/notificationSounds";
 import { Brand } from "./components/Brand";
 import { SwitchRoomDialog } from "./components/SwitchRoomDialog";
+import { VersionInfo } from "./components/VersionInfo";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { configuredBaseUrl } from "./services/sessionDeps";
 import { clearDeviceToken, clearSavedRoom, loadDeviceToken, saveDeviceRoom } from "./utils/session";
 
@@ -173,5 +175,10 @@ export default function App() {
   if (window.location.pathname === "/admin" || window.location.pathname.startsWith("/admin/")) {
     return <Admin />;
   }
-  return <RoomApp />;
+  return (
+    <ErrorBoundary>
+      <VersionInfo />
+      <RoomApp />
+    </ErrorBoundary>
+  );
 }

@@ -26,7 +26,70 @@ button { cursor: pointer; }
 .brand-mark { width: 28px; height: 28px; border: 1px solid #696960; border-radius: 50%; display: grid; place-items: center; position: relative; }
 .brand-mark::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--acid); box-shadow: 0 0 13px rgba(201,255,66,.5); }
 .brand-mark span { position: absolute; inset: 3px; border: 1px solid #41413c; border-radius: 50%; }
-.nav-note { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .11em; }
+.version-info {
+  position: fixed;
+  top: 8px;
+  left: 12px;
+  z-index: 1000;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  color: var(--muted);
+  opacity: 0.6;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  pointer-events: none;
+  user-select: none;
+  transition: opacity 0.2s;
+}
+
+.version-info:hover {
+  opacity: 1;
+  color: var(--paper);
+}
+
+.error-boundary {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--ink);
+  color: var(--paper);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.error-boundary h2 {
+  margin: 0 0 16px;
+  color: #ff5d4a;
+}
+
+.error-boundary pre {
+  background: #171715;
+  border: 1px solid #3b3b36;
+  border-radius: 6px;
+  padding: 16px;
+  overflow: auto;
+  max-width: 100%;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.error-boundary button {
+  margin-top: 16px;
+  min-height: 40px;
+  padding: 0 20px;
+  background: var(--acid);
+  color: #15160f;
+  border: 0;
+  border-radius: 4px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.error-boundary button:hover {
+  opacity: 0.85;
+}
 
 .hero { min-height: 650px; display: grid; grid-template-columns: .9fr 1.1fr; align-items: center; gap: 7vw; padding: 7rem 0 6rem; }
 .eyebrow { margin: 0 0 22px; color: var(--muted); text-transform: uppercase; letter-spacing: .15em; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; display: flex; align-items: center; gap: 9px; }
