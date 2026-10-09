@@ -2,7 +2,7 @@ import { FormEvent, useState } from "react";
 import { Brand } from "./Brand";
 import { joinRoom, verifyInvite } from "@golive/core";
 import { configuredBaseUrl } from "../services/sessionDeps";
-import { loadDeviceToken, saveDeviceRoom } from "../utils/session";
+import { loadDeviceName, loadDeviceToken, saveDeviceName, saveDeviceRoom } from "../utils/session";
 
 type NameGateProps = {
   roomId: string;
@@ -11,7 +11,7 @@ type NameGateProps = {
 };
 
 export function NameGate({ roomId, inviteToken = null, onJoin }: NameGateProps) {
-  const [name, setName] = useState(() => localStorage.getItem("golive-name") ?? "");
+  const [name, setName] = useState(loadDeviceName);
   const [error, setError] = useState("");
   const [joining, setJoining] = useState(false);
 
@@ -28,16 +28,14 @@ export function NameGate({ roomId, inviteToken = null, onJoin }: NameGateProps) 
         ? await verifyInvite(configuredBaseUrl(), roomId, trimmed, inviteToken, loadDeviceToken() ?? undefined)
         : await joinRoom(configuredBaseUrl(), roomId, trimmed, loadDeviceToken() ?? undefined);
       if (!deviceToken) throw new Error("Missing device credential");
-      localStorage.setItem("golive-name", trimmed);
+      saveDeviceName(trimmed);
       saveDeviceRoom(roomId, deviceToken);
       onJoin(trimmed, token);
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : "Could not enter the room.";
       setError(message.includes(": 403")
         ? "This room requires a valid invite link."
-        : message.includes(": 409")
-          ? "Leave your current room before creating another."
-          : message);
+        : message);
     } finally {
       setJoining(false);
     }

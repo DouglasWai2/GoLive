@@ -50,7 +50,7 @@ export function RoomHeader({ roomId, token, status, onLeave }: RoomHeaderProps) 
         </button>
         {error && <span className="invite-error">Could not create invite</span>}
         <button className="leave-button" onClick={onLeave}>
-          Leave
+          My rooms
         </button>
       </div>
     </header>

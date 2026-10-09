@@ -1,18 +1,21 @@
 import { useEffect, useState } from "react";
-import { DeviceRequestError, leaveRoom, restoreRoom } from "@golive/core";
+import { DeviceRequestError, joinRoom, restoreRoom, verifyInvite } from "@golive/core";
+import type { JoinRoomResult } from "@golive/core";
 import { roomFromPath, inviteTokenFromUrl, clearInviteTokenFromUrl } from "./utils/room";
 import { Landing } from "./components/Landing";
 import { NameGate } from "./components/NameGate";
 import { Room } from "./components/Room";
 import { SessionReplaced } from "./components/SessionReplaced";
 import { Admin } from "./components/Admin";
+import { DeviceRooms } from "./components/DeviceRooms";
+import { DeviceProfile } from "./components/DeviceProfile";
 import { primeNotificationAudio } from "./utils/notificationSounds";
 import { Brand } from "./components/Brand";
 import { SwitchRoomDialog } from "./components/SwitchRoomDialog";
 import { VersionInfo } from "./components/VersionInfo";
-import { ErrorBoundary } from "./components/ErrorBoundary";
 import { configuredBaseUrl } from "./services/sessionDeps";
-import { clearDeviceToken, clearSavedRoom, loadDeviceToken, saveDeviceRoom } from "./utils/session";
+import { clearDeviceToken, clearSavedRoom, loadDeviceToken, loadSavedRoom, saveDeviceName, saveDeviceRoom } from "./utils/session";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 
 type Join = { name: string; token: string };
 
@@ -20,66 +23,131 @@ function RoomApp() {
   const roomId = roomFromPath();
   const inviteToken = inviteTokenFromUrl();
   const [join, setJoin] = useState<Join | null>(null);
-  const [loading, setLoading] = useState(() => Boolean(loadDeviceToken()));
+  const [loading, setLoading] = useState(() => Boolean(roomFromPath() && loadDeviceToken()));
   const [error, setError] = useState("");
   const [replaced, setReplaced] = useState(false);
   const [switchFromRoom, setSwitchFromRoom] = useState<string | null>(null);
   const [leavingError, setLeavingError] = useState(false);
 
+  const acceptResult = (result: JoinRoomResult) => {
+    if (!roomId) return;
+    const deviceToken = result.deviceToken ?? loadDeviceToken();
+    if (!deviceToken) {
+      setError("Could not save this device profile. Reload and try again.");
+      return;
+    }
+    saveDeviceName(result.session.name);
+    saveDeviceRoom(roomId, deviceToken);
+    clearInviteTokenFromUrl();
+    setJoin({ name: result.session.name, token: result.token });
+    setError("");
+    setSwitchFromRoom(null);
+  };
+
+  const acceptInviteForDevice = async () => {
+    if (!roomId || !inviteToken) return;
+    const deviceToken = loadDeviceToken();
+    if (!deviceToken) {
+      setSwitchFromRoom(null);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setError("");
+    try {
+      acceptResult(await verifyInvite(configuredBaseUrl(), roomId, undefined, inviteToken, deviceToken));
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : "Could not accept this invite.";
+      setError(message.includes(": 403") || message.toLowerCase().includes("invite")
+        ? "This invite is invalid or has expired."
+        : "Could not accept this invite. Check your connection and retry.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
     let cancelled = false;
-    let redirecting = false;
+
     const restore = async () => {
+      if (!roomId) {
+        setLoading(false);
+        return;
+      }
       const deviceToken = loadDeviceToken();
-      if (!deviceToken) { setLoading(false); return; }
+      if (!deviceToken) {
+        setLoading(false);
+        return;
+      }
+
       try {
-        const result = await restoreRoom(configuredBaseUrl(), deviceToken);
+        const restored = await restoreRoom(configuredBaseUrl(), deviceToken, roomId);
         if (cancelled) return;
-        const savedRoomId = result.session.roomId;
-        saveDeviceRoom(savedRoomId, deviceToken);
-        if (roomId && inviteToken && savedRoomId !== roomId) {
-          setSwitchFromRoom(savedRoomId);
-          return;
-        }
-        if (roomId !== savedRoomId) {
-          redirecting = true;
-          window.location.replace(`/room/${savedRoomId}`);
-          return;
-        }
-        clearInviteTokenFromUrl();
-        setJoin({ name: result.session.name, token: result.token });
+        acceptResult(restored);
       } catch (caught) {
         if (cancelled) return;
-        if (caught instanceof DeviceRequestError && caught.status === 404) {
-          clearSavedRoom();
-        } else if (caught instanceof DeviceRequestError && caught.status === 401) {
+        if (caught instanceof DeviceRequestError && caught.status === 401) {
           clearDeviceToken();
-        } else {
-          setError("Could not restore your room. Check your connection and retry.");
+          setLoading(false);
+          return;
         }
+
+        if (caught instanceof DeviceRequestError && caught.status === 404) {
+          if (inviteToken) {
+            const savedRoomId = loadSavedRoom();
+            if (savedRoomId && savedRoomId !== roomId) {
+              setSwitchFromRoom(savedRoomId);
+              return;
+            }
+            try {
+              const invited = await verifyInvite(configuredBaseUrl(), roomId, undefined, inviteToken, deviceToken);
+              if (cancelled) return;
+              acceptResult(invited);
+            } catch (inviteError) {
+              if (cancelled) return;
+              const message = inviteError instanceof Error ? inviteError.message : "Invalid invite";
+              setError(message.includes(": 403") || message.toLowerCase().includes("invite")
+                ? "This invite is invalid or has expired."
+                : "Could not accept this invite. Check your connection and retry.");
+            }
+            return;
+          }
+
+          try {
+            const created = await joinRoom(configuredBaseUrl(), roomId, undefined, deviceToken);
+            if (cancelled) return;
+            acceptResult(created);
+          } catch (joinError) {
+            if (cancelled) return;
+            const message = joinError instanceof Error ? joinError.message : "Could not enter the room.";
+            setError(message.includes(": 403")
+              ? "This room requires a valid invite link."
+              : "Could not open this room. Check your connection and retry.");
+          }
+          return;
+        }
+
+        setError("Could not restore your room. Check your connection and retry.");
       } finally {
-        if (!cancelled && !redirecting) setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
+
     void restore();
     return () => { cancelled = true; };
   }, [roomId, inviteToken]);
 
   const rejectSession = async () => {
     const deviceToken = loadDeviceToken();
-    if (!deviceToken) { setJoin(null); return; }
+    if (!deviceToken) { setJoin(null); window.location.assign("/rooms"); return; }
     try {
-      const result = await restoreRoom(configuredBaseUrl(), deviceToken);
-      if (result.session.roomId !== roomId) {
-        window.location.replace(`/room/${result.session.roomId}`);
-        return;
-      }
-      setJoin({ name: result.session.name, token: result.token });
+      const result = await restoreRoom(configuredBaseUrl(), deviceToken, roomId ?? undefined);
+      acceptResult(result);
       setReplaced(false);
     } catch (caught) {
       if (caught instanceof DeviceRequestError && caught.status === 404) {
         clearSavedRoom();
-        window.location.replace("/");
+        window.location.replace("/rooms");
       } else if (caught instanceof DeviceRequestError && caught.status === 401) {
         clearDeviceToken();
         window.location.replace("/");
@@ -89,27 +157,16 @@ function RoomApp() {
     }
   };
 
-  const leave = async () => {
-    const deviceToken = loadDeviceToken();
-    if (!deviceToken) return;
-    try {
-      await leaveRoom(configuredBaseUrl(), deviceToken);
-      clearSavedRoom();
-      window.location.assign("/");
-    } catch {
-      setError("Could not leave the room. Please retry.");
-    }
+  const leave = () => {
+    clearSavedRoom();
+    window.location.assign("/rooms");
   };
 
-  const leaveWithoutConnection = async () => {
+  const leaveWithoutConnection = () => {
     if (leavingError) return;
     setLeavingError(true);
-    const deviceToken = loadDeviceToken();
-    if (deviceToken) {
-      try { await leaveRoom(configuredBaseUrl(), deviceToken); } catch { /* Allow leaving while offline. */ }
-    }
-    clearDeviceToken();
-    window.location.assign("/");
+    clearSavedRoom();
+    window.location.assign("/rooms");
   };
 
   if (loading) return (
@@ -127,8 +184,8 @@ function RoomApp() {
       <div className="name-card">
         <p role="alert">{error}</p>
         <button className="primary-button" onClick={() => window.location.reload()} disabled={leavingError}>Retry</button>
-        <button className="gate-leave-button" onClick={() => void leaveWithoutConnection()} disabled={leavingError}>
-          {leavingError ? "Leaving..." : "Leave room"}
+        <button className="gate-leave-button" onClick={leaveWithoutConnection} disabled={leavingError}>
+          {leavingError ? "Leaving..." : "Back to my rooms"}
         </button>
       </div>
     </main>
@@ -138,7 +195,7 @@ function RoomApp() {
       <Brand />
       <SwitchRoomDialog
         onStay={() => window.location.replace(`/room/${switchFromRoom}`)}
-        onSwitch={() => setSwitchFromRoom(null)}
+        onSwitch={() => void acceptInviteForDevice()}
       />
     </main>
   );
@@ -150,7 +207,7 @@ function RoomApp() {
 
   if (replaced) return <SessionReplaced roomId={roomId} onReconnect={() => setReplaced(false)} />;
   return <Room roomId={roomId} name={join.name} token={join.token}
-    onLeave={() => void leave()} onLeaveDisconnected={() => void leaveWithoutConnection()} onSessionRejected={() => void rejectSession()}
+    onLeave={leave} onLeaveDisconnected={leaveWithoutConnection} onSessionRejected={() => void rejectSession()}
     onSessionReplaced={() => setReplaced(true)} />;
 }
 
@@ -172,13 +229,13 @@ export default function App() {
     return removeAudioPrimingListeners;
   }, []);
 
-  if (window.location.pathname === "/admin" || window.location.pathname.startsWith("/admin/")) {
-    return <Admin />;
-  }
+  const pathname = window.location.pathname;
+  if (pathname === "/admin" || pathname.startsWith("/admin/")) return <Admin />;
+
   return (
     <ErrorBoundary>
       <VersionInfo />
-      <RoomApp />
+      {pathname === "/rooms" ? <DeviceRooms /> : pathname === "/profile" ? <DeviceProfile /> : <RoomApp />}
     </ErrorBoundary>
   );
 }

@@ -2,10 +2,12 @@ import { FormEvent, useState } from "react";
 import { ScreenIcon } from "./icons";
 import { Brand } from "./Brand";
 import { createRoomId, goToRoom, roomTargetFromInput } from "../utils/room";
+import { loadDeviceToken } from "../utils/session";
 
 export function Landing() {
   const [inviteLink, setInviteLink] = useState("");
   const [hint, setHint] = useState("");
+  const [hasDeviceProfile] = useState(() => Boolean(loadDeviceToken()));
 
   const createRoom = () => {
     goToRoom(createRoomId());
@@ -22,7 +24,11 @@ export function Landing() {
     <main className="landing-shell">
       <nav className="landing-nav">
         <Brand ariaLabel="GoLive home" />
-        <span className="nav-note">Browser to browser. Nothing recorded.</span>
+        <div className="landing-account-links">
+          <span className="nav-note">Browser to browser. Nothing recorded.</span>
+          {hasDeviceProfile && <a href="/rooms">My rooms</a>}
+          {hasDeviceProfile && <a href="/profile">Profile</a>}
+        </div>
       </nav>
 
       <section className="hero">
