@@ -28,7 +28,7 @@ export function SessionReplacedScreen({ roomId, onReconnect, onLeave }: SessionR
             <Text style={styles.arrow}>→</Text>
           </Pressable>
           <Pressable style={styles.leaveButton} onPress={onLeave} accessibilityRole="button">
-            <Text style={styles.leaveText}>Leave room</Text>
+            <Text style={styles.leaveText}>My rooms</Text>
           </Pressable>
         </View>
       </ScrollView>

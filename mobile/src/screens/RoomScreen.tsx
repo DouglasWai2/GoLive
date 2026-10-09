@@ -208,7 +208,7 @@ export function RoomScreen({
               {!compactHeader ? <Text style={styles.iconButtonText}>{isInviting ? "Creating..." : "Invite"}</Text> : null}
             </Pressable>
             <Pressable style={({ pressed }) => [styles.leaveButton, pressed && styles.pressed]} onPress={onLeave} accessibilityRole="button">
-              <Text style={styles.leaveText}>Leave</Text>
+              <Text style={styles.leaveText}>My rooms</Text>
             </Pressable>
           </View>
         </View>
@@ -298,7 +298,7 @@ export function RoomScreen({
               </Text>
               {status === "disconnected" ? (
                 <Pressable style={({ pressed }) => [styles.emptyLeaveButton, pressed && styles.pressed]} onPress={onLeaveDisconnected} accessibilityRole="button">
-                  <Text style={styles.leaveText}>Leave room</Text>
+                  <Text style={styles.leaveText}>My rooms</Text>
                 </Pressable>
               ) : null}
             </View>

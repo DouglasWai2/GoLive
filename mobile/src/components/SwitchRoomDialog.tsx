@@ -17,9 +17,9 @@ export function SwitchRoomDialog({ visible, onStay, onSwitch }: SwitchRoomDialog
             <Text style={styles.eyebrowText}>Room invitation</Text>
           </View>
           <Text style={styles.title} accessibilityRole="header">Switch rooms?</Text>
-          <Text style={styles.description}>You will lose access to your current room.</Text>
+          <Text style={styles.description}>Your current room will stay in My rooms, so you can come back anytime.</Text>
           <Pressable style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed]} onPress={onSwitch} accessibilityRole="button">
-            <Text style={styles.primaryText}>Switch rooms  →</Text>
+            <Text style={styles.primaryText}>Open invitation  →</Text>
           </Pressable>
           <Pressable style={({ pressed }) => [styles.stayButton, pressed && styles.pressed]} onPress={onStay} accessibilityRole="button">
             <Text style={styles.stayText}>Stay in current room</Text>
