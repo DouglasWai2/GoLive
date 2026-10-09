@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRoom } from "../hooks/useRoom";
 import type { ShareSettings } from "@golive/core";
 import { formatBitrate, formatResolution } from "@golive/core";
@@ -29,8 +29,17 @@ export function Room({
   onSessionReplaced,
 }: RoomProps) {
   const room = useRoom(roomId, name, token, onSessionRejected, onSessionReplaced);
+  const [displayName, setDisplayName] = useState(name);
   const [shareSettings, setShareSettings] = useState<ShareSettings | null>(null);
   const [deafened, setDeafened] = useState(false);
+
+  useEffect(() => {
+    const updateName = (event: StorageEvent) => {
+      if (event.key === "golive-name" && event.newValue?.trim()) setDisplayName(event.newValue);
+    };
+    window.addEventListener("storage", updateName);
+    return () => window.removeEventListener("storage", updateName);
+  }, []);
 
   const startShare = (settings: ShareSettings) => {
     setShareSettings(settings);
@@ -69,7 +78,7 @@ export function Room({
         remoteStats={room.remoteStats}
         outboundStats={room.outboundStats}
         localQuality={localQuality}
-        localName={name}
+        localName={displayName}
         status={room.status}
         localMicMuted={room.voiceState.micMuted}
         deafened={deafened}
@@ -79,7 +88,7 @@ export function Room({
       <VoiceAudio streams={room.remoteVoiceStreams} deafened={deafened} />
 
       <ControlDock
-        name={name}
+        name={displayName}
         status={room.status}
         localStream={room.localStream}
         isStartingShare={room.isStartingShare}
