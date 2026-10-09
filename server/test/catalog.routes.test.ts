@@ -92,6 +92,8 @@ test("device profiles own multiple rooms, control room access, and retain a shar
     assert.deepEqual(new Set(listedRoomIds), new Set([firstId, secondId, invitedId]));
     assert.equal(roomsResponse.json<{ rooms: Array<{ id: string; owner: boolean }> }>().rooms.find((room) => room.id === invitedId)?.owner, false);
     assert.equal((await app.inject({ method: "GET", url: "/device/rooms" })).statusCode, 401);
+    assert.equal((await app.inject({ method: "DELETE", url: "/device/room", headers: { authorization: `Bearer ${primary.deviceToken}` } })).statusCode, 204);
+    assert.equal((await app.inject({ method: "GET", url: "/device/rooms", headers: { authorization: `Bearer ${primary.deviceToken}` } })).json().rooms.length, 3);
 
     const unrelatedResponse = await app.inject({ method: "POST", url: "/room", payload: { roomId: unrelatedId, name: "Unrelated" } });
     assert.equal(unrelatedResponse.statusCode, 200);

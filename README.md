@@ -244,9 +244,11 @@ the shared secret only to `/admin/login` and stores the returned one-hour admin
 JWT in session storage. Live room, participant, and resource values represent
 only the current signaling-server process and reset when it restarts. The admin
 console provides CRUD for saved room IDs/names and guest profiles in
-PostgreSQL. Invited devices have profiles linked to a single room; profiles
-created manually by admins are unclaimed. Rooms with members cannot be deleted.
-When the last member leaves, the room record is deleted. Cloudflare
+PostgreSQL. Each invited device has one profile and can retain access to multiple
+rooms; manually created profiles are unclaimed. The display name belongs to the
+device profile and is shared across its rooms. Rooms with members cannot be
+deleted. When the final access grant is revoked, the room starts a 30-day empty
+retention period before the scheduled cleanup deletes it. Cloudflare
 TURN usage is queried separately for the current UTC month and cached for ten
 minutes. Historical connection counts, cross-instance live totals, and
 hosting-provider metrics are not collected.
@@ -257,15 +259,18 @@ operations under `/admin/profiles`. Rooms use `{ id, name }` on create and
 `{ name }` on update; profiles use `{ name }` and receive a generated UUID.
 Admins can mint invites for unclaimed rooms using `POST /admin/rooms/:id/invite`.
 `POST /room` creates a *new* room and its first device membership; it cannot
-claim a saved room by guessing its ID. Room IDs and device membership survive
-restarts; short-lived room session tokens are renewed on return.
+claim a saved room by guessing its ID. Existing device credentials can create
+additional rooms without losing previous access. Room IDs, memberships, and
+device profile names survive restarts; short-lived room session tokens are
+renewed on return.
 For a database-backed integration check, run
 `TEST_DATABASE_URL=postgres://... npm run test -w server` against a disposable
-PostgreSQL database after applying both SQL files there. The database user
+PostgreSQL database after applying all SQL files there. The database user
 must have permission to create tables in its schema. SQL migrations live in
 `server/db/migrations/`, run in numeric order with `psql -v ON_ERROR_STOP=1`,
 and record applied versions in `schema_migrations`. Re-running them is safe.
-Migration 002 removes old rooms that had no verifiable owner. Run these files
+Migration 002 removes old rooms that had no verifiable owner. Migration 003
+enables multiple device-room memberships and marks empty rooms. Run these files
 before starting an upgraded server; the server only opens a database connection.
 
 ### Mobile (`mobile/.env`)
@@ -277,26 +282,38 @@ before starting an upgraded server; the server only opens a database connection.
 
 ### TURN
 
-Rooms are invite-only after creation. `POST /room` accepts a new `roomId` and
-`name`, creates the room and an owner membership, and returns an eight-hour room
-session JWT plus a private `deviceToken`. An existing room ID cannot be created
-or claimed without an invite, even if nobody is online. The browser stores the
-device credential in local storage; mobile stores it in AsyncStorage. On launch,
-`GET /device/room` checks the stored credential and issues a fresh room session
-for the device's single saved room. Closing the app preserves membership; tapping
-**Leave** calls `DELETE /device/room` and revokes it. If the last member leaves,
-the room is removed. Opening a different room's invite prompts for confirmation;
-the server validates the invite before switching membership atomically.
+Rooms are invite-only after creation. `POST /room` accepts a new `roomId` and,
+for a new device, a `name`; it creates the room and owner membership and returns
+an eight-hour room session JWT plus a private `deviceToken`. Existing devices use
+the name saved on their profile, which can be edited in `/profile` on web or the
+mobile Profile screen. Profile name changes are shared across rooms and sent to
+participants in already-open rooms. An existing room ID cannot be created or
+claimed without an invite, even if nobody is online.
+
+The browser stores the device credential in local storage; mobile stores it in
+AsyncStorage. `GET /device/rooms` returns only rooms associated with that device.
+`POST /device/rooms/:roomId/session` renews a session only for an authorized
+room. The web `/rooms` page and mobile My rooms screen list these grants and let
+the device re-enter or explicitly remove access. Leaving a room returns to the
+list without revoking access; `DELETE /device/rooms/:roomId` revokes one room.
+Accepting a different room's invite adds its grant without replacing existing
+ones. New devices must still provide a display name when first creating a room
+or accepting an invite; known devices reuse their saved profile name.
+
+The Render Cron Job defined in `render.yaml` runs daily at 03:00 UTC and deletes
+only rooms with no device memberships for more than 30 days. Configure its
+`DATABASE_URL` to the signaling server's database; see `server/CRON.md`.
 
 Guests enter through a shareable invite token:
 
 - `POST /invite` takes a `roomId` and an `Authorization: Bearer <room JWT>`
   header. Any current room member can mint a room-bound invite JWT; it expires
   after 24 hours and is reusable while that room exists.
-- `POST /invite/verify` takes `{ roomId, name, inviteToken, deviceToken? }`.
-  It validates the invite, enrolls the device, and returns a new room session
-  and its device credential. A valid invite works across server restarts; an
-  invite from a deleted room cannot be used if its ID is later reused.
+- `POST /invite/verify` takes `{ roomId, inviteToken, name?, deviceToken? }`.
+  It validates the invite and adds access to that room. A new device must supply
+  `name`; an existing device uses the name in its saved profile. A valid invite
+  works across server restarts; an invite from a deleted room cannot be used if
+  its ID is later reused.
 
 The web app sends the room token as `Authorization: Bearer <token>` when
 fetching ICE servers from `/session` and includes it in the WebSocket

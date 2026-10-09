@@ -5,7 +5,10 @@ It deletes only room records with no device memberships and an `empty_since`
 timestamp older than 30 days. Rooms with authorized members are retained even
 when nobody is connected.
 
-Create a Render **Cron Job** from this repository with:
+The root `render.yaml` declares a Render Cron Job that runs daily at 03:00 UTC.
+Create or update the Render Blueprint from this repository and provide
+`DATABASE_URL` for the Cron Job, pointing it to the same PostgreSQL database as
+the signaling server. The equivalent Dashboard settings are:
 
 - **Build command:** `npm ci && npm run build -w @golive/core && npm run build -w @golive/server`
 - **Start command:** `npm run cleanup:empty-rooms -w @golive/server`
