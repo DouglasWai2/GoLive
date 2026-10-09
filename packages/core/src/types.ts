@@ -11,6 +11,7 @@ export type Peer = {
   id: string;
   name: string;
   sharing: boolean;
+  streamId?: string;
   voiceJoined: boolean;
   micMuted: boolean;
 };
@@ -103,13 +104,17 @@ export type ServerMessage =
   | { type: "peer-joined"; peer: Peer }
   | { type: "peer-left"; peerId: string }
   | { type: "peer-updated"; peer: Peer }
-  | { type: "sharing-accepted"; sharing: boolean }
+  | { type: "sharing-accepted"; sharing: boolean; streamId?: string }
   | {
       type: "signal";
       from: string;
       channel?: "screen" | "voice";
+      streamId?: string;
       data: SignalData;
     }
+  | { type: "stream-subscriber"; peerId: string; streamId: string; subscribed: boolean }
+  | { type: "subscription-ended"; streamId: string }
+  | { type: "subscription-accepted"; streamId: string | null; ownerPeerId?: string }
   | { type: "voice-accepted"; joined: boolean; micMuted: boolean }
   | { type: "error"; code?: string; message: string };
 
@@ -120,9 +125,11 @@ export type ClientMessage =
       type: "signal";
       target: string;
       channel?: "screen" | "voice";
+      streamId?: string;
       data: unknown;
     }
-  | { type: "sharing"; sharing: boolean }
+  | { type: "sharing"; sharing: boolean; streamId?: string }
+  | { type: "subscribe"; streamId: string | null }
   | { type: "voice"; joined: boolean; micMuted: boolean }
   | { type: "ping"; timestamp: number };
 
