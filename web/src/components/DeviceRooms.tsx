@@ -23,6 +23,7 @@ export function DeviceRooms() {
       if (caught instanceof DeviceRequestError && caught.status === 401) {
         clearDeviceToken();
         setDeviceToken(null);
+        setRooms([]);
         setError("This device profile is no longer available. Accept an invite to reconnect.");
       } else {
         setError("Could not load your rooms. Check your connection and retry.");
@@ -51,6 +52,7 @@ export function DeviceRooms() {
       if (caught instanceof DeviceRequestError && caught.status === 401) {
         clearDeviceToken();
         setDeviceToken(null);
+        setRooms([]);
         setError("This device profile is no longer available. Accept an invite to reconnect.");
       } else {
         setError("Could not remove this room. Please retry.");

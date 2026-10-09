@@ -270,5 +270,9 @@ export function parseInviteUrl(url: string): InviteLink | null {
     return null;
   }
 
-  return { roomId, inviteToken: decodeURIComponent(inviteToken) };
+  try {
+    return { roomId, inviteToken: decodeURIComponent(inviteToken) };
+  } catch {
+    return null;
+  }
 }

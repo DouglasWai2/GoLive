@@ -208,7 +208,35 @@ export default function App() {
   };
 
   const leave = () => { void openRooms(); };
-  const rejected = () => { void openRooms(); };
+  const rejected = async () => {
+    const current = stageRef.current;
+    if (current?.screen !== "room") {
+      await openRooms();
+      return;
+    }
+
+    try {
+      const deviceToken = await loadDeviceToken();
+      if (!deviceToken) {
+        await clearDeviceToken();
+        setStage({ screen: "landing" });
+        return;
+      }
+
+      setStage(null);
+      const result = await restoreRoom(SIGNALING_URL, deviceToken, current.roomId);
+      handleJoined(current.roomId, result.session.name, result.token);
+    } catch (caught) {
+      if (caught instanceof DeviceRequestError && caught.status === 404) {
+        await openRooms();
+      } else if (caught instanceof DeviceRequestError && caught.status === 401) {
+        await clearDeviceToken();
+        setStage({ screen: "landing" });
+      } else {
+        setStage({ screen: "error" });
+      }
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
