@@ -1,6 +1,6 @@
 import { Pressable, StyleSheet, Text, View, useWindowDimensions } from "react-native";
 import { formatBitrate, formatResolution } from "@golive/core";
-import type { Peer, ShareSettings, SocketStatus, VoiceState } from "@golive/core";
+import type { ShareSettings, SocketStatus, VoiceState } from "@golive/core";
 import { MicrophoneIcon, MicrophoneMutedIcon, ScreenIcon, VolumeIcon, VolumeMutedIcon } from "./icons";
 import { colors, controlShadow, radii, technicalText } from "../theme";
 
@@ -9,7 +9,6 @@ type ControlDockProps = {
   status: SocketStatus;
   localStream: unknown;
   isStartingShare: boolean;
-  peers: Peer[];
   activeSettings: ShareSettings | null;
   voiceState: VoiceState;
   deafened: boolean;
@@ -24,7 +23,6 @@ export function ControlDock({
   status,
   localStream,
   isStartingShare,
-  peers,
   activeSettings,
   voiceState,
   deafened,
@@ -34,8 +32,7 @@ export function ControlDock({
   onToggleDeafen,
 }: ControlDockProps) {
   const { width } = useWindowDimensions();
-  const activeSharer = peers.find((peer) => peer.sharing);
-  const canShare = status === "connected" && !activeSharer && !localStream && !isStartingShare;
+  const canShare = status === "connected" && !localStream && !isStartingShare;
   const showIdentity = width >= 600;
   const showVoiceLabels = width >= 620;
   const showPrivacy = width >= 700;
@@ -132,15 +129,13 @@ export function ControlDock({
             disabled={!canShare}
             onPress={onOpenSettings}
             accessibilityRole="button"
-            accessibilityLabel={activeSharer ? "Screen sharing is in use" : "Share screen"}
+            accessibilityLabel="Share screen"
           >
             <ScreenIcon size={20} color={colors.acidInk} />
             <Text style={styles.shareText}>
               {isStartingShare
                 ? "Choosing a screen..."
-                : activeSharer
-                  ? "Screen in use"
-                  : "Share screen"}
+                : "Share screen"}
             </Text>
           </Pressable>
         )}

@@ -57,6 +57,7 @@ export function RoomScreen({
   const [audioPreferencesReady, setAudioPreferencesReady] = useState(false);
   const [statsEnabled, setStatsEnabled] = useState(true);
   const [fullscreenPeerId, setFullscreenPeerId] = useState<string | null>(null);
+  const [focusedPeerId, setFocusedPeerId] = useState<string | null>(null);
   const [deafened, setDeafened] = useState(false);
   const { width } = useWindowDimensions();
   const wide = width >= 720;
@@ -77,6 +78,7 @@ export function RoomScreen({
     setError,
     startSharing,
     stopSharing,
+    focusPeer,
     setMicrophoneMuted,
     playNotificationSound,
   } = useRoom(roomId, name, token, onSessionRejected, onSessionReplaced);
@@ -107,8 +109,21 @@ export function RoomScreen({
   }, [localStream, isStartingShare]);
 
   useEffect(() => {
-    if (fullscreenPeerId && !remoteStreams[fullscreenPeerId]) setFullscreenPeerId(null);
-  }, [fullscreenPeerId, remoteStreams]);
+    const activeSharers = peers.filter((peer) => peer.sharing && peer.streamId);
+    if (focusedPeerId && activeSharers.some((peer) => peer.id === focusedPeerId)) return;
+    setFocusedPeerId(activeSharers[0]?.id ?? null);
+  }, [focusedPeerId, peers]);
+
+  useEffect(() => {
+    focusPeer(focusedPeerId);
+  }, [focusPeer, focusedPeerId]);
+
+  useEffect(() => {
+    const fullscreenPeer = peers.find((peer) => peer.id === fullscreenPeerId);
+    if (fullscreenPeerId && (!fullscreenPeer?.streamId || !remoteStreams[fullscreenPeer.streamId])) {
+      setFullscreenPeerId(null);
+    }
+  }, [fullscreenPeerId, peers, remoteStreams]);
 
   useEffect(() => {
     const streamVolume = audioPreferencesReady && !muted ? volume : 0;
@@ -146,9 +161,14 @@ export function RoomScreen({
     });
   };
 
-  const viewerEntries = Object.entries(remoteStreams);
-  const visibleViewerEntries = viewerEntries.filter(([peerId]) => peerId !== fullscreenPeerId);
-  const activeSharer = peers.find((peer) => peer.sharing);
+  const activeSharers = peers.filter((peer) => peer.sharing && Boolean(peer.streamId));
+  const focusedPeer = activeSharers.find((peer) => peer.id === focusedPeerId)
+    ?? activeSharers.find((peer) => Boolean(peer.streamId && remoteStreams[peer.streamId]))
+    ?? activeSharers[0];
+  const focusedStreamId = focusedPeer?.streamId ?? null;
+  const focusedStream = focusedStreamId ? remoteStreams[focusedStreamId] ?? null : null;
+  const fullscreenPeer = peers.find((peer) => peer.id === fullscreenPeerId);
+  const fullscreenStreamId = fullscreenPeer?.streamId ?? null;
   const localOutboundStats = peers.flatMap((peer) => {
     const stats = outboundStats[peer.id];
     return stats ? [{ peerId: peer.id, peerName: peer.name, stats }] : [];
@@ -187,8 +207,8 @@ export function RoomScreen({
 
   const stageTitle = localStream
     ? "You are presenting"
-    : activeSharer
-      ? `${activeSharer.name} is presenting`
+    : focusedPeer
+      ? `Focused on ${focusedPeer.name}`
       : "Ready when you are";
 
   return (
@@ -269,8 +289,41 @@ export function RoomScreen({
           </View>
         </View>
 
-        <View style={[styles.videoGrid, (localStream || viewerEntries.length > 0) && styles.videoGridActive]}>
-          {viewerEntries.length === 0 && !localStream ? (
+        {activeSharers.length > 0 ? (
+          <ScrollView
+            horizontal
+            style={styles.streamSelector}
+            contentContainerStyle={styles.streamSelectorContent}
+            showsHorizontalScrollIndicator={false}
+            accessibilityLabel="Live screens"
+          >
+            {activeSharers.map((peer) => (
+              <Pressable
+                key={peer.id}
+                style={({ pressed }) => [
+                  styles.streamChoice,
+                  peer.id === focusedPeer?.id && styles.streamChoiceSelected,
+                  pressed && styles.pressed,
+                ]}
+                onPress={() => setFocusedPeerId(peer.id)}
+                accessibilityRole="button"
+                accessibilityState={{ selected: peer.id === focusedPeer?.id }}
+                accessibilityLabel={`${peer.name}'s screen${peer.id === focusedPeer?.id ? ", focused" : ", select to watch"}`}
+              >
+                <View style={styles.streamLiveDot} />
+                <View style={styles.streamChoiceCopy}>
+                  <Text style={styles.streamChoiceName} numberOfLines={1}>{peer.name}</Text>
+                  <Text style={styles.streamChoiceStatus}>
+                    {peer.id === focusedPeer?.id ? "Focused" : "Select to watch"}
+                  </Text>
+                </View>
+              </Pressable>
+            ))}
+          </ScrollView>
+        ) : null}
+
+        <View style={[styles.videoGrid, (localStream || focusedStream) && styles.videoGridActive]}>
+          {!focusedStream && !localStream ? (
             <View style={styles.empty}>
               <View style={styles.screenOutline}>
                 <ScreenIcon size={38} color="#77776f" />
@@ -281,8 +334,10 @@ export function RoomScreen({
                   ? "Reconnecting to the room..."
                   : status === "disconnected"
                     ? "Connection lost"
-                    : activeSharer
-                      ? "Negotiating secure connection..."
+                    : focusedPeer
+                      ? `Connecting to ${focusedPeer.name}'s screen...`
+                      : activeSharers.length > 0
+                        ? "Choose a screen to focus"
                       : status === "connected"
                         ? "No screen on air"
                         : "Connecting to the room..."}
@@ -292,8 +347,10 @@ export function RoomScreen({
                   ? "Your session will resume automatically when the connection returns."
                   : status === "disconnected"
                     ? "Leave and rejoin the room to start a new session."
-                    : activeSharer
+                    : focusedPeer
                       ? "Checking available peer and relay paths."
+                      : activeSharers.length > 0
+                        ? "Select one live screen to receive its video and audio."
                       : "Invite someone, then choose a window or display to begin."}
               </Text>
               {status === "disconnected" ? (
@@ -305,23 +362,23 @@ export function RoomScreen({
           ) : null}
 
           <View style={[styles.tileGrid, wide && styles.tileGridWide]}>
-            {visibleViewerEntries.map(([peerId, stream]) => (
-              <View key={peerId} style={[styles.tileWrap, wide && styles.tileWrapWide]}>
+            {focusedPeer && focusedStream && (
+              <View style={[styles.tileWrap, wide && styles.tileWrapWide]}>
                 <VideoTile
-                  stream={stream}
-                  name={peers.find((peer) => peer.id === peerId)?.name ?? peerId.slice(0, 4)}
-                  state={connectionStates[peerId] ?? null}
-                  stats={remoteStats[peerId] ?? null}
+                  stream={focusedStream}
+                  name={focusedPeer.name}
+                  state={focusedStreamId ? connectionStates[focusedStreamId] ?? null : null}
+                  stats={focusedStreamId ? remoteStats[focusedStreamId] ?? null : null}
                   statsEnabled={statsEnabled}
                   volume={volume}
                   muted={!audioPreferencesReady || muted}
                   onVolumeChange={changeVolume}
                   onToggleMute={toggleMute}
                   onToggleStats={toggleStats}
-                  onFullscreen={() => setFullscreenPeerId(peerId)}
+                  onFullscreen={() => setFullscreenPeerId(focusedPeer.id)}
                 />
               </View>
-            ))}
+            )}
 
             {localStream ? (
               <View style={[styles.tileWrap, wide && styles.tileWrapWide]}>
@@ -351,7 +408,6 @@ export function RoomScreen({
         status={status}
         localStream={localStream}
         isStartingShare={isStartingShare}
-        peers={peers}
         activeSettings={shareSettings}
         voiceState={voiceState}
         deafened={deafened}
@@ -370,10 +426,10 @@ export function RoomScreen({
 
       <FullscreenView
         visible={fullscreenPeerId !== null}
-        stream={fullscreenPeerId ? remoteStreams[fullscreenPeerId] ?? null : null}
-        connectionState={fullscreenPeerId ? connectionStates[fullscreenPeerId] ?? null : null}
-        name={peers.find((peer) => peer.id === fullscreenPeerId)?.name ?? fullscreenPeerId?.slice(0, 4) ?? ""}
-        stats={fullscreenPeerId ? remoteStats[fullscreenPeerId] ?? null : null}
+        stream={fullscreenStreamId ? remoteStreams[fullscreenStreamId] ?? null : null}
+        connectionState={fullscreenStreamId ? connectionStates[fullscreenStreamId] ?? null : null}
+        name={fullscreenPeer?.name ?? fullscreenPeerId?.slice(0, 4) ?? ""}
+        stats={fullscreenStreamId ? remoteStats[fullscreenStreamId] ?? null : null}
         statsEnabled={statsEnabled}
         volume={volume}
         muted={!audioPreferencesReady || muted}
@@ -422,6 +478,14 @@ const styles = StyleSheet.create({
   peopleCount: { flexDirection: "row", alignItems: "center", gap: 7, borderWidth: 1, borderStyle: "solid", borderColor: "#32322d", padding: 5 },
   peopleText: { color: "#85857d", fontSize: 10 },
   peopleStrong: { color: colors.paper, fontWeight: "800" },
+  streamSelector: { flexGrow: 0, marginBottom: 9 },
+  streamSelectorContent: { gap: 8, paddingRight: 2 },
+  streamChoice: { width: 174, minHeight: 54, paddingHorizontal: 10, borderWidth: 1, borderColor: "#373732", backgroundColor: "#171715", flexDirection: "row", alignItems: "center", gap: 9 },
+  streamChoiceSelected: { borderColor: "rgba(201,255,66,0.7)", backgroundColor: "rgba(201,255,66,0.08)" },
+  streamLiveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.red },
+  streamChoiceCopy: { flex: 1, minWidth: 0 },
+  streamChoiceName: { color: colors.paper, fontSize: 11, fontWeight: "700" },
+  streamChoiceStatus: { ...technicalText, color: colors.muted, fontSize: 8, marginTop: 3 },
   videoGrid: { borderWidth: 1, borderColor: "#32322d", backgroundColor: colors.surface, padding: 7, alignItems: "stretch", justifyContent: "center" },
   videoGridActive: { justifyContent: "flex-start" },
   tileGrid: { gap: 8 },

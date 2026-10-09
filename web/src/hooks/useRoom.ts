@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { RoomSession } from "@golive/core";
 import type {
   Peer,
@@ -61,40 +61,40 @@ export function useRoom(
           setLocalStream(stream as MediaStream | null);
         },
         onIsStartingShare: setIsStartingShare,
-        onRemoteStream: (peerId, stream) => {
+        onRemoteStream: (streamId, stream) => {
           setRemoteStreams((current) => {
             const next = { ...current };
 
             if (stream) {
-              next[peerId] = stream as MediaStream;
+              next[streamId] = stream as MediaStream;
             } else {
-              delete next[peerId];
+              delete next[streamId];
             }
 
             return next;
           });
         },
-        onConnectionState: (peerId, state) => {
+        onConnectionState: (streamId, state) => {
           setConnectionStates((current) => {
             const next = { ...current };
 
             if (state) {
-              next[peerId] = state;
+              next[streamId] = state;
             } else {
-              delete next[peerId];
+              delete next[streamId];
             }
 
             return next;
           });
         },
-        onRemoteStats: (peerId, stats) => {
+        onRemoteStats: (streamId, stats) => {
           setRemoteStats((current) => {
             const next = { ...current };
 
             if (stats) {
-              next[peerId] = stats;
+              next[streamId] = stats;
             } else {
-              delete next[peerId];
+              delete next[streamId];
             }
 
             return next;
@@ -167,6 +167,9 @@ export function useRoom(
 
   const startSharing = (settings: ShareSettings) => sessionRef.current?.startSharing(settings);
   const stopSharing = () => sessionRef.current?.stopSharing();
+  const focusPeer = useCallback((peerId: string | null) => {
+    sessionRef.current?.focusPeer(peerId);
+  }, []);
   const setMicrophoneMuted = (muted: boolean) =>
     sessionRef.current?.setMicrophoneMuted(muted);
 
@@ -185,6 +188,7 @@ export function useRoom(
     setError,
     startSharing,
     stopSharing,
+    focusPeer,
     setMicrophoneMuted,
   };
 }

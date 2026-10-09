@@ -6,7 +6,7 @@ import {
   VolumeIcon,
   VolumeMutedIcon,
 } from "../icons";
-import type { Peer, ShareSettings, SocketStatus, VoiceState } from "../../types";
+import type { ShareSettings, SocketStatus, VoiceState } from "../../types";
 import { formatBitrate, formatResolution } from "@golive/core";
 import { ShareSettingsPanel } from "./ShareSettingsPanel";
 
@@ -15,7 +15,6 @@ type ControlDockProps = {
   status: SocketStatus;
   localStream: MediaStream | null;
   isStartingShare: boolean;
-  peers: Peer[];
   activeSettings: ShareSettings | null;
   voiceState: VoiceState;
   deafened: boolean;
@@ -30,7 +29,6 @@ export function ControlDock({
   status,
   localStream,
   isStartingShare,
-  peers,
   activeSettings,
   voiceState,
   deafened,
@@ -41,8 +39,7 @@ export function ControlDock({
 }: ControlDockProps) {
   const [showSettings, setShowSettings] = useState(false);
 
-  const activeSharer = peers.find((peer) => peer.sharing);
-  const canShare = status === "connected" && !activeSharer && !localStream && !isStartingShare;
+  const canShare = status === "connected" && !localStream && !isStartingShare;
 
   const startShare = (settings: ShareSettings) => {
     setShowSettings(false);
@@ -101,7 +98,7 @@ export function ControlDock({
             onClick={() => setShowSettings(true)}
             disabled={!canShare}
           >
-            <ScreenIcon /> {isStartingShare ? "Choose a screen..." : activeSharer ? "Screen in use" : "Share screen"}
+            <ScreenIcon /> {isStartingShare ? "Choose a screen..." : "Share screen"}
           </button>
         )}
       </div>

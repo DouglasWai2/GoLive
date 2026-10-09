@@ -32,6 +32,17 @@ export function Room({
   const [displayName, setDisplayName] = useState(name);
   const [shareSettings, setShareSettings] = useState<ShareSettings | null>(null);
   const [deafened, setDeafened] = useState(false);
+  const [focusedPeerId, setFocusedPeerId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const activeSharers = room.peers.filter((peer) => peer.sharing && peer.streamId);
+    if (focusedPeerId && activeSharers.some((peer) => peer.id === focusedPeerId)) return;
+    setFocusedPeerId(activeSharers[0]?.id ?? null);
+  }, [focusedPeerId, room.peers]);
+
+  useEffect(() => {
+    room.focusPeer(focusedPeerId);
+  }, [focusedPeerId, room.focusPeer]);
 
   useEffect(() => {
     const updateName = (event: StorageEvent) => {
@@ -73,6 +84,8 @@ export function Room({
       <VideoStage
         localStream={room.localStream}
         peers={room.peers}
+        focusedPeerId={focusedPeerId}
+        onFocusPeer={setFocusedPeerId}
         remoteStreams={room.remoteStreams}
         connectionStates={room.connectionStates}
         remoteStats={room.remoteStats}
@@ -92,7 +105,6 @@ export function Room({
         status={room.status}
         localStream={room.localStream}
         isStartingShare={room.isStartingShare}
-        peers={room.peers}
         activeSettings={shareSettings}
         voiceState={room.voiceState}
         deafened={deafened}
