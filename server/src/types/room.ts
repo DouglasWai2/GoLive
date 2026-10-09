@@ -5,6 +5,7 @@ export type Peer = {
   id: string;
   name: string;
   sharing: boolean;
+  streamId?: string;
   voiceJoined: boolean;
   micMuted: boolean;
 };
@@ -14,6 +15,7 @@ export type Client = Peer & {
   userId?: string;
   socket: WebSocket;
   connectedAt: string;
+  subscribedStreamId?: string;
 };
 
 export type RoomParticipantSnapshot = Readonly<Peer & {

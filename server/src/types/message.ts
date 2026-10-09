@@ -7,9 +7,11 @@ export type ClientMessage =
       type: "signal";
       target: string;
       channel: "screen" | "voice";
+      streamId?: string;
       data: unknown;
     }
-  | { type: "sharing"; sharing: boolean }
+  | { type: "sharing"; sharing: boolean; streamId?: string }
+  | { type: "subscribe"; streamId: string | null }
   | { type: "voice"; joined: boolean; micMuted: boolean }
   | { type: "ping"; timestamp: number };
 
