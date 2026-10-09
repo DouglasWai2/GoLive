@@ -24,7 +24,7 @@ export function registerRoomRoutes(
         body: {
           type: "object",
           additionalProperties: false,
-          required: ["roomId", "name"],
+          required: ["roomId"],
           properties: {
             roomId: {
               type: "string",

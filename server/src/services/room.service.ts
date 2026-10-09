@@ -29,12 +29,25 @@ export class RoomService {
     return instance;
   }
 
-  disconnectUser(userId: string): void {
-    for (const room of this.rooms.values()) {
+  disconnectUser(userId: string, roomId?: string): void {
+    for (const [currentRoomId, room] of this.rooms.entries()) {
+      if (roomId && currentRoomId !== roomId) continue;
       for (const client of room.values()) {
         if (client.userId === userId) client.socket.close(4003, "Room access revoked");
       }
     }
+  }
+
+  updateUserName(userId: string, name: string): Array<{ roomId: string; client: Client }> {
+    const updated: Array<{ roomId: string; client: Client }> = [];
+    for (const [roomId, room] of this.rooms.entries()) {
+      for (const client of room.values()) {
+        if (client.userId !== userId) continue;
+        client.name = name;
+        updated.push({ roomId, client });
+      }
+    }
+    return updated;
   }
 
   invalidateRoom(roomId: string): void {

@@ -35,10 +35,14 @@ export {
   getIceServers,
   createInvite,
   verifyInvite,
+  listDeviceRooms,
+  removeDeviceRoom,
+  getDeviceProfile,
+  updateDeviceProfile,
   buildInviteUrl,
   parseInviteUrl,
 } from "./signaling";
-export type { JoinRoomResult, InviteLink } from "./signaling";
+export type { DeviceProfile, DeviceRoom, JoinRoomResult, InviteLink } from "./signaling";
 export {
   getSelectedIceRoute,
   logSelectedIceRoute,

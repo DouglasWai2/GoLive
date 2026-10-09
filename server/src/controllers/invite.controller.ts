@@ -14,7 +14,7 @@ type CreateInviteBody = {
 
 type VerifyInviteBody = {
   roomId: string;
-  name: string;
+  name?: string;
   inviteToken: string;
   deviceToken?: string;
 };
@@ -59,7 +59,7 @@ export function createInviteController(roomService: RoomService, app: FastifyIns
     ): Promise<FastifyReply> {
       const { roomId, name, inviteToken, deviceToken } = request.body as VerifyInviteBody;
 
-      if (!name.trim()) return reply.code(400).send({ error: "Name is required" });
+      if (name !== undefined && !name.trim()) return reply.code(400).send({ error: "Name is required" });
 
       let invite: Record<string, unknown>;
       try {
@@ -76,10 +76,6 @@ export function createInviteController(roomService: RoomService, app: FastifyIns
         if (!invite.generation) return reply.code(403).send({ error: "Invite does not match this room." });
         try {
           const enrolled = await catalog.joinByInvite(roomId, invite.generation, name, deviceToken);
-          if (enrolled.previousRoomId && enrolled.previousRoomId !== roomId) {
-            roomService.disconnectUser(enrolled.userId);
-            if (!await catalog.hasMembers(enrolled.previousRoomId)) roomService.invalidateRoom(enrolled.previousRoomId);
-          }
           return reply.header("Cache-Control", "no-store").send({
             ...issueRoomSession(app, roomService, enrolled),
             deviceToken: enrolled.deviceToken,
@@ -89,6 +85,7 @@ export function createInviteController(roomService: RoomService, app: FastifyIns
           throw error;
         }
       }
+      if (!name?.trim()) return reply.code(400).send({ error: "Name is required" });
       if (!invite.roomInstanceId || !roomService.isCurrentRoomInstance(invite.roomId, invite.roomInstanceId)) {
         return reply.code(403).send({ error: "Invite does not match this room." });
       }

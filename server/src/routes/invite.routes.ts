@@ -63,7 +63,7 @@ export function registerInviteRoutes(
         body: {
           type: "object",
           additionalProperties: false,
-          required: ["roomId", "name", "inviteToken"],
+          required: ["roomId", "inviteToken"],
           properties: {
             roomId: {
               type: "string",

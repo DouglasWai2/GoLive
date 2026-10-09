@@ -6,7 +6,7 @@ import { issueRoomSession } from "../services/access.service.js";
 
 type CreateRoomBody = {
   roomId: string;
-  name: string;
+  name?: string;
   deviceToken?: string;
 };
 
@@ -17,7 +17,7 @@ export function createRoomController(roomService: RoomService, app: FastifyInsta
   ): Promise<FastifyReply> => {
     const { roomId, name, deviceToken } = request.body as CreateRoomBody;
 
-    if (!name.trim()) return reply.code(400).send({ error: "Name is required" });
+    if (name !== undefined && !name.trim()) return reply.code(400).send({ error: "Name is required" });
     if (catalog) {
       try {
         const enrolled = await catalog.createOwnedRoom(roomId, name, deviceToken);
@@ -30,6 +30,7 @@ export function createRoomController(roomService: RoomService, app: FastifyInsta
         throw error;
       }
     }
+    if (!name?.trim()) return reply.code(400).send({ error: "Name is required" });
     const session = roomService.createRoomSession(roomId, name);
     if (!session) {
       return reply.code(403).send({

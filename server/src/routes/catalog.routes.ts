@@ -99,10 +99,9 @@ export function registerCatalogRoutes(
 
   app.delete("/admin/profiles/:id", { preHandler: guard, schema: { params: params(profileId) } }, async (request, reply) => {
     const { id } = request.params as { id: string };
-    const { deleted, roomId } = await catalog!.deleteProfile(id);
-    if (deleted && roomId) {
+    const { deleted } = await catalog!.deleteProfile(id);
+    if (deleted) {
       rooms.disconnectUser(id);
-      if (!await catalog!.hasMembers(roomId)) rooms.invalidateRoom(roomId);
     }
     return deleted ? reply.code(204).send() : reply.code(404).send({ error: "Profile not found" });
   });

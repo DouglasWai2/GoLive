@@ -35,6 +35,6 @@ export function registerRoutes(app: FastifyInstance, catalog?: CatalogService): 
   registerTurnRoutes(app, roomService, turnService);
   registerRoomRoutes(app, roomService, catalog);
   registerInviteRoutes(app, roomService, catalog);
-  registerDeviceRoutes(app, roomService, catalog);
+  registerDeviceRoutes(app, roomService, catalog, signalingService);
   registerAdminRoutes(app, roomService, turnService, systemMetrics, catalog);
 }

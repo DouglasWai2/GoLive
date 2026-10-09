@@ -140,19 +140,29 @@ export class SignalingService {
       }
 
       if (message.type === "join") {
+        let currentName = session.name;
         if (this.catalog) {
           try {
-            if (!session.userId || !await this.catalog.isMember(session.userId, session.roomId)) {
+            const currentMembership = session.userId
+              ? await this.catalog.getUserMembership(session.userId, session.roomId)
+              : null;
+            if (!currentMembership) {
               socket.close(SESSION_REJECTED_CODE, "Room access revoked");
               return;
             }
+            currentName = currentMembership.name;
           } catch {
             socket.close(1011, "Membership unavailable");
             return;
           }
         }
         if (socket.readyState !== socket.OPEN) return;
-        const joined = this.handleJoin(socket, message, session, leaveRoom);
+        const joined = this.handleJoin(
+          socket,
+          { ...message, name: currentName },
+          { ...session, name: currentName },
+          leaveRoom,
+        );
         if (joined) membership = joined;
         return;
       }
@@ -408,6 +418,12 @@ export class SignalingService {
   ): void {
     for (const client of this.rooms.findRoom(roomId)?.values() ?? []) {
       if (client.id !== excludedPeerId) send(client.socket, message);
+    }
+  }
+
+  updateUserName(userId: string, name: string): void {
+    for (const { roomId, client } of this.rooms.updateUserName(userId, name)) {
+      this.broadcast(roomId, { type: "peer-updated", peer: this.rooms.toPeer(client) }, client.id);
     }
   }
 }

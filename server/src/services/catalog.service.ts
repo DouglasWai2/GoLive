@@ -25,7 +25,9 @@ export type DeviceMembership = {
   owner: boolean;
 };
 
-export type Enrollment = DeviceMembership & { deviceToken: string; previousRoomId: string | null };
+export type Enrollment = DeviceMembership & { deviceToken: string };
+
+export type DeviceRoom = StoredRoom & { owner: boolean };
 
 export class CatalogError extends Error {
   constructor(readonly status: number, message: string) { super(message); }
@@ -81,10 +83,80 @@ export class CatalogService {
       const user = await this.resolveDevice(client, deviceToken);
       if (!user) throw new CatalogError(401, "Invalid device credential");
       const result = await client.query<{ room_id: string; owner: boolean }>(
-        "SELECT room_id, owner FROM room_memberships WHERE user_id = $1", [user.id],
+        `SELECT room_memberships.room_id, room_memberships.owner
+         FROM room_memberships
+         JOIN rooms ON rooms.id = room_memberships.room_id
+         WHERE room_memberships.user_id = $1
+         ORDER BY rooms.created_at DESC, rooms.id LIMIT 1`, [user.id],
       );
       const member = result.rows[0];
       return member ? { userId: user.id, roomId: member.room_id, name: user.name, owner: member.owner } : null;
+    });
+  }
+
+  async listDeviceRooms(deviceToken: string): Promise<DeviceRoom[]> {
+    return transaction(this.pool, async (client) => {
+      const user = await this.resolveDevice(client, deviceToken);
+      if (!user) throw new CatalogError(401, "Invalid device credential");
+      const result = await client.query<RoomRow & { owner: boolean }>(
+        `SELECT rooms.id, rooms.name, rooms.created_at, rooms.updated_at, room_memberships.owner
+         FROM room_memberships
+         JOIN rooms ON rooms.id = room_memberships.room_id
+         WHERE room_memberships.user_id = $1
+         ORDER BY rooms.created_at DESC, rooms.id`,
+        [user.id],
+      );
+      return result.rows.map((row) => ({ ...room(row), owner: row.owner }));
+    });
+  }
+
+  async getDeviceMembership(deviceToken: string, roomId: string): Promise<DeviceMembership | null> {
+    return transaction(this.pool, async (client) => {
+      const user = await this.resolveDevice(client, deviceToken);
+      if (!user) throw new CatalogError(401, "Invalid device credential");
+      const result = await client.query<{ owner: boolean }>(
+        "SELECT owner FROM room_memberships WHERE user_id = $1 AND room_id = $2",
+        [user.id, roomId],
+      );
+      const member = result.rows[0];
+      return member ? { userId: user.id, roomId, name: user.name, owner: member.owner } : null;
+    });
+  }
+
+  async getUserMembership(userId: string, roomId: string): Promise<DeviceMembership | null> {
+    const result = await this.pool.query<{ name: string; owner: boolean }>(
+      `SELECT guest_profiles.name, room_memberships.owner
+       FROM room_memberships
+       JOIN guest_profiles ON guest_profiles.id = room_memberships.user_id
+       WHERE room_memberships.user_id = $1 AND room_memberships.room_id = $2`,
+      [userId, roomId],
+    );
+    const member = result.rows[0];
+    return member ? { userId, roomId, name: member.name, owner: member.owner } : null;
+  }
+
+  async getDeviceProfile(deviceToken: string): Promise<GuestProfile> {
+    return transaction(this.pool, async (client) => {
+      const user = await this.resolveDevice(client, deviceToken);
+      if (!user) throw new CatalogError(401, "Invalid device credential");
+      const result = await client.query<ProfileRow>(
+        "SELECT id, name, created_at, updated_at FROM guest_profiles WHERE id = $1",
+        [user.id],
+      );
+      return profile(result.rows[0]!);
+    });
+  }
+
+  async updateDeviceProfile(deviceToken: string, name: string): Promise<{ userId: string; profile: GuestProfile }> {
+    return transaction(this.pool, async (client) => {
+      const user = await this.resolveDevice(client, deviceToken, true);
+      if (!user) throw new CatalogError(401, "Invalid device credential");
+      const result = await client.query<ProfileRow>(
+        `UPDATE guest_profiles SET name = $2, updated_at = now()
+         WHERE id = $1 RETURNING id, name, created_at, updated_at`,
+        [user.id, name.trim()],
+      );
+      return { userId: user.id, profile: profile(result.rows[0]!) };
     });
   }
 
@@ -100,16 +172,12 @@ export class CatalogService {
     return result.rows[0]?.generation ?? null;
   }
 
-  async createOwnedRoom(roomId: string, name: string, deviceToken?: string): Promise<Enrollment> {
+  async createOwnedRoom(roomId: string, name: string | undefined, deviceToken?: string): Promise<Enrollment> {
     return transaction(this.pool, async (client) => {
       let user = deviceToken ? await this.resolveDevice(client, deviceToken, true) : null;
       if (deviceToken && !user) throw new CatalogError(401, "Invalid device credential");
-      if (user) {
-        const existing = await client.query("SELECT 1 FROM room_memberships WHERE user_id = $1", [user.id]);
-        if (existing.rowCount) throw new CatalogError(409, "Leave your current room before creating another");
-        await client.query("UPDATE guest_profiles SET name = $2, updated_at = now() WHERE id = $1", [user.id, name.trim()]);
-        user.name = name.trim();
-      }
+      const trimmedName = name?.trim();
+      if (!user && !trimmedName) throw new CatalogError(400, "Name is required");
       const created = await client.query(
         "INSERT INTO rooms (id, name) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING RETURNING id",
         [roomId, `Room ${roomId}`],
@@ -121,15 +189,16 @@ export class CatalogService {
         const secret = randomBytes(32).toString("base64url");
         issuedToken = `${id}.${secret}`;
         await client.query("INSERT INTO guest_profiles (id, name, credential_hash) VALUES ($1, $2, $3)",
-          [id, name.trim(), tokenHash(secret)]);
-        user = { id, name: name.trim() };
+          [id, trimmedName, tokenHash(secret)]);
+        user = { id, name: trimmedName! };
       }
       await client.query("INSERT INTO room_memberships (user_id, room_id, owner) VALUES ($1, $2, true)", [user.id, roomId]);
-      return { userId: user.id, roomId, name: user.name, owner: true, deviceToken: issuedToken!, previousRoomId: null };
+      await client.query("UPDATE rooms SET empty_since = NULL WHERE id = $1", [roomId]);
+      return { userId: user.id, roomId, name: user.name, owner: true, deviceToken: issuedToken! };
     });
   }
 
-  async joinByInvite(roomId: string, generation: string, name: string, deviceToken?: string): Promise<Enrollment> {
+  async joinByInvite(roomId: string, generation: string, name: string | undefined, deviceToken?: string): Promise<Enrollment> {
     return transaction(this.pool, async (client) => {
       let user = deviceToken ? await this.resolveDevice(client, deviceToken, true) : null;
       if (deviceToken && !user) throw new CatalogError(401, "Invalid device credential");
@@ -138,46 +207,43 @@ export class CatalogService {
       if (!room.rowCount) throw new CatalogError(403, "Invite does not match this room.");
       let issuedToken = deviceToken;
       if (!user) {
+        const trimmedName = name?.trim();
+        if (!trimmedName) throw new CatalogError(400, "Name is required");
         const id = randomUUID();
         const secret = randomBytes(32).toString("base64url");
         issuedToken = `${id}.${secret}`;
         await client.query("INSERT INTO guest_profiles (id, name, credential_hash) VALUES ($1, $2, $3)",
-          [id, name.trim(), tokenHash(secret)]);
-        user = { id, name: name.trim() };
-      } else {
-        await client.query("UPDATE guest_profiles SET name = $2, updated_at = now() WHERE id = $1", [user.id, name.trim()]);
+          [id, trimmedName, tokenHash(secret)]);
+        user = { id, name: trimmedName };
       }
-      const previous = await client.query<{ room_id: string; owner: boolean }>(
-        "SELECT room_id, owner FROM room_memberships WHERE user_id = $1", [user.id],
+      const member = await client.query<{ owner: boolean }>(
+        `INSERT INTO room_memberships (user_id, room_id, owner) VALUES ($1, $2, false)
+         ON CONFLICT (user_id, room_id) DO UPDATE SET owner = room_memberships.owner
+         RETURNING owner`,
+        [user.id, roomId],
       );
-      const previousRoomId = previous.rows[0]?.room_id ?? null;
-      const owner = previousRoomId === roomId && previous.rows[0]?.owner === true;
-      await client.query(
-        `INSERT INTO room_memberships (user_id, room_id, owner) VALUES ($1, $2, $3)
-         ON CONFLICT (user_id) DO UPDATE SET room_id = EXCLUDED.room_id, owner = EXCLUDED.owner`,
-        [user.id, roomId, owner],
-      );
-      if (previousRoomId && previousRoomId !== roomId) await this.removeEmptyRoom(client, previousRoomId);
-      return { userId: user.id, roomId, name: name.trim(), owner, deviceToken: issuedToken!, previousRoomId };
+      await client.query("UPDATE rooms SET empty_since = NULL WHERE id = $1", [roomId]);
+      return { userId: user.id, roomId, name: user.name, owner: member.rows[0]!.owner, deviceToken: issuedToken! };
     });
   }
 
-  private async removeEmptyRoom(client: PoolClient, roomId: string): Promise<void> {
+  private async markEmptyRoom(client: PoolClient, roomId: string): Promise<void> {
     await client.query(
-      "DELETE FROM rooms WHERE id = $1 AND NOT EXISTS (SELECT 1 FROM room_memberships WHERE room_id = $1)", [roomId],
+      `UPDATE rooms SET empty_since = COALESCE(empty_since, now())
+       WHERE id = $1 AND NOT EXISTS (SELECT 1 FROM room_memberships WHERE room_id = $1)`, [roomId],
     );
   }
 
-  async leaveRoom(deviceToken: string): Promise<DeviceMembership | null> {
+  async leaveRoom(deviceToken: string, roomId: string): Promise<DeviceMembership | null> {
     return transaction(this.pool, async (client) => {
       const user = await this.resolveDevice(client, deviceToken, true);
       if (!user) throw new CatalogError(401, "Invalid device credential");
       const deleted = await client.query<{ room_id: string; owner: boolean }>(
-        "DELETE FROM room_memberships WHERE user_id = $1 RETURNING room_id, owner", [user.id],
+        "DELETE FROM room_memberships WHERE user_id = $1 AND room_id = $2 RETURNING room_id, owner", [user.id, roomId],
       );
       const member = deleted.rows[0];
       if (!member) return null;
-      await this.removeEmptyRoom(client, member.room_id);
+      await this.markEmptyRoom(client, member.room_id);
       return { userId: user.id, roomId: member.room_id, name: user.name, owner: member.owner };
     });
   }
@@ -199,7 +265,7 @@ export class CatalogService {
 
   async createRoom(id: string, name: string): Promise<StoredRoom | null> {
     const result = await this.pool.query<RoomRow>(
-      "INSERT INTO rooms (id, name) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING RETURNING *",
+      "INSERT INTO rooms (id, name, empty_since) VALUES ($1, $2, now()) ON CONFLICT (id) DO NOTHING RETURNING *",
       [id, name.trim()],
     );
     return result.rows[0] ? room(result.rows[0]) : null;
@@ -246,11 +312,24 @@ export class CatalogService {
 
   async deleteProfile(id: string): Promise<{ deleted: boolean; roomId: string | null }> {
     return transaction(this.pool, async (client) => {
-      const membership = await client.query<{ room_id: string }>("SELECT room_id FROM room_memberships WHERE user_id = $1", [id]);
+      const memberships = await client.query<{ room_id: string }>("SELECT room_id FROM room_memberships WHERE user_id = $1", [id]);
       const result = await client.query("DELETE FROM guest_profiles WHERE id = $1", [id]);
-      const roomId = membership.rows[0]?.room_id ?? null;
-      if (roomId) await this.removeEmptyRoom(client, roomId);
-      return { deleted: Boolean(result.rowCount), roomId };
+      const roomIds = memberships.rows.map((membership) => membership.room_id);
+      for (const roomId of roomIds) await this.markEmptyRoom(client, roomId);
+      return { deleted: Boolean(result.rowCount), roomId: roomIds[0] ?? null, roomIds };
     });
+  }
+
+  async cleanupEmptyRooms(days: number): Promise<string[]> {
+    if (!Number.isInteger(days) || days < 1) throw new RangeError("days must be a positive integer");
+    const result = await this.pool.query<{ id: string }>(
+      `DELETE FROM rooms
+       WHERE empty_since IS NOT NULL
+         AND empty_since < now() - make_interval(days => $1::integer)
+         AND NOT EXISTS (SELECT 1 FROM room_memberships WHERE room_id = rooms.id)
+       RETURNING id`,
+      [days],
+    );
+    return result.rows.map((row) => row.id);
   }
 }

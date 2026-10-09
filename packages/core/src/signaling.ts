@@ -48,6 +48,20 @@ export type JoinRoomResult = {
   deviceToken?: string;
 };
 
+export type DeviceRoom = {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+  owner: boolean;
+};
+
+export type DeviceProfile = {
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export class DeviceRequestError extends Error {
   constructor(readonly status: number, message: string) { super(message); }
 }
@@ -55,7 +69,7 @@ export class DeviceRequestError extends Error {
 export async function joinRoom(
   baseUrl: string,
   roomId: string,
-  name: string,
+  name?: string,
   deviceToken?: string,
 ): Promise<JoinRoomResult> {
   const response = await fetch(signalingHttpUrl(baseUrl, "/room"), {
@@ -147,7 +161,7 @@ export async function createInvite(
 export async function verifyInvite(
   baseUrl: string,
   roomId: string,
-  name: string,
+  name: string | undefined,
   inviteToken: string,
   deviceToken?: string,
 ): Promise<JoinRoomResult> {
@@ -166,12 +180,62 @@ export async function verifyInvite(
   return (await response.json()) as JoinRoomResult;
 }
 
-export async function restoreRoom(baseUrl: string, deviceToken: string): Promise<JoinRoomResult> {
-  const response = await fetch(signalingHttpUrl(baseUrl, "/device/room"), {
+export async function listDeviceRooms(baseUrl: string, deviceToken: string): Promise<DeviceRoom[]> {
+  const response = await fetch(signalingHttpUrl(baseUrl, "/device/rooms"), {
+    headers: { Authorization: `Bearer ${deviceToken}` },
+  });
+  if (!response.ok) throw new DeviceRequestError(response.status, await errorFrom(response));
+  const data = (await response.json()) as { rooms?: DeviceRoom[] };
+  return Array.isArray(data.rooms) ? data.rooms : [];
+}
+
+export async function restoreRoom(
+  baseUrl: string,
+  deviceToken: string,
+  roomId?: string,
+): Promise<JoinRoomResult> {
+  const url = roomId
+    ? signalingHttpUrl(baseUrl, `/device/rooms/${encodeURIComponent(roomId)}/session`)
+    : signalingHttpUrl(baseUrl, "/device/room");
+  const response = await fetch(url, {
+    method: roomId ? "POST" : "GET",
     headers: { Authorization: `Bearer ${deviceToken}` },
   });
   if (!response.ok) throw new DeviceRequestError(response.status, await errorFrom(response));
   return (await response.json()) as JoinRoomResult;
+}
+
+export async function removeDeviceRoom(baseUrl: string, deviceToken: string, roomId: string): Promise<void> {
+  const response = await fetch(signalingHttpUrl(baseUrl, `/device/rooms/${encodeURIComponent(roomId)}`), {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${deviceToken}` },
+  });
+  if (!response.ok) throw new DeviceRequestError(response.status, await errorFrom(response));
+}
+
+export async function getDeviceProfile(baseUrl: string, deviceToken: string): Promise<DeviceProfile> {
+  const response = await fetch(signalingHttpUrl(baseUrl, "/device/profile"), {
+    headers: { Authorization: `Bearer ${deviceToken}` },
+  });
+  if (!response.ok) throw new DeviceRequestError(response.status, await errorFrom(response));
+  return (await response.json()) as DeviceProfile;
+}
+
+export async function updateDeviceProfile(
+  baseUrl: string,
+  deviceToken: string,
+  name: string,
+): Promise<DeviceProfile> {
+  const response = await fetch(signalingHttpUrl(baseUrl, "/device/profile"), {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${deviceToken}`,
+    },
+    body: JSON.stringify({ name }),
+  });
+  if (!response.ok) throw new DeviceRequestError(response.status, await errorFrom(response));
+  return (await response.json()) as DeviceProfile;
 }
 
 export async function leaveRoom(baseUrl: string, deviceToken: string): Promise<void> {
