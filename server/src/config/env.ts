@@ -64,4 +64,12 @@ export const env = {
   get databaseUrl(): string | undefined {
     return process.env.DATABASE_URL;
   },
+
+  get neonAuthBaseUrl(): string | undefined {
+    return process.env.NEON_AUTH_BASE_URL;
+  },
+
+  get neonAuthJwksUrl(): string | undefined {
+    return process.env.NEON_AUTH_JWKS_URL;
+  },
 }

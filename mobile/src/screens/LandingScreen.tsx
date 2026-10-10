@@ -16,12 +16,27 @@ import { Brand } from "../components/Brand";
 import { ScreenIcon } from "../components/icons";
 import { createRoomId } from "../utils/roomId";
 import { colors, radii, raisedSurface, spacing, technicalText } from "../theme";
+import type { MobileAuthUser } from "../auth";
 
 type LandingScreenProps = {
   onJoinRoom: (roomId: string, inviteToken?: string) => void;
+  authConfigured: boolean;
+  authBusy: boolean;
+  authUser: MobileAuthUser | null;
+  authError: string;
+  onSignIn: () => void;
+  onSignOut: () => void;
 };
 
-export function LandingScreen({ onJoinRoom }: LandingScreenProps) {
+export function LandingScreen({
+  onJoinRoom,
+  authConfigured,
+  authBusy,
+  authUser,
+  authError,
+  onSignIn,
+  onSignOut,
+}: LandingScreenProps) {
   const [input, setInput] = useState("");
   const [error, setError] = useState("");
   const { width, height } = useWindowDimensions();
@@ -52,8 +67,19 @@ export function LandingScreen({ onJoinRoom }: LandingScreenProps) {
         >
           <View style={styles.nav}>
             <Brand />
-            <Text style={styles.navNote}>Nothing recorded</Text>
+            <View style={styles.navActions}>
+              <Text style={styles.navNote}>Nothing recorded</Text>
+              {authConfigured ? (
+                <Pressable onPress={authUser ? onSignOut : onSignIn} disabled={authBusy} accessibilityRole="button">
+                  <Text style={styles.authLink}>
+                    {authBusy ? "Please wait…" : authUser ? "Sign out" : "Sign in with Google"}
+                  </Text>
+                </Pressable>
+              ) : null}
+            </View>
           </View>
+          {authUser ? <Text style={styles.authIdentity}>Signed in as {authUser.name || authUser.email}</Text> : null}
+          {authError ? <Text style={styles.authError} accessibilityRole="alert">{authError}</Text> : null}
 
           <View style={styles.hero}>
             <View style={styles.eyebrow}>
@@ -63,8 +89,8 @@ export function LandingScreen({ onJoinRoom }: LandingScreenProps) {
             <Text style={styles.title}>Your screen.</Text>
             <Text style={styles.titleMuted}>Their browser.</Text>
             <Text style={styles.intro}>
-              Start a room and share your screen with a link. No accounts or video
-              servers in the middle.
+              Start a room and share your screen with a link. No video servers in
+              the middle. Sign in with Google to create up to five active rooms.
             </Text>
             <Pressable
               style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed]}
@@ -166,6 +192,10 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.line,
   },
   navNote: { ...technicalText, color: colors.muted, fontSize: 9 },
+  navActions: { alignItems: "flex-end", gap: 7 },
+  authLink: { color: colors.acid, fontSize: 10, fontWeight: "700" },
+  authIdentity: { color: colors.muted, fontSize: 10, textAlign: "right", marginTop: 10 },
+  authError: { color: "#ff6b5e", fontSize: 11, marginTop: 10 },
   hero: { paddingTop: 54, paddingBottom: 44 },
   eyebrow: { flexDirection: "row", alignItems: "center", gap: 9, marginBottom: 20 },
   acidDot: {

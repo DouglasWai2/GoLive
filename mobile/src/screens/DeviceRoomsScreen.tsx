@@ -4,6 +4,7 @@ import type { DeviceRoom } from "@golive/core";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Brand } from "../components/Brand";
 import { colors, radii, raisedSurface, spacing, technicalText } from "../theme";
+import type { MobileAuthUser } from "../auth";
 
 type DeviceRoomsScreenProps = {
   rooms: DeviceRoom[];
@@ -11,6 +12,12 @@ type DeviceRoomsScreenProps = {
   onCreateRoom: () => void;
   onOpenProfile: () => void;
   onRemoveRoom: (room: DeviceRoom) => void;
+  authConfigured: boolean;
+  authBusy: boolean;
+  authUser: MobileAuthUser | null;
+  authError: string;
+  onSignIn: () => void;
+  onSignOut: () => void;
 };
 
 export function DeviceRoomsScreen({
@@ -19,6 +26,12 @@ export function DeviceRoomsScreen({
   onCreateRoom,
   onOpenProfile,
   onRemoveRoom,
+  authConfigured,
+  authBusy,
+  authUser,
+  authError,
+  onSignIn,
+  onSignOut,
 }: DeviceRoomsScreenProps) {
   const renderRoom: ListRenderItem<DeviceRoom> = ({ item }) => (
     <View style={styles.roomCard}>
@@ -75,6 +88,17 @@ export function DeviceRoomsScreen({
             <View style={styles.eyebrow}><View style={styles.acidDot} /><Text style={styles.eyebrowText}>Your GoLive</Text></View>
             <Text style={styles.title}>My rooms</Text>
             <Text style={styles.subtitle}>Rooms you can return to from this device.</Text>
+            {authConfigured ? (
+              <View style={styles.authRow}>
+                <Text style={styles.authText} numberOfLines={1}>
+                  {authUser ? `Signed in as ${authUser.name || authUser.email}` : "Sign in with Google to create up to five active rooms."}
+                </Text>
+                <Pressable onPress={authUser ? onSignOut : onSignIn} disabled={authBusy} accessibilityRole="button">
+                  <Text style={styles.authAction}>{authBusy ? "Please wait…" : authUser ? "Sign out" : "Sign in"}</Text>
+                </Pressable>
+              </View>
+            ) : null}
+            {authError ? <Text style={styles.authError} accessibilityRole="alert">{authError}</Text> : null}
           </View>
         )}
         ListEmptyComponent={(
@@ -107,6 +131,10 @@ const styles = StyleSheet.create({
   eyebrowText: { ...technicalText, color: colors.muted, fontSize: 9 },
   title: { color: colors.paper, fontSize: 43, lineHeight: 47, fontWeight: "800", letterSpacing: -2.5 },
   subtitle: { marginTop: 10, color: colors.muted, fontSize: 13, lineHeight: 19 },
+  authRow: { marginTop: 17, flexDirection: "row", alignItems: "center", gap: 12 },
+  authText: { flex: 1, color: colors.dim, fontSize: 10 },
+  authAction: { color: colors.acid, fontSize: 10, fontWeight: "700" },
+  authError: { color: "#ff6b5e", fontSize: 11, marginTop: 10 },
   roomCard: { minHeight: 121, paddingVertical: 18, borderTopWidth: 1, borderTopColor: colors.line, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 14 },
   roomCopy: { minWidth: 0, flex: 1 },
   roomKind: { marginBottom: 7, color: colors.dim, ...technicalText, fontSize: 8 },

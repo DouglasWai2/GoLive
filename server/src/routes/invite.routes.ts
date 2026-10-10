@@ -4,13 +4,15 @@ import { RoomService } from "../services/room.service.js";
 import { isRoomToken } from "../types/room.js";
 import { ROOM_ID_PATTERN } from "../utils/room-id.js";
 import type { CatalogService } from "../services/catalog.service.js";
+import type { NeonAuthVerifier } from "../services/neon-auth.service.js";
 
 export function registerInviteRoutes(
   app: FastifyInstance,
   roomService: RoomService,
   catalog?: CatalogService,
+  verifyNeonAuth?: NeonAuthVerifier,
 ): void {
-  const controller = createInviteController(roomService, app, catalog);
+  const controller = createInviteController(roomService, app, catalog, verifyNeonAuth);
 
   app.post(
     "/invite",

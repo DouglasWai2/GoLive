@@ -8,6 +8,7 @@ import {
   getDeviceProfile,
   joinRoom,
   listDeviceRooms,
+  NeonAuthTokenError,
   parseInviteUrl,
   removeDeviceRoom,
   restoreRoom,
@@ -27,6 +28,14 @@ import { colors } from "./src/theme";
 import { clearDeviceToken, loadDeviceName, loadDeviceToken, saveDeviceName, saveDeviceToken } from "./src/session";
 import { SIGNALING_URL } from "./src/config";
 import { createRoomId } from "./src/utils/roomId";
+import {
+  getNativeAuthAccessToken,
+  nativeAuthConfigured,
+  restoreNativeAuthSession,
+  signInWithGoogle,
+  signOutNativeAuth,
+  type MobileAuthUser,
+} from "./src/auth";
 
 type Stage =
   | { screen: "landing" }
@@ -39,9 +48,17 @@ type Stage =
 
 type RoomStage = Extract<Stage, { screen: "room" }>;
 
+function isInvalidDeviceCredentialError(error: unknown): boolean {
+  return error instanceof Error && error.message === "Invalid device credential: 401";
+}
+
 export default function App() {
   const [stage, setStage] = useState<Stage | null>(null);
   const [switchRequest, setSwitchRequest] = useState<{ invite: InviteLink; saved: RoomStage } | null>(null);
+  const [authUser, setAuthUser] = useState<MobileAuthUser | null>(null);
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authError, setAuthError] = useState("");
+  const [authReady, setAuthReady] = useState(false);
   const stageRef = useRef<Stage | null>(null);
   stageRef.current = stage;
 
@@ -49,22 +66,74 @@ export default function App() {
     ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    void restoreNativeAuthSession().then((user) => {
+      if (!cancelled) setAuthUser(user);
+    }).finally(() => {
+      if (!cancelled) setAuthReady(true);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  const handleAuthSignIn = async () => {
+    setAuthBusy(true);
+    setAuthError("");
+    try {
+      const user = await signInWithGoogle();
+      if (user) setAuthUser(user);
+    } catch (caught) {
+      setAuthError(caught instanceof Error ? caught.message : "Could not sign in with Google.");
+    } finally {
+      setAuthBusy(false);
+    }
+  };
+
+  const handleAuthSignOut = async () => {
+    setAuthBusy(true);
+    setAuthError("");
+    try {
+      await signOutNativeAuth();
+      setAuthUser(null);
+      if (stageRef.current?.screen === "rooms") void openRooms();
+    } catch (caught) {
+      setAuthError(caught instanceof Error ? caught.message : "Could not sign out.");
+    } finally {
+      setAuthBusy(false);
+    }
+  };
+
+  const handleNeonAuthExpired = (caught: unknown): boolean => {
+    if (!(caught instanceof NeonAuthTokenError)) return false;
+    if (caught.status === 401) setAuthUser(null);
+    setAuthError(caught.message);
+    setStage({ screen: "landing" });
+    return true;
+  };
+
   const openRooms = async () => {
     setStage(null);
     try {
+      const authToken = await getNativeAuthAccessToken();
+      if (!authToken) {
+        setStage({ screen: "landing" });
+        return;
+      }
       const deviceToken = await loadDeviceToken();
       if (!deviceToken) {
         setStage({ screen: "landing" });
         return;
       }
       const [rooms, profile] = await Promise.all([
-        listDeviceRooms(SIGNALING_URL, deviceToken),
-        getDeviceProfile(SIGNALING_URL, deviceToken),
+        listDeviceRooms(SIGNALING_URL, deviceToken, authToken),
+        getDeviceProfile(SIGNALING_URL, deviceToken, authToken),
       ]);
       await saveDeviceName(profile.name);
       setStage({ screen: "rooms", rooms });
     } catch (caught) {
-      if (caught instanceof DeviceRequestError && caught.status === 401) {
+      if (handleNeonAuthExpired(caught)) {
+        return;
+      } else if (caught instanceof DeviceRequestError && caught.status === 401) {
         await clearDeviceToken();
         setStage({ screen: "landing" });
       } else {
@@ -86,10 +155,12 @@ export default function App() {
     }
     setStage(null);
     try {
-      const result = await restoreRoom(SIGNALING_URL, deviceToken, roomId);
+      const result = await restoreRoom(SIGNALING_URL, deviceToken, roomId, await getNativeAuthAccessToken() ?? undefined);
       handleJoined(roomId, result.session.name, result.token);
     } catch (caught) {
-      if (caught instanceof DeviceRequestError && caught.status === 401) {
+      if (handleNeonAuthExpired(caught)) {
+        return;
+      } else if (caught instanceof DeviceRequestError && caught.status === 401) {
         await clearDeviceToken();
         setStage({ screen: "landing" });
       } else if (caught instanceof DeviceRequestError && caught.status === 404) {
@@ -109,14 +180,24 @@ export default function App() {
     setStage(null);
     try {
       const result = inviteToken
-        ? await verifyInvite(SIGNALING_URL, roomId, undefined, inviteToken, deviceToken)
-        : await joinRoom(SIGNALING_URL, roomId, undefined, deviceToken);
+        ? await verifyInvite(SIGNALING_URL, roomId, await loadDeviceName(), inviteToken, deviceToken, await getNativeAuthAccessToken() ?? undefined)
+        : await joinRoom(SIGNALING_URL, roomId, await loadDeviceName(), deviceToken, await getNativeAuthAccessToken() ?? undefined);
       if (result.deviceToken) await saveDeviceToken(result.deviceToken);
       handleJoined(roomId, result.session.name, result.token, inviteToken);
     } catch (caught) {
-      if (caught instanceof DeviceRequestError && caught.status === 401) {
-        await clearDeviceToken();
+      if (handleNeonAuthExpired(caught)) {
+        return;
+      } else if ((caught instanceof DeviceRequestError && caught.status === 401) || isInvalidDeviceCredentialError(caught)) {
+        if (caught instanceof DeviceRequestError) await clearDeviceToken();
         setStage({ screen: "name", roomId, inviteToken, initialName: await loadDeviceName() });
+      } else if (caught instanceof Error && caught.message.endsWith(": 409")) {
+        Alert.alert(
+          caught.message.includes("Guests can keep access") ? "Guest room limit" : "Room limit reached",
+          caught.message.includes("Guests can keep access")
+            ? "Remove access to your current room before creating another, or sign in with Google."
+            : "You already have five active rooms. End one before creating another.",
+        );
+        void openRooms();
       } else {
         setStage({ screen: "error" });
       }
@@ -140,16 +221,21 @@ export default function App() {
     try {
       let result;
       try {
-        result = await restoreRoom(SIGNALING_URL, deviceToken, invite.roomId);
+        result = await restoreRoom(SIGNALING_URL, deviceToken, invite.roomId, await getNativeAuthAccessToken() ?? undefined);
       } catch (caught) {
         if (!(caught instanceof DeviceRequestError && caught.status === 404)) throw caught;
-        result = await verifyInvite(SIGNALING_URL, invite.roomId, undefined, invite.inviteToken, deviceToken);
+        result = await verifyInvite(
+          SIGNALING_URL, invite.roomId, await loadDeviceName(), invite.inviteToken, deviceToken,
+          await getNativeAuthAccessToken() ?? undefined,
+        );
       }
       if (result.deviceToken) await saveDeviceToken(result.deviceToken);
       handleJoined(invite.roomId, result.session.name, result.token, invite.inviteToken);
     } catch (caught) {
-      if (caught instanceof DeviceRequestError && caught.status === 401) {
-        await clearDeviceToken();
+      if (handleNeonAuthExpired(caught)) {
+        return;
+      } else if ((caught instanceof DeviceRequestError && caught.status === 401) || isInvalidDeviceCredentialError(caught)) {
+        if (caught instanceof DeviceRequestError) await clearDeviceToken();
         setStage({ screen: "name", roomId: invite.roomId, inviteToken: invite.inviteToken, initialName: await loadDeviceName() });
       } else {
         setStage({ screen: "error" });
@@ -165,11 +251,13 @@ export default function App() {
     }
     setStage(null);
     try {
-      const profile = await getDeviceProfile(SIGNALING_URL, deviceToken);
+      const profile = await getDeviceProfile(SIGNALING_URL, deviceToken, await getNativeAuthAccessToken() ?? undefined);
       await saveDeviceName(profile.name);
       setStage({ screen: "profile", name: profile.name });
     } catch (caught) {
-      if (caught instanceof DeviceRequestError && caught.status === 401) {
+      if (handleNeonAuthExpired(caught)) {
+        return;
+      } else if (caught instanceof DeviceRequestError && caught.status === 401) {
         await clearDeviceToken();
         setStage({ screen: "landing" });
       } else {
@@ -181,9 +269,14 @@ export default function App() {
   const saveProfile = async (name: string) => {
     const deviceToken = await loadDeviceToken();
     if (!deviceToken) throw new Error("Device profile is unavailable");
-    const profile = await updateDeviceProfile(SIGNALING_URL, deviceToken, name);
-    await saveDeviceName(profile.name);
-    setStage({ screen: "profile", name: profile.name });
+    try {
+      const profile = await updateDeviceProfile(SIGNALING_URL, deviceToken, name, await getNativeAuthAccessToken() ?? undefined);
+      await saveDeviceName(profile.name);
+      setStage({ screen: "profile", name: profile.name });
+    } catch (caught) {
+      handleNeonAuthExpired(caught);
+      throw caught;
+    }
   };
 
   const removeRoom = async (room: DeviceRoom) => {
@@ -193,12 +286,14 @@ export default function App() {
       return;
     }
     try {
-      await removeDeviceRoom(SIGNALING_URL, deviceToken, room.id);
+      await removeDeviceRoom(SIGNALING_URL, deviceToken, room.id, await getNativeAuthAccessToken() ?? undefined);
       setStage((current) => current?.screen === "rooms"
         ? { ...current, rooms: current.rooms.filter((candidate) => candidate.id !== room.id) }
         : current);
     } catch (caught) {
-      if (caught instanceof DeviceRequestError && caught.status === 401) {
+      if (handleNeonAuthExpired(caught)) {
+        return;
+      } else if (caught instanceof DeviceRequestError && caught.status === 401) {
         await clearDeviceToken();
         setStage({ screen: "landing" });
       } else {
@@ -213,6 +308,7 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
     const initialize = async () => {
+      if (!authReady) return;
       const initialUrl = await Linking.getInitialURL();
       const invite = initialUrl ? parseInviteUrl(initialUrl) : null;
       if (cancelled) return;
@@ -239,7 +335,7 @@ export default function App() {
       cancelled = true;
       subscription.remove();
     };
-  }, []);
+  }, [authReady]);
 
   let content;
 
@@ -252,7 +348,17 @@ export default function App() {
   } else {
     switch (stage.screen) {
       case "landing":
-        content = <LandingScreen onJoinRoom={(roomId, inviteToken) => void createOrJoinRoom(roomId, inviteToken)} />;
+        content = (
+          <LandingScreen
+            onJoinRoom={(roomId, inviteToken) => void createOrJoinRoom(roomId, inviteToken)}
+            authConfigured={nativeAuthConfigured}
+            authBusy={authBusy}
+            authUser={authUser}
+            authError={authError}
+            onSignIn={() => void handleAuthSignIn()}
+            onSignOut={() => void handleAuthSignOut()}
+          />
+        );
         break;
       case "rooms":
         content = (
@@ -262,6 +368,12 @@ export default function App() {
             onCreateRoom={() => void createOrJoinRoom(createRoomId())}
             onOpenProfile={() => void openProfile()}
             onRemoveRoom={(room) => void removeRoom(room)}
+            authConfigured={nativeAuthConfigured}
+            authBusy={authBusy}
+            authUser={authUser}
+            authError={authError}
+            onSignIn={() => void handleAuthSignIn()}
+            onSignOut={() => void handleAuthSignOut()}
           />
         );
         break;
@@ -290,6 +402,10 @@ export default function App() {
             initialName={stage.initialName}
             onBack={() => void openRooms()}
             onJoined={(name, token) => handleJoined(stage.roomId, name, token, stage.inviteToken)}
+            onAuthExpired={(error) => {
+              if (error.status === 401) setAuthUser(null);
+              setAuthError(error.message);
+            }}
           />
         );
         break;

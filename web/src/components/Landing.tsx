@@ -3,8 +3,11 @@ import { ScreenIcon } from "./icons";
 import { Brand } from "./Brand";
 import { createRoomId, goToRoom, roomTargetFromInput } from "../utils/room";
 import { loadDeviceToken } from "../utils/session";
+import { GoogleAuthControls } from "./GoogleAuthControls";
+import { useAuth } from "../services/auth";
 
 export function Landing() {
+  const auth = useAuth();
   const [inviteLink, setInviteLink] = useState("");
   const [hint, setHint] = useState("");
   const [hasDeviceProfile] = useState(() => Boolean(loadDeviceToken()));
@@ -26,8 +29,9 @@ export function Landing() {
         <Brand ariaLabel="GoLive home" />
         <div className="landing-account-links">
           <span className="nav-note">Browser to browser. Nothing recorded.</span>
-          {hasDeviceProfile && <a href="/rooms">My rooms</a>}
+          {hasDeviceProfile && auth.user && <a href="/rooms">My rooms</a>}
           {hasDeviceProfile && <a href="/profile">Profile</a>}
+          <GoogleAuthControls />
         </div>
       </nav>
 
@@ -36,8 +40,8 @@ export function Landing() {
           <p className="eyebrow"><span /> Direct screen sharing</p>
           <h1>Your screen.<br /><em>Their browser.</em></h1>
           <p className="hero-intro">
-            Start a room and share your screen with a link. No installs,
-            accounts, or video servers in the middle.
+            Start a room and share your screen with a link. No installs or video
+            servers in the middle. Sign in with Google to create up to five active rooms.
           </p>
           <button className="primary-button large" onClick={createRoom}>
             <ScreenIcon size={21} />

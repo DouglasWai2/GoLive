@@ -4,8 +4,11 @@ import { Brand } from "./Brand";
 import { configuredBaseUrl } from "../services/sessionDeps";
 import { createRoomId, goToRoom } from "../utils/room";
 import { clearDeviceToken, clearSavedRoom, loadDeviceToken, loadSavedRoom } from "../utils/session";
+import { GoogleAuthControls } from "./GoogleAuthControls";
+import { useAuth } from "../services/auth";
 
 export function DeviceRooms() {
+  const auth = useAuth();
   const [deviceToken, setDeviceToken] = useState(loadDeviceToken);
   const [rooms, setRooms] = useState<DeviceRoom[]>([]);
   const [loading, setLoading] = useState(Boolean(deviceToken));
@@ -16,7 +19,7 @@ export function DeviceRooms() {
     if (!deviceToken) return;
     setError("");
     try {
-      const nextRooms = await listDeviceRooms(configuredBaseUrl(), deviceToken);
+      const nextRooms = await listDeviceRooms(configuredBaseUrl(), deviceToken, await auth.getAccessToken() ?? undefined);
       if (!signal?.aborted) setRooms(nextRooms);
     } catch (caught) {
       if (signal?.aborted) return;
@@ -36,7 +39,7 @@ export function DeviceRooms() {
     const controller = new AbortController();
     void refresh(controller.signal);
     return () => controller.abort();
-  }, [deviceToken]);
+  }, [deviceToken, auth.getAccessToken]);
 
   const remove = async (room: DeviceRoom) => {
     if (!deviceToken || removing) return;
@@ -44,7 +47,7 @@ export function DeviceRooms() {
     setRemoving(room.id);
     setError("");
     try {
-      await removeDeviceRoom(configuredBaseUrl(), deviceToken, room.id);
+      await removeDeviceRoom(configuredBaseUrl(), deviceToken, room.id, await auth.getAccessToken() ?? undefined);
       if (loadSavedRoom() === room.id) clearSavedRoom();
       setRooms((current) => current.filter((candidate) => candidate.id !== room.id));
     } catch (caught) {
@@ -67,6 +70,7 @@ export function DeviceRooms() {
         <div className="account-nav-links">
           <a href="/rooms" aria-current="page">My rooms</a>
           {deviceToken && <a href="/profile">Profile</a>}
+          <GoogleAuthControls />
         </div>
       </nav>
       <section className="account-content">

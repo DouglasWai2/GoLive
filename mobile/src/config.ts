@@ -21,3 +21,6 @@ export const SIGNALING_URL =
  */
 export const INVITE_BASE_URL =
   process.env.EXPO_PUBLIC_INVITE_URL ?? SIGNALING_URL;
+
+export const NEON_AUTH_URL = process.env.EXPO_PUBLIC_NEON_AUTH_URL;
+export const GOOGLE_WEB_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID;

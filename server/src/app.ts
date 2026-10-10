@@ -9,8 +9,9 @@ import { registerErrorHandler } from "./middlewares/error-handler.js";
 import { registerRoutes } from "./routes/index.js";
 import { CatalogService } from "./services/catalog.service.js";
 import { connectDatabase } from "./db/connection.js";
+import { createNeonAuthVerifier, type NeonAuthVerifier } from "./services/neon-auth.service.js";
 
-export async function buildApp() {
+export async function buildApp(options: { verifyNeonAuth?: NeonAuthVerifier } = {}) {
   const jwtSecret = env.jwtSecret;
   if (!jwtSecret) {
     throw new Error("JWT_SECRET is required");
@@ -51,7 +52,11 @@ export async function buildApp() {
   });
 
   registerErrorHandler(app);
-  registerRoutes(app, catalog);
+  registerRoutes(
+    app,
+    catalog,
+    options.verifyNeonAuth ?? createNeonAuthVerifier(env.neonAuthBaseUrl, env.neonAuthJwksUrl),
+  );
 
   return app;
 }

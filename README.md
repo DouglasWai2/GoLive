@@ -4,6 +4,8 @@ Minimal screen sharing for web and mobile. Fastify and WebSocket handle room
 membership and WebRTC signaling; screen video and audio travel directly between
 peers. Web and mobile clients share a framework-agnostic core package
 (`@golive/core`) that implements signaling and WebRTC room sessions. Optional
+Google sign-in uses Managed Neon Auth for account-backed room ownership and
+quotas; guest access remains available when auth is not configured. Optional
 Cloudflare TURN provides relaying for connections that cannot establish a
 peer-to-peer link.
 
@@ -18,6 +20,9 @@ cp server/.env.example server/.env
 export DATABASE_URL='postgres://golive:golive@localhost:5432/golive'
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f server/db/migrations/001_create_catalog.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f server/db/migrations/002_add_room_memberships.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f server/db/migrations/003_multi_room_profiles_and_retention.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f server/db/migrations/004_add_auth_room_owners.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f server/db/migrations/005_guest_current_room.sql
 npm run dev -w server # in one terminal
 npm run dev -w web    # in another terminal
 ```
@@ -174,6 +179,8 @@ npm run dev -w server       # signaling server
 npm run dev -w web          # web app
 npm run start -w mobile     # Expo dev client
 npm run typecheck -w server # server typecheck (repeat for core, web, mobile)
+npm run test -w packages/core # shared signaling/auth tests
+npm run test -w server      # server tests; integration tests need TEST_DATABASE_URL
 npm run build -w server     # compiled signaling server
 npm run build -w web        # production web assets
 ```
@@ -221,6 +228,8 @@ files (server and web) as templates.
 | `JWT_SECRET` | — | Required secret used to sign invite, room session, and admin JWTs. The server will not start without it. |
 | `ADMIN_SECRET` | — | Shared secret exchanged for a one-hour admin JWT. Admin endpoints are disabled unless this and `JWT_SECRET` are explicitly set. |
 | `DATABASE_URL` | — | PostgreSQL connection string, e.g. `postgres://golive:golive@localhost:5432/golive`. Required at server startup. Use durable storage in production. |
+| `NEON_AUTH_BASE_URL` | — | Managed Neon Auth URL for this branch. Enables account authentication for room creation. |
+| `NEON_AUTH_JWKS_URL` | derived | Optional JWKS URL override; defaults to `NEON_AUTH_BASE_URL/.well-known/jwks.json`. |
 | `CLOUDFLARE_TURN_KEY_ID` | — | Cloudflare TURN key ID used by the server. |
 | `CLOUDFLARE_TURN_API_TOKEN` | — | Cloudflare API token used to generate temporary TURN credentials. |
 | `CLOUDFLARE_ACCOUNT_ID` | — | Cloudflare account ID, queried for TURN usage. |
@@ -236,6 +245,7 @@ files (server and web) as templates.
 | Variable | Default | Description |
 | --- | --- | --- |
 | `VITE_SIGNALING_URL` | web app origin | Full signaling endpoint for WebSocket and TURN credential requests. Accepts `http`/`https`/`ws`/`wss`. |
+| `VITE_NEON_AUTH_URL` | — | Managed Neon Auth URL for this branch. Leave unset to keep the web app guest-only. |
 
 ### Admin dashboard
 
@@ -244,11 +254,12 @@ the shared secret only to `/admin/login` and stores the returned one-hour admin
 JWT in session storage. Live room, participant, and resource values represent
 only the current signaling-server process and reset when it restarts. The admin
 console provides CRUD for saved room IDs/names and guest profiles in
-PostgreSQL. Each invited device has one profile and can retain access to multiple
-rooms; manually created profiles are unclaimed. The display name belongs to the
-device profile and is shared across its rooms. Rooms with members cannot be
-deleted. When the final access grant is revoked, the room starts a 30-day empty
-retention period before the scheduled cleanup deletes it. Cloudflare
+PostgreSQL. Each device has a profile; guest profiles have one current room
+grant, while authenticated profiles can retain multiple account-owned and
+invited room grants. Manually created profiles are unclaimed. The display name
+belongs to the device profile and is shared across its rooms. Rooms with members
+cannot be deleted. When the final access grant is revoked, the room starts a
+30-day empty retention period before the scheduled cleanup deletes it. Cloudflare
 TURN usage is queried separately for the current UTC month and cached for ten
 minutes. Historical connection counts, cross-instance live totals, and
 hosting-provider metrics are not collected.
@@ -259,8 +270,9 @@ operations under `/admin/profiles`. Rooms use `{ id, name }` on create and
 `{ name }` on update; profiles use `{ name }` and receive a generated UUID.
 Admins can mint invites for unclaimed rooms using `POST /admin/rooms/:id/invite`.
 `POST /room` creates a *new* room and its first device membership; it cannot
-claim a saved room by guessing its ID. Existing device credentials can create
-additional rooms without losing previous access. Room IDs, memberships, and
+claim a saved room by guessing its ID. Authenticated accounts can create up to
+five rooms without losing previous access; creating another room as a guest
+replaces that guest profile's current room grant. Room IDs, memberships, and
 device profile names survive restarts; short-lived room session tokens are
 renewed on return.
 For a database-backed integration check, run
@@ -270,8 +282,12 @@ must have permission to create tables in its schema. SQL migrations live in
 `server/db/migrations/`, run in numeric order with `psql -v ON_ERROR_STOP=1`,
 and record applied versions in `schema_migrations`. Re-running them is safe.
 Migration 002 removes old rooms that had no verifiable owner. Migration 003
-enables multiple device-room memberships and marks empty rooms. Run these files
-before starting an upgraded server; the server only opens a database connection.
+enables multiple device-room memberships and marks empty rooms. Migration 004
+stores the Neon account that created each room and supports the five-room limit.
+Migration 005 tracks a guest device's current room separately from its account
+rooms and restores retained owner memberships previously emptied by the old
+guest switching behavior. Run these files before starting an upgraded server;
+the server only opens a database connection.
 
 ### Mobile (`mobile/.env`)
 
@@ -279,6 +295,37 @@ before starting an upgraded server; the server only opens a database connection.
 | --- | --- | --- |
 | `EXPO_PUBLIC_SIGNALING_URL` | `http://10.0.2.2:3000` | Full signaling endpoint for WebSocket and TURN credential requests (the Android emulator alias for the host's `localhost`). Set it to the host's LAN IP for a physical device. |
 | `EXPO_PUBLIC_INVITE_URL` | `EXPO_PUBLIC_SIGNALING_URL` | Web origin used for shareable invite links. Set it to the web app's reachable URL; the default points to the signaling server, not the web app. |
+| `EXPO_PUBLIC_NEON_AUTH_URL` | — | Managed Neon Auth URL for this branch. Leave unset to keep mobile in guest mode. |
+| `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` | — | Google OAuth Web Client ID; configure this same ID as the Google provider's Client ID in Neon Auth. |
+| `EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID` | — | Optional native iOS OAuth Client ID. |
+| `GOOGLE_IOS_URL_SCHEME` | derived | Optional override for the reversed client-ID URL scheme used by the Google Sign-In config plugin on iOS. |
+
+### Google sign-in
+
+`neon.ts` already enables Managed Better Auth. On each Neon branch, configure the
+Google provider with a Google OAuth Web Client ID and secret, then add the web
+app's local and deployed origins to Neon Auth's trusted domains (include the
+scheme and omit the trailing slash). Google's OAuth callback URI is
+`{NEON_AUTH_BASE_URL}/callback/google`. Disable email/password authentication
+in that branch's Neon Auth settings to make Google the only sign-in method. The
+app has no separate sign-up form: a user's first successful Google sign-in
+creates their GoLive identity automatically.
+
+For local development, set `VITE_NEON_AUTH_URL` in `web/.env`, the two
+`NEON_AUTH_*` values in `server/.env`, and `EXPO_PUBLIC_NEON_AUTH_URL` plus
+`EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` in `mobile/.env`. Native Google Sign-In uses
+that Web Client ID for the ID token exchanged with Neon Auth. For iOS builds,
+also configure an iOS OAuth client and set `EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID`
+(the URL scheme is derived from that ID unless explicitly overridden). Android
+builds must use the app's `com.golive.mobile` package name and a signing
+certificate fingerprint registered in the Google Cloud project. Rebuild the
+native app after changing its Google Sign-In configuration.
+
+Authenticated accounts can own at most five rooms that still have device access
+grants. Removing the final grant marks a room empty and frees its slot. Guests
+can create rooms and accept invites, but each guest device profile is limited to
+one room grant at a time. Linking a device profile to Google does not transfer
+the guest room into the Google account's owned-room quota.
 
 ### TURN
 
@@ -291,14 +338,22 @@ participants in already-open rooms. An existing room ID cannot be created or
 claimed without an invite, even if nobody is online.
 
 The browser stores the device credential in local storage; mobile stores it in
-AsyncStorage. `GET /device/rooms` returns only rooms associated with that device.
+AsyncStorage. `GET /device/rooms` returns rooms associated with that device and
+visible to the current guest or authenticated identity.
 `POST /device/rooms/:roomId/session` renews a session only for an authorized
-room. The web `/rooms` page and mobile My rooms screen list these grants and let
-the device re-enter or explicitly remove access. Leaving a room returns to the
-list without revoking access; `DELETE /device/rooms/:roomId` revokes one room.
-Accepting a different room's invite adds its grant without replacing existing
-ones. New devices must still provide a display name when first creating a room
-or accepting an invite; known devices reuse their saved profile name.
+room. The web `/rooms` page and mobile My rooms screen require Google sign-in;
+they list the current device's available grants and let it re-enter or explicitly
+remove access. Guests return to the landing page instead. Leaving a live room
+keeps its grant; `DELETE /device/rooms/:roomId` revokes one room. Creating a new
+room as a guest replaces that profile's previous room grant and disconnects its
+old session. Accepting a different room's invite does the same for guests, while
+authenticated profiles can retain multiple account-owned and invited rooms.
+Linking a guest profile to Google does not promote its guest-created room into
+the account's owned-room quota. New devices must provide a display name when
+first creating a room or accepting an invite; known devices reuse their saved
+profile name. If a saved device credential is invalid, room creation and invite
+verification retry without it when a display name is available; mobile prompts
+for a name if needed.
 
 The Render Cron Job defined in `render.yaml` runs daily at 03:00 UTC and deletes
 only rooms with no device memberships for more than 30 days. Configure its
@@ -350,6 +405,7 @@ does not arrive.
 │       ├── tsconfig.json
 │       └── src/
 │           ├── index.ts        # public API surface (re-exports)
+│           ├── neonAuth.ts     # Neon Auth token helper and verifier errors
 │           ├── types.ts        # shared types (Peer, SignalData, RoomSessionDeps, ...)
 │           ├── signaling.ts    # join room + ICE server helpers
 │           ├── webrtc.ts       # stats, ice route, sender config helpers
@@ -378,6 +434,7 @@ does not arrive.
 │       │   └── index.ts
 │       ├── services/       # business logic
 │       │   ├── catalog.service.ts   # room/profile database queries
+│       │   ├── neon-auth.service.ts # Neon Auth JWT verification
 │       │   ├── room.service.ts      # in-memory room/peer store
 │       │   ├── signaling.service.ts # WebSocket signaling protocol
 │       │   └── turn.service.ts      # Cloudflare TURN credentials + usage
@@ -406,6 +463,7 @@ does not arrive.
 └── mobile/                 # @golive/mobile — React Native (Expo) client
     ├── App.tsx             # Landing -> NameGate -> Room flow
     ├── index.ts            # entry point: registerRootComponent
+    ├── app.config.js       # Expo config with Google Sign-In plugin options
     ├── app.json            # Expo config + permissions + config plugins
     ├── babel.config.js
     ├── metro.config.js
@@ -413,6 +471,7 @@ does not arrive.
     │   └── withWebRTCMediaProjection.js # Expo config plugin for screen capture
     ├── android/            # native Android project (Expo prebuild output)
     └── src/
+        ├── auth.ts          # Neon Auth session and native Google Sign-In
         ├── adapter.ts      # mobile PlatformAdapter (react-native-webrtc)
         ├── config.ts       # SIGNALING_URL from EXPO_PUBLIC_SIGNALING_URL
         ├── session.ts
@@ -424,7 +483,8 @@ does not arrive.
 
 ## MVP constraints
 
-- Room IDs, profiles, and one-room-per-device membership persist in PostgreSQL.
+- Room IDs, profiles, and room grants persist in PostgreSQL. Guest profiles have
+  one current room grant; authenticated device profiles can retain multiple.
   The migration resets old room rows, which had no verifiable owners.
 - WebSocket connections and room instances are process-local. Short-lived room
   JWTs must be renewed after a restart; invite tokens remain valid for up to
@@ -433,4 +493,6 @@ does not arrive.
 - The same captured screen stream is reused for every viewer.
 - STUN is always available. TURN uses Cloudflare first and ExpressTURN after the
   configured Cloudflare egress threshold (see [Environment variables](#environment-variables)).
-- There are no cross-device accounts, recording, chat, or participant history.
+- Device credentials, display names, and room grants are device-specific; Google
+  sign-in provides account-level room ownership and quota, not cross-device room
+  library syncing. There is no recording, chat, or participant history.

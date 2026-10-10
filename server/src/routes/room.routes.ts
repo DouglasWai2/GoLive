@@ -3,13 +3,15 @@ import { createRoomController } from "../controllers/room.controller.js";
 import { RoomService } from "../services/room.service.js";
 import { ROOM_ID_PATTERN } from "../utils/room-id.js";
 import type { CatalogService } from "../services/catalog.service.js";
+import type { NeonAuthVerifier } from "../services/neon-auth.service.js";
 
 export function registerRoomRoutes(
   app: FastifyInstance,
   roomService: RoomService,
   catalog?: CatalogService,
+  verifyNeonAuth?: NeonAuthVerifier,
 ): void {
-  const controller = createRoomController(roomService, app, catalog);
+  const controller = createRoomController(roomService, app, catalog, verifyNeonAuth);
 
   app.post(
     "/room",
