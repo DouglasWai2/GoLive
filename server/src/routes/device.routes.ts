@@ -4,6 +4,7 @@ import { issueRoomSession } from "../services/access.service.js";
 import { RoomService } from "../services/room.service.js";
 import { SignalingService } from "../services/signaling.service.js";
 import { ROOM_ID_PATTERN } from "../utils/room-id.js";
+import { DEVICE_TOKEN_LENGTH, DISPLAY_NAME_PATTERN } from "../utils/validation.js";
 
 type DeviceRequest = { token: string };
 
@@ -15,6 +16,7 @@ export function registerDeviceRoutes(
 ): void {
   const options = { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } };
   const credential = (header?: string): string | null => {
+    if (!header || header.length > 7 + DEVICE_TOKEN_LENGTH) return null;
     const match = /^Bearer (\S+)$/i.exec(header ?? "");
     return match?.[1] ?? null;
   };
@@ -104,7 +106,14 @@ export function registerDeviceRoutes(
         type: "object",
         additionalProperties: false,
         required: ["name"],
-        properties: { name: { type: "string", minLength: 1, maxLength: 32 } },
+        properties: {
+          name: {
+            type: "string",
+            minLength: 1,
+            maxLength: 32,
+            pattern: DISPLAY_NAME_PATTERN,
+          },
+        },
       },
     },
   }, async (request, reply) => {
@@ -145,7 +154,8 @@ export function registerDeviceRoutes(
     const device = requireCredential(request, reply);
     if (!device) return;
     try {
-      await catalog!.getDeviceProfile(device.token);
+      const profile = await catalog!.getDeviceProfile(device.token);
+      rooms.disconnectUser(profile.id);
       return reply.code(204).send();
     } catch (error) {
       if (error instanceof CatalogError) return reply.code(error.status).send({ error: error.message });

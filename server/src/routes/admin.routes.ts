@@ -97,8 +97,8 @@ export function registerAdminRoutes(
           type: "object",
           additionalProperties: false,
           properties: {
-            from: { type: "string" },
-            to: { type: "string" },
+            from: { type: "string", minLength: 10, maxLength: 10, pattern: "^\\d{4}-\\d{2}-\\d{2}$" },
+            to: { type: "string", minLength: 10, maxLength: 10, pattern: "^\\d{4}-\\d{2}-\\d{2}$" },
           },
         },
       },

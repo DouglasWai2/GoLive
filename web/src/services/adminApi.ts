@@ -152,10 +152,22 @@ export function getAdminOverview(token: string, signal: AbortSignal) {
   );
 }
 
-export function listCatalog(token: string, kind: "rooms" | "profiles", signal?: AbortSignal) {
-  return requestJson<{ rooms?: CatalogRecord[]; profiles?: CatalogRecord[] }>(
-    `/admin/${kind}`, { method: "GET", headers: bearer(token) }, signal,
-  ).then((result) => kind === "rooms" ? result.rooms ?? [] : result.profiles ?? []);
+export async function listCatalog(
+  token: string,
+  kind: "rooms" | "profiles",
+  offset = 0,
+  signal?: AbortSignal,
+) {
+  const searchParams = new URLSearchParams({ limit: "100", offset: String(offset) });
+  const result = await requestJson<{
+    rooms?: CatalogRecord[];
+    profiles?: CatalogRecord[];
+    nextOffset: number | null;
+  }>(`/admin/${kind}`, { method: "GET", headers: bearer(token) }, signal, searchParams);
+  return {
+    records: kind === "rooms" ? result.rooms ?? [] : result.profiles ?? [],
+    nextOffset: typeof result.nextOffset === "number" ? result.nextOffset : null,
+  };
 }
 
 export function createCatalogRecord(token: string, kind: "rooms" | "profiles", data: { id?: string; name: string }) {

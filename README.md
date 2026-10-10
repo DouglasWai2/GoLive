@@ -18,6 +18,8 @@ cp server/.env.example server/.env
 export DATABASE_URL='postgres://golive:golive@localhost:5432/golive'
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f server/db/migrations/001_create_catalog.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f server/db/migrations/002_add_room_memberships.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f server/db/migrations/003_multi_room_profiles_and_retention.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f server/db/migrations/004_rate_limits_and_profile_activity.sql
 npm run dev -w server # in one terminal
 npm run dev -w web    # in another terminal
 ```
@@ -195,6 +197,9 @@ Set the server-side variables on the signaling server:
   cryptographically random secret with at least 32 bytes of entropy.
 - `ADMIN_SECRET` — required only to enable the admin dashboard.
 - `DATABASE_URL` — required PostgreSQL connection string. Apply the SQL migrations before starting the server.
+- `TRUST_PROXY` — optional trusted proxy hop count or comma-separated trusted IP/CIDR values. Configure only for the actual proxy chain; leaving it unset ignores forwarded IP headers.
+- `MAX_ROOMS_PER_DEVICE` — maximum persisted room grants per device (default `100`).
+- `MAX_MEMBERS_PER_ROOM` — maximum persisted device memberships per room (default `1000`).
 - Cloudflare TURN credentials and analytics variables, to relay connections
   that cannot go peer-to-peer until monthly egress reaches the switch limit.
 - ExpressTURN URLs and credentials, to provide the fallback relay service.
@@ -218,9 +223,12 @@ files (server and web) as templates.
 | `PORT` | `3000` | Port the signaling server listens on. |
 | `HOST` | `0.0.0.0` | Address the signaling server binds to. |
 | `ORIGIN` | — | CORS allow-origin for the web app. Required when the web app and server are on different origins. |
+| `TRUST_PROXY` | disabled | Trusted proxy hop count, `true` for a platform-controlled proxy, or comma-separated trusted IP/CIDR values. Configure only for the actual trusted chain; never trust forwarded headers from direct untrusted clients. |
 | `JWT_SECRET` | — | Required secret used to sign invite, room session, and admin JWTs. The server will not start without it. |
 | `ADMIN_SECRET` | — | Shared secret exchanged for a one-hour admin JWT. Admin endpoints are disabled unless this and `JWT_SECRET` are explicitly set. |
 | `DATABASE_URL` | — | PostgreSQL connection string, e.g. `postgres://golive:golive@localhost:5432/golive`. Required at server startup. Use durable storage in production. |
+| `MAX_ROOMS_PER_DEVICE` | `100` | Maximum saved room grants per device profile. |
+| `MAX_MEMBERS_PER_ROOM` | `1000` | Maximum persisted device memberships per room. |
 | `CLOUDFLARE_TURN_KEY_ID` | — | Cloudflare TURN key ID used by the server. |
 | `CLOUDFLARE_TURN_API_TOKEN` | — | Cloudflare API token used to generate temporary TURN credentials. |
 | `CLOUDFLARE_ACCOUNT_ID` | — | Cloudflare account ID, queried for TURN usage. |
@@ -246,9 +254,11 @@ only the current signaling-server process and reset when it restarts. The admin
 console provides CRUD for saved room IDs/names and guest profiles in
 PostgreSQL. Each invited device has one profile and can retain access to multiple
 rooms; manually created profiles are unclaimed. The display name belongs to the
-device profile and is shared across its rooms. Rooms with members cannot be
-deleted. When the final access grant is revoked, the room starts a 30-day empty
-retention period before the scheduled cleanup deletes it. Cloudflare
+device profile and is shared across its rooms. Rooms with access grants are
+retained even when nobody is connected. When the final grant is revoked, the
+room starts a 30-day empty retention period before the scheduled cleanup deletes
+it. Profiles without any room grant are removed after 90 days without
+authenticated device activity. Cloudflare
 TURN usage is queried separately for the current UTC month and cached for ten
 minutes. Historical connection counts, cross-instance live totals, and
 hosting-provider metrics are not collected.
@@ -258,6 +268,8 @@ All catalog endpoints require an admin JWT (`Authorization: Bearer <token>`):
 operations under `/admin/profiles`. Rooms use `{ id, name }` on create and
 `{ name }` on update; profiles use `{ name }` and receive a generated UUID.
 Admins can mint invites for unclaimed rooms using `POST /admin/rooms/:id/invite`.
+Catalog lists are paginated with `limit` (1–100, default 100) and `offset`
+(default 0); use the returned `nextOffset` to request the next page.
 `POST /room` creates a *new* room and its first device membership; it cannot
 claim a saved room by guessing its ID. Existing device credentials can create
 additional rooms without losing previous access. Room IDs, memberships, and
@@ -270,8 +282,11 @@ must have permission to create tables in its schema. SQL migrations live in
 `server/db/migrations/`, run in numeric order with `psql -v ON_ERROR_STOP=1`,
 and record applied versions in `schema_migrations`. Re-running them is safe.
 Migration 002 removes old rooms that had no verifiable owner. Migration 003
-enables multiple device-room memberships and marks empty rooms. Run these files
-before starting an upgraded server; the server only opens a database connection.
+enables multiple device-room memberships and marks empty rooms. Migration 004
+adds profile activity tracking, the shared PostgreSQL rate-limit store, and
+WebSocket connection leases. Run all migrations before starting an upgraded
+server; the server only opens a database connection and does not apply
+migrations automatically.
 
 ### Mobile (`mobile/.env`)
 
@@ -301,8 +316,31 @@ ones. New devices must still provide a display name when first creating a room
 or accepting an invite; known devices reuse their saved profile name.
 
 The Render Cron Job defined in `render.yaml` runs daily at 03:00 UTC and deletes
-only rooms with no device memberships for more than 30 days. Configure its
-`DATABASE_URL` to the signaling server's database; see `server/CRON.md`.
+rooms with no device memberships for more than 30 days, profiles with no room
+memberships and 90 days without device activity, and expired rate-limit counters.
+Expired WebSocket connection leases are pruned as well. Rooms with existing
+access grants are deliberately retained regardless of connection activity.
+Configure the Cron Job's `DATABASE_URL` to the signaling server's database; see
+`server/CRON.md`.
+
+HTTP JSON bodies are limited to 16 KiB. `/room` is limited to 5 requests/minute
+and 20 room creations per client IP/day; `/invite/verify` is limited to 5
+requests/minute and 300 verifications per client IP/day. Device routes use a
+30/minute per-IP limit, and the server also applies a 100/minute global HTTP
+limit. Admin catalog lists are limited to 10 requests/minute and catalog detail
+reads and mutations to 30 and 20 requests/minute, respectively. In production,
+HTTP rate-limit counters and WebSocket connection leases are stored in
+PostgreSQL so server instances share per-IP limits. WebSocket leases are renewed
+while connected and expire automatically after a process crash.
+Accurate per-client limits behind a proxy require setting `TRUST_PROXY` to the
+trusted proxy chain, never to an untrusted forwarded-header source. The
+WebSocket signaling protocol limits frames to 64 KiB and caps message rate and
+queued work per connection. It also limits each client IP to 20 concurrent
+WebSocket connections across server instances using expiring database leases.
+
+Devices can retain up to 100 room grants, and each room can have up to 1,000
+device memberships by default. Both limits can be adjusted with the environment
+variables above.
 
 Guests enter through a shareable invite token:
 

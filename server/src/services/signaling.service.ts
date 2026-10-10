@@ -1,17 +1,23 @@
 import type { WebSocket } from "ws";
+import { normalizeIP } from "@fastify/rate-limit";
 import type { ClientMessage, Membership } from "../types/message.js";
 import type { RoomToken } from "../types/room.js";
-import { send } from "../utils/ws.js";
+import { MAX_SIGNALING_MESSAGE_BYTES, send } from "../utils/ws.js";
 import { RoomService } from "./room.service.js";
 import type { CatalogService } from "./catalog.service.js";
+import { isValidRoomId } from "../utils/room-id.js";
+import { DISPLAY_NAME_PATTERN } from "../utils/validation.js";
 
 const MAX_CONNECTIONS_PER_IP = 20;
 const MAX_MESSAGES_PER_WINDOW = 120;
 const MESSAGE_WINDOW_MS = 10_000;
+const MAX_QUEUED_MESSAGES = 64;
+const MAX_QUEUED_BYTES = 512 * 1024;
 const MAX_PEERS_PER_ROOM = 10;
 const AUTH_TIMEOUT_MS = 10_000;
 const SESSION_REPLACED_CODE = 4001;
 const SESSION_REJECTED_CODE = 4003;
+const CONNECTION_LEASE_REFRESH_MS = 30_000;
 
 const connectionsByIp = new Map<string, number>();
 
@@ -23,12 +29,13 @@ export class SignalingService {
   ) {}
 
   handleConnection(socket: WebSocket, ip: string): void {
-    const connectionCount = connectionsByIp.get(ip) ?? 0;
+    const connectionKey = normalizeIP(ip);
+    const connectionCount = connectionsByIp.get(connectionKey) ?? 0;
     if (connectionCount >= MAX_CONNECTIONS_PER_IP) {
       socket.close(1008, "Too many connections");
       return;
     }
-    connectionsByIp.set(ip, connectionCount + 1);
+    connectionsByIp.set(connectionKey, connectionCount + 1);
 
     let session: RoomToken | undefined;
     let membership: Membership | undefined;
@@ -58,30 +65,62 @@ export class SignalingService {
     };
 
     let cleanedUp = false;
+    let sharedConnectionLease: string | undefined;
+    let connectionLeaseHeartbeat: ReturnType<typeof setInterval> | undefined;
 
     const cleanup = () => {
       if (cleanedUp) return;
       cleanedUp = true;
 
       clearTimeout(authTimeout);
+      if (connectionLeaseHeartbeat) clearInterval(connectionLeaseHeartbeat);
       leaveRoom();
 
-      const count = connectionsByIp.get(ip) ?? 0;
-      if (count <= 1) connectionsByIp.delete(ip);
-      else connectionsByIp.set(ip, count - 1);
+      const count = connectionsByIp.get(connectionKey) ?? 0;
+      if (count <= 1) connectionsByIp.delete(connectionKey);
+      else connectionsByIp.set(connectionKey, count - 1);
+
+      if (sharedConnectionLease && this.catalog) {
+        const leaseId = sharedConnectionLease;
+        sharedConnectionLease = undefined;
+        void this.catalog.releaseWebSocketConnection(leaseId).catch(() => {});
+      }
     };
 
-    const handleMessage = async (raw: Buffer | ArrayBuffer | Buffer[]) => {
-      const now = Date.now();
-      messageTimestamps.push(now);
-      while ((messageTimestamps[0] ?? 0) < now - MESSAGE_WINDOW_MS) {
-        messageTimestamps.shift();
-      }
-      if (messageTimestamps.length > MAX_MESSAGES_PER_WINDOW) {
-        socket.close(1008, "Rate limit exceeded");
-        return;
-      }
+    const catalog = this.catalog;
+    const connectionReady = catalog
+      ? catalog.acquireWebSocketConnection(connectionKey, MAX_CONNECTIONS_PER_IP).then((leaseId) => {
+        if (!leaseId) {
+          socket.close(1008, "Too many connections");
+          return false;
+        }
+        if (cleanedUp || socket.readyState !== socket.OPEN) {
+          void catalog.releaseWebSocketConnection(leaseId).catch(() => {});
+          return false;
+        }
 
+        sharedConnectionLease = leaseId;
+        connectionLeaseHeartbeat = setInterval(() => {
+          const currentLease = sharedConnectionLease;
+          if (!currentLease || cleanedUp) return;
+          void catalog.renewWebSocketConnection(currentLease).then((renewed) => {
+            if (!renewed && socket.readyState === socket.OPEN) {
+              socket.close(1011, "Connection quota expired");
+            }
+          }).catch(() => {
+            if (socket.readyState === socket.OPEN) socket.close(1011, "Connection quota unavailable");
+          });
+        }, CONNECTION_LEASE_REFRESH_MS);
+        connectionLeaseHeartbeat.unref?.();
+        return true;
+      }).catch(() => {
+        socket.close(1011, "Connection quota unavailable");
+        return false;
+      })
+      : Promise.resolve(true);
+
+    const handleMessage = async (raw: Buffer | ArrayBuffer | Buffer[]) => {
+      if (!await connectionReady) return;
       const message = parseMessage(raw);
       if (!message) {
         send(socket, { type: "error", message: "Invalid message." });
@@ -192,11 +231,47 @@ export class SignalingService {
       this.handleMessage(socket, message, membership);
     };
 
-    // Database authorization is asynchronous; preserve message order for
-    // auth, join, and WebRTC offers/candidates on each socket.
+    let queuedMessages = 0;
+    let queuedBytes = 0;
+
+    // Database authorization is asynchronous; preserve message order while
+    // bounding buffered work before it enters the serialized queue.
     let pending = Promise.resolve();
-    socket.on("message", (raw) => {
-      pending = pending.then(() => handleMessage(raw)).catch(() => {
+    socket.on("message", (raw, isBinary) => {
+      if (socket.readyState !== socket.OPEN) return;
+      if (isBinary) {
+        socket.close(1003, "Text messages required");
+        return;
+      }
+
+      const now = Date.now();
+      while (messageTimestamps.length > 0 && messageTimestamps[0]! < now - MESSAGE_WINDOW_MS) {
+        messageTimestamps.shift();
+      }
+      messageTimestamps.push(now);
+      if (messageTimestamps.length > MAX_MESSAGES_PER_WINDOW) {
+        socket.close(1008, "Rate limit exceeded");
+        return;
+      }
+
+      const rawBytes = rawMessageLength(raw);
+      if (
+        rawBytes > MAX_SIGNALING_MESSAGE_BYTES
+        || queuedMessages + 1 > MAX_QUEUED_MESSAGES
+        || queuedBytes + rawBytes > MAX_QUEUED_BYTES
+      ) {
+        socket.close(1008, "Too much pending signaling data");
+        return;
+      }
+
+      queuedMessages += 1;
+      queuedBytes += rawBytes;
+      pending = pending.then(async () => {
+        queuedMessages -= 1;
+        queuedBytes -= rawBytes;
+        if (socket.readyState !== socket.OPEN) return;
+        await handleMessage(raw);
+      }).catch(() => {
         socket.close(1011, "Signaling unavailable");
       });
     });
@@ -428,29 +503,63 @@ export class SignalingService {
   }
 }
 
+function rawMessageLength(raw: Buffer | ArrayBuffer | Buffer[]): number {
+  if (Buffer.isBuffer(raw)) return raw.byteLength;
+  if (raw instanceof ArrayBuffer) return raw.byteLength;
+  return raw.reduce((total, part) => total + part.byteLength, 0);
+}
+
+function rawMessageBuffer(raw: Buffer | ArrayBuffer | Buffer[]): Buffer {
+  if (Buffer.isBuffer(raw)) return raw;
+  if (raw instanceof ArrayBuffer) return Buffer.from(raw);
+  return Buffer.concat(raw);
+}
+
+const SESSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const DISPLAY_NAME_REGEX = new RegExp(DISPLAY_NAME_PATTERN);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
+  return Object.keys(value).every((key) => allowed.includes(key));
+}
+
 function parseMessage(raw: Buffer | ArrayBuffer | Buffer[]): ClientMessage | null {
   try {
-    const serialized = raw.toString();
-    if (serialized.length > 64_000) return null;
+    if (rawMessageLength(raw) > MAX_SIGNALING_MESSAGE_BYTES) return null;
+    const message = JSON.parse(rawMessageBuffer(raw).toString("utf8")) as Record<string, unknown>;
 
-    const message = JSON.parse(serialized) as Record<string, unknown>;
-
-    if (message.type === "auth" && typeof message.token === "string") {
+    if (
+      message.type === "auth"
+      && hasOnlyKeys(message, ["type", "token"])
+      && typeof message.token === "string"
+      && message.token.length > 0
+      && message.token.length <= 4096
+    ) {
       return { type: "auth", token: message.token };
     }
 
     if (
-      message.type === "join" &&
-      typeof message.room === "string" &&
-      typeof message.name === "string"
+      message.type === "join"
+      && hasOnlyKeys(message, ["type", "room", "name"])
+      && typeof message.room === "string"
+      && isValidRoomId(message.room)
+      && typeof message.name === "string"
+      && message.name.length > 0
+      && message.name.length <= 32
+      && message.name === message.name.trim()
+      && DISPLAY_NAME_REGEX.test(message.name)
     ) {
       return { type: "join", room: message.room, name: message.name };
     }
 
     if (
-      message.type === "signal" &&
-      typeof message.target === "string" &&
-      isSignalData(message.data)
+      message.type === "signal"
+      && hasOnlyKeys(message, ["type", "target", "channel", "data"])
+      && typeof message.target === "string"
+      && SESSION_ID_PATTERN.test(message.target)
     ) {
       if (
         message.channel !== undefined
@@ -460,16 +569,23 @@ function parseMessage(raw: Buffer | ArrayBuffer | Buffer[]): ClientMessage | nul
         return null;
       }
 
+      const data = parseSignalData(message.data);
+      if (!data) return null;
       const channel = message.channel === "voice" ? "voice" : "screen";
-      return { type: "signal", target: message.target, channel, data: message.data };
+      return { type: "signal", target: message.target, channel, data };
     }
 
-    if (message.type === "sharing" && typeof message.sharing === "boolean") {
+    if (
+      message.type === "sharing"
+      && hasOnlyKeys(message, ["type", "sharing"])
+      && typeof message.sharing === "boolean"
+    ) {
       return { type: "sharing", sharing: message.sharing };
     }
 
     if (
       message.type === "voice"
+      && hasOnlyKeys(message, ["type", "joined", "micMuted"])
       && typeof message.joined === "boolean"
       && typeof message.micMuted === "boolean"
     ) {
@@ -480,7 +596,12 @@ function parseMessage(raw: Buffer | ArrayBuffer | Buffer[]): ClientMessage | nul
       };
     }
 
-    if (message.type === "ping" && typeof message.timestamp === "number") {
+    if (
+      message.type === "ping"
+      && hasOnlyKeys(message, ["type", "timestamp"])
+      && typeof message.timestamp === "number"
+      && Number.isFinite(message.timestamp)
+    ) {
       return { type: "ping", timestamp: message.timestamp };
     }
 
@@ -490,17 +611,49 @@ function parseMessage(raw: Buffer | ArrayBuffer | Buffer[]): ClientMessage | nul
   }
 }
 
-function isSignalData(value: unknown): boolean {
-  if (!value || typeof value !== "object") return false;
+function parseSignalData(value: unknown): Record<string, unknown> | null {
+  if (!isRecord(value)) return null;
 
-  const signal = value as Record<string, unknown>;
-  if (signal.restartRequest === true) return true;
-  if (signal.candidate && typeof signal.candidate === "object") return true;
+  if (value.restartRequest === true) {
+    return hasOnlyKeys(value, ["restartRequest"]) ? { restartRequest: true } : null;
+  }
 
-  return (
-    signal.type === "offer"
-    || signal.type === "answer"
-    || signal.type === "pranswer"
-    || signal.type === "rollback"
-  ) && (signal.sdp === undefined || typeof signal.sdp === "string");
+  if (Object.hasOwn(value, "candidate")) {
+    const candidateValue = value.candidate;
+    if (!isRecord(candidateValue) || !hasOnlyKeys(value, ["candidate"])) return null;
+    if (!hasOnlyKeys(candidateValue, ["candidate", "sdpMid", "sdpMLineIndex", "usernameFragment"])) return null;
+
+    const candidate: Record<string, unknown> = {};
+    if (candidateValue.candidate !== undefined) {
+      if (typeof candidateValue.candidate !== "string" || candidateValue.candidate.length > 4096) return null;
+      candidate.candidate = candidateValue.candidate;
+    }
+    if (candidateValue.sdpMid !== undefined) {
+      if (candidateValue.sdpMid !== null && (typeof candidateValue.sdpMid !== "string" || candidateValue.sdpMid.length > 256)) return null;
+      candidate.sdpMid = candidateValue.sdpMid;
+    }
+    if (candidateValue.sdpMLineIndex !== undefined) {
+      if (
+        candidateValue.sdpMLineIndex !== null
+        && (!Number.isInteger(candidateValue.sdpMLineIndex)
+          || Number(candidateValue.sdpMLineIndex) < 0
+          || Number(candidateValue.sdpMLineIndex) > 255)
+      ) return null;
+      candidate.sdpMLineIndex = candidateValue.sdpMLineIndex;
+    }
+    if (candidateValue.usernameFragment !== undefined) {
+      if (candidateValue.usernameFragment !== null && (typeof candidateValue.usernameFragment !== "string" || candidateValue.usernameFragment.length > 256)) return null;
+      candidate.usernameFragment = candidateValue.usernameFragment;
+    }
+    return { candidate };
+  }
+
+  if (
+    (value.type === "offer" || value.type === "answer" || value.type === "pranswer" || value.type === "rollback")
+    && hasOnlyKeys(value, ["type", "sdp"])
+    && (value.sdp === undefined || (typeof value.sdp === "string" && value.sdp.length <= MAX_SIGNALING_MESSAGE_BYTES))
+  ) {
+    return value.sdp === undefined ? { type: value.type } : { type: value.type, sdp: value.sdp };
+  }
+  return null;
 }

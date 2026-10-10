@@ -1,4 +1,28 @@
 export const env = {
+  get trustProxy(): boolean | string[] | ((address: string, hop: number) => boolean) {
+    const value = process.env.TRUST_PROXY?.trim();
+    if (!value) return false;
+    if (/^\d+$/.test(value)) {
+      const trustedHops = Number(value);
+      if (!Number.isSafeInteger(trustedHops) || trustedHops < 1 || trustedHops > 10) return false;
+      return (_address, hop) => hop < trustedHops;
+    }
+    if (value.toLowerCase() === "true") return true;
+    if (value.toLowerCase() === "false") return false;
+    const proxies = value.split(",").map((entry) => entry.trim()).filter(Boolean);
+    return proxies.length ? proxies : false;
+  },
+
+  get maxRoomsPerDevice(): number {
+    const value = Number(process.env.MAX_ROOMS_PER_DEVICE ?? 100);
+    return Number.isInteger(value) && value > 0 ? value : 100;
+  },
+
+  get maxMembersPerRoom(): number {
+    const value = Number(process.env.MAX_MEMBERS_PER_ROOM ?? 1000);
+    return Number.isInteger(value) && value > 0 ? value : 1000;
+  },
+
   get port(): number {
     return Number(process.env.PORT ?? 3000);
   },

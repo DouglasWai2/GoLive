@@ -1,5 +1,7 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { normalizeIP } from "@fastify/rate-limit";
 import type { Pool, PoolClient } from "pg";
+import { env } from "../config/env.js";
 
 export type StoredRoom = {
   id: string;
@@ -29,11 +31,24 @@ export type Enrollment = DeviceMembership & { deviceToken: string };
 
 export type DeviceRoom = StoredRoom & { owner: boolean };
 
+type ResolvedDevice = { id: string; name: string };
+
 export class CatalogError extends Error {
   constructor(readonly status: number, message: string) { super(message); }
 }
 
 const DEVICE_TOKEN_PATTERN = /^([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\.([A-Za-z0-9_-]{43})$/i;
+const MAX_CATALOG_PAGE_SIZE = 100;
+const MAX_CATALOG_OFFSET = 100_000;
+
+function validateCatalogPage(limit: number, offset: number): void {
+  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_CATALOG_PAGE_SIZE) {
+    throw new RangeError(`limit must be between 1 and ${MAX_CATALOG_PAGE_SIZE}`);
+  }
+  if (!Number.isInteger(offset) || offset < 0 || offset > MAX_CATALOG_OFFSET) {
+    throw new RangeError(`offset must be between 0 and ${MAX_CATALOG_OFFSET}`);
+  }
+}
 
 function tokenHash(secret: string): string {
   return createHash("sha256").update(secret).digest("hex");
@@ -67,15 +82,32 @@ function profile(row: ProfileRow): GuestProfile {
 export class CatalogService {
   constructor(private readonly pool: Pool) {}
 
-  private async resolveDevice(client: PoolClient, deviceToken: string, lock = false): Promise<{ id: string; name: string } | null> {
+  private async resolveDevice(client: PoolClient, deviceToken: string, lock = false): Promise<ResolvedDevice | null> {
     const match = DEVICE_TOKEN_PATTERN.exec(deviceToken);
     if (!match) return null;
-    const result = await client.query<{ id: string; name: string; credential_hash: string }>(
-      `SELECT id, name, credential_hash FROM guest_profiles WHERE id = $1 ${lock ? "FOR UPDATE" : ""}`,
+    const result = await client.query<{ id: string; name: string; credential_hash: string; needs_touch: boolean }>(
+      `SELECT id, name, credential_hash,
+         last_seen_at < now() - interval '1 day' AS needs_touch
+       FROM guest_profiles WHERE id = $1 ${lock ? "FOR UPDATE" : ""}`,
       [match[1]],
     );
     const user = result.rows[0];
-    return user?.credential_hash === tokenHash(match[2]!) ? user : null;
+    if (!user || user.credential_hash !== tokenHash(match[2]!)) return null;
+
+    // Touch at most once per day so routine device checks do not write on every request.
+    if (user.needs_touch) {
+      const touched = await client.query(
+        `UPDATE guest_profiles SET last_seen_at = now()
+         WHERE id = $1 AND last_seen_at < now() - interval '1 day'
+         RETURNING id`,
+        [user.id],
+      );
+      if (!touched.rowCount) {
+        const stillExists = await client.query("SELECT 1 FROM guest_profiles WHERE id = $1", [user.id]);
+        if (!stillExists.rowCount) return null;
+      }
+    }
+    return { id: user.id, name: user.name };
   }
 
   async getMembership(deviceToken: string): Promise<DeviceMembership | null> {
@@ -178,6 +210,15 @@ export class CatalogService {
       if (deviceToken && !user) throw new CatalogError(401, "Invalid device credential");
       const trimmedName = name?.trim();
       if (!user && !trimmedName) throw new CatalogError(400, "Name is required");
+      if (user) {
+        const count = await client.query<{ count: string }>(
+          "SELECT count(*)::text AS count FROM room_memberships WHERE user_id = $1",
+          [user.id],
+        );
+        if (Number(count.rows[0]?.count ?? 0) >= env.maxRoomsPerDevice) {
+          throw new CatalogError(409, "Device room limit reached");
+        }
+      }
       const created = await client.query(
         "INSERT INTO rooms (id, name) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING RETURNING id",
         [roomId, `Room ${roomId}`],
@@ -205,6 +246,32 @@ export class CatalogService {
       // Lock the room so deletion and enrollment cannot race.
       const room = await client.query("SELECT 1 FROM rooms WHERE id = $1 AND generation = $2 FOR UPDATE", [roomId, generation]);
       if (!room.rowCount) throw new CatalogError(403, "Invite does not match this room.");
+
+      const existingMembership = user
+        ? await client.query(
+          "SELECT 1 FROM room_memberships WHERE user_id = $1 AND room_id = $2",
+          [user.id, roomId],
+        )
+        : { rowCount: 0 };
+      if (!existingMembership.rowCount) {
+        const roomCount = await client.query<{ count: string }>(
+          "SELECT count(*)::text AS count FROM room_memberships WHERE room_id = $1",
+          [roomId],
+        );
+        if (Number(roomCount.rows[0]?.count ?? 0) >= env.maxMembersPerRoom) {
+          throw new CatalogError(409, "Room membership limit reached");
+        }
+        if (user) {
+          const deviceCount = await client.query<{ count: string }>(
+            "SELECT count(*)::text AS count FROM room_memberships WHERE user_id = $1",
+            [user.id],
+          );
+          if (Number(deviceCount.rows[0]?.count ?? 0) >= env.maxRoomsPerDevice) {
+            throw new CatalogError(409, "Device room limit reached");
+          }
+        }
+      }
+
       let issuedToken = deviceToken;
       if (!user) {
         const trimmedName = name?.trim();
@@ -253,9 +320,17 @@ export class CatalogService {
     return Boolean(result.rowCount);
   }
 
-  async listRooms(): Promise<StoredRoom[]> {
-    const result = await this.pool.query<RoomRow>("SELECT * FROM rooms ORDER BY created_at DESC, id");
-    return result.rows.map(room);
+  async listRooms(limit = MAX_CATALOG_PAGE_SIZE, offset = 0): Promise<{ rooms: StoredRoom[]; nextOffset: number | null }> {
+    validateCatalogPage(limit, offset);
+    const result = await this.pool.query<RoomRow>(
+      "SELECT * FROM rooms ORDER BY created_at DESC, id LIMIT $1 OFFSET $2",
+      [limit + 1, offset],
+    );
+    const hasMore = result.rows.length > limit;
+    return {
+      rooms: result.rows.slice(0, limit).map(room),
+      nextOffset: hasMore && offset + limit <= MAX_CATALOG_OFFSET ? offset + limit : null,
+    };
   }
 
   async getRoom(id: string): Promise<StoredRoom | null> {
@@ -284,9 +359,17 @@ export class CatalogService {
     return Boolean(result.rowCount);
   }
 
-  async listProfiles(): Promise<GuestProfile[]> {
-    const result = await this.pool.query<ProfileRow>("SELECT * FROM guest_profiles ORDER BY created_at DESC, id");
-    return result.rows.map(profile);
+  async listProfiles(limit = MAX_CATALOG_PAGE_SIZE, offset = 0): Promise<{ profiles: GuestProfile[]; nextOffset: number | null }> {
+    validateCatalogPage(limit, offset);
+    const result = await this.pool.query<ProfileRow>(
+      "SELECT * FROM guest_profiles ORDER BY created_at DESC, id LIMIT $1 OFFSET $2",
+      [limit + 1, offset],
+    );
+    const hasMore = result.rows.length > limit;
+    return {
+      profiles: result.rows.slice(0, limit).map(profile),
+      nextOffset: hasMore && offset + limit <= MAX_CATALOG_OFFSET ? offset + limit : null,
+    };
   }
 
   async getProfile(id: string): Promise<GuestProfile | null> {
@@ -331,5 +414,71 @@ export class CatalogService {
       [days],
     );
     return result.rows.map((row) => row.id);
+  }
+
+  async cleanupUnusedProfiles(days: number): Promise<string[]> {
+    if (!Number.isInteger(days) || days < 1) throw new RangeError("days must be a positive integer");
+    const result = await this.pool.query<{ id: string }>(
+      `DELETE FROM guest_profiles AS profile
+       WHERE profile.last_seen_at < now() - make_interval(days => $1::integer)
+         AND NOT EXISTS (
+           SELECT 1 FROM room_memberships WHERE room_memberships.user_id = profile.id
+         )
+       RETURNING id`,
+      [days],
+    );
+    return result.rows.map((row) => row.id);
+  }
+
+  async cleanupExpiredRateLimits(): Promise<number> {
+    const result = await this.pool.query(
+      "DELETE FROM api_rate_limits WHERE expires_at <= now()",
+    );
+    return result.rowCount ?? 0;
+  }
+
+  async cleanupExpiredWebSocketConnections(): Promise<number> {
+    const result = await this.pool.query(
+      "DELETE FROM api_ws_connections WHERE expires_at <= now()",
+    );
+    return result.rowCount ?? 0;
+  }
+
+  async acquireWebSocketConnection(ip: string, maxConnections: number): Promise<string | null> {
+    const ipHash = createHash("sha256").update(normalizeIP(ip)).digest("hex");
+    return transaction(this.pool, async (client) => {
+      await client.query(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, 73492815))",
+        [ipHash],
+      );
+      await client.query(
+        "DELETE FROM api_ws_connections WHERE ip_hash = $1 AND expires_at <= now()",
+        [ipHash],
+      );
+      const count = await client.query<{ count: string }>(
+        "SELECT count(*)::text AS count FROM api_ws_connections WHERE ip_hash = $1",
+        [ipHash],
+      );
+      if (Number(count.rows[0]?.count ?? 0) >= maxConnections) return null;
+
+      const leaseId = randomUUID();
+      await client.query(
+        "INSERT INTO api_ws_connections (lease_id, ip_hash, expires_at) VALUES ($1, $2, now() + interval '2 minutes')",
+        [leaseId, ipHash],
+      );
+      return leaseId;
+    });
+  }
+
+  async renewWebSocketConnection(leaseId: string): Promise<boolean> {
+    const result = await this.pool.query(
+      "UPDATE api_ws_connections SET expires_at = now() + interval '2 minutes' WHERE lease_id = $1 AND expires_at > now()",
+      [leaseId],
+    );
+    return Boolean(result.rowCount);
+  }
+
+  async releaseWebSocketConnection(leaseId: string): Promise<void> {
+    await this.pool.query("DELETE FROM api_ws_connections WHERE lease_id = $1", [leaseId]);
   }
 }

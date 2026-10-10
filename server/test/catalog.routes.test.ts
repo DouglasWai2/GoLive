@@ -72,6 +72,11 @@ test("device profiles own multiple rooms, control room access, and retain a shar
     assert.equal(secondRoomResponse.statusCode, 200, secondRoomResponse.body);
     assert.equal(secondRoomResponse.json().session.name, "Primary profile");
 
+    const roomPage = await app.inject({ method: "GET", url: "/admin/rooms?limit=1&offset=0", headers: admin });
+    assert.equal(roomPage.statusCode, 200, roomPage.body);
+    assert.equal(roomPage.json<{ rooms: unknown[] }>().rooms.length, 1);
+    assert.equal(typeof roomPage.json<{ nextOffset: number | null }>().nextOffset, "number");
+
     const externalRoomResponse = await app.inject({ method: "POST", url: "/room", payload: { roomId: invitedId, name: "External owner" } });
     const external = externalRoomResponse.json<{ token: string; deviceToken: string; session: { userId: string } }>();
     testUserIds.push(external.session.userId);

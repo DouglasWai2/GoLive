@@ -3,11 +3,23 @@ import { isAdminConfigured } from "../controllers/admin.controller.js";
 import type { CatalogService } from "../services/catalog.service.js";
 import { RoomService } from "../services/room.service.js";
 import { ROOM_ID_PATTERN } from "../utils/room-id.js";
+import { DISPLAY_NAME_PATTERN } from "../utils/validation.js";
 
 const roomId = { type: "string", minLength: 8, maxLength: 64, pattern: ROOM_ID_PATTERN };
 const profileId = { type: "string", pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$" };
-const roomName = { type: "string", minLength: 1, maxLength: 80 };
-const guestName = { type: "string", minLength: 1, maxLength: 32 };
+const roomName = { type: "string", minLength: 1, maxLength: 80, pattern: DISPLAY_NAME_PATTERN };
+const guestName = { type: "string", minLength: 1, maxLength: 32, pattern: DISPLAY_NAME_PATTERN };
+const pageQuery = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    limit: { type: "integer", minimum: 1, maximum: 100 },
+    offset: { type: "integer", minimum: 0, maximum: 100_000 },
+  },
+};
+const catalogListRateLimit = { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } };
+const catalogReadRateLimit = { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } };
+const catalogWriteRateLimit = { config: { rateLimit: { max: 20, timeWindow: "1 minute" } } };
 const body = (properties: Record<string, unknown>) => ({
   type: "object", additionalProperties: false, required: Object.keys(properties), properties,
 });
@@ -32,16 +44,24 @@ export function registerCatalogRoutes(
     if (!catalog) return reply.code(503).send({ error: "Database unavailable" });
   };
 
-  app.get("/admin/rooms", { preHandler: guard }, async (_request, reply) =>
-    reply.header("Cache-Control", "no-store").send({ rooms: await catalog!.listRooms() }));
+  app.get("/admin/rooms", {
+    ...catalogListRateLimit,
+    preHandler: guard,
+    schema: { querystring: pageQuery },
+  }, async (request, reply) => {
+    const { limit, offset } = request.query as { limit?: number; offset?: number };
+    return reply.header("Cache-Control", "no-store").send(
+      await catalog!.listRooms(limit ?? 100, offset ?? 0),
+    );
+  });
 
-  app.get("/admin/rooms/:id", { preHandler: guard, schema: { params: params(roomId) } }, async (request, reply) => {
+  app.get("/admin/rooms/:id", { ...catalogReadRateLimit, preHandler: guard, schema: { params: params(roomId) } }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const found = await catalog!.getRoom(id);
     return found ? reply.header("Cache-Control", "no-store").send(found) : reply.code(404).send({ error: "Room not found" });
   });
 
-  app.post("/admin/rooms", { preHandler: guard, schema: { body: body({ id: roomId, name: roomName }) } }, async (request, reply) => {
+  app.post("/admin/rooms", { ...catalogWriteRateLimit, preHandler: guard, schema: { body: body({ id: roomId, name: roomName }) } }, async (request, reply) => {
     const { id, name } = request.body as { id: string; name: string };
     if (!name.trim()) return reply.code(400).send({ error: "Name is required" });
     const created = await catalog!.createRoom(id, name);
@@ -49,7 +69,7 @@ export function registerCatalogRoutes(
       : reply.code(409).send({ error: "Room already exists" });
   });
 
-  app.patch("/admin/rooms/:id", { preHandler: guard, schema: { params: params(roomId), body: body({ name: roomName }) } }, async (request, reply) => {
+  app.patch("/admin/rooms/:id", { ...catalogWriteRateLimit, preHandler: guard, schema: { params: params(roomId), body: body({ name: roomName }) } }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const { name } = request.body as { name: string };
     if (!name.trim()) return reply.code(400).send({ error: "Name is required" });
@@ -58,7 +78,7 @@ export function registerCatalogRoutes(
       : reply.code(404).send({ error: "Room not found" });
   });
 
-  app.post("/admin/rooms/:id/invite", { preHandler: guard, schema: { params: params(roomId) } }, async (request, reply) => {
+  app.post("/admin/rooms/:id/invite", { ...catalogWriteRateLimit, preHandler: guard, schema: { params: params(roomId) } }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const generation = await catalog!.getGeneration(id);
     if (!generation) return reply.code(404).send({ error: "Room not found" });
@@ -66,29 +86,37 @@ export function registerCatalogRoutes(
     return reply.header("Cache-Control", "no-store").send({ inviteToken });
   });
 
-  app.delete("/admin/rooms/:id", { preHandler: guard, schema: { params: params(roomId) } }, async (request, reply) => {
+  app.delete("/admin/rooms/:id", { ...catalogWriteRateLimit, preHandler: guard, schema: { params: params(roomId) } }, async (request, reply) => {
     const { id } = request.params as { id: string };
     if (rooms.isReserved(id) || await catalog!.hasMembers(id)) return reply.code(409).send({ error: "Room has members or an active session" });
     const deleted = await catalog!.deleteRoom(id);
     return deleted ? reply.code(204).send() : reply.code(404).send({ error: "Room not found" });
   });
 
-  app.get("/admin/profiles", { preHandler: guard }, async (_request, reply) =>
-    reply.header("Cache-Control", "no-store").send({ profiles: await catalog!.listProfiles() }));
+  app.get("/admin/profiles", {
+    ...catalogListRateLimit,
+    preHandler: guard,
+    schema: { querystring: pageQuery },
+  }, async (request, reply) => {
+    const { limit, offset } = request.query as { limit?: number; offset?: number };
+    return reply.header("Cache-Control", "no-store").send(
+      await catalog!.listProfiles(limit ?? 100, offset ?? 0),
+    );
+  });
 
-  app.get("/admin/profiles/:id", { preHandler: guard, schema: { params: params(profileId) } }, async (request, reply) => {
+  app.get("/admin/profiles/:id", { ...catalogReadRateLimit, preHandler: guard, schema: { params: params(profileId) } }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const found = await catalog!.getProfile(id);
     return found ? reply.header("Cache-Control", "no-store").send(found) : reply.code(404).send({ error: "Profile not found" });
   });
 
-  app.post("/admin/profiles", { preHandler: guard, schema: { body: body({ name: guestName }) } }, async (request, reply) => {
+  app.post("/admin/profiles", { ...catalogWriteRateLimit, preHandler: guard, schema: { body: body({ name: guestName }) } }, async (request, reply) => {
     const { name } = request.body as { name: string };
     if (!name.trim()) return reply.code(400).send({ error: "Name is required" });
     return reply.code(201).header("Cache-Control", "no-store").send(await catalog!.createProfile(name));
   });
 
-  app.patch("/admin/profiles/:id", { preHandler: guard, schema: { params: params(profileId), body: body({ name: guestName }) } }, async (request, reply) => {
+  app.patch("/admin/profiles/:id", { ...catalogWriteRateLimit, preHandler: guard, schema: { params: params(profileId), body: body({ name: guestName }) } }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const { name } = request.body as { name: string };
     if (!name.trim()) return reply.code(400).send({ error: "Name is required" });
@@ -97,7 +125,7 @@ export function registerCatalogRoutes(
       : reply.code(404).send({ error: "Profile not found" });
   });
 
-  app.delete("/admin/profiles/:id", { preHandler: guard, schema: { params: params(profileId) } }, async (request, reply) => {
+  app.delete("/admin/profiles/:id", { ...catalogWriteRateLimit, preHandler: guard, schema: { params: params(profileId) } }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const { deleted } = await catalog!.deleteProfile(id);
     if (deleted) {

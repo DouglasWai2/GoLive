@@ -9,6 +9,8 @@ import { registerErrorHandler } from "./middlewares/error-handler.js";
 import { registerRoutes } from "./routes/index.js";
 import { CatalogService } from "./services/catalog.service.js";
 import { connectDatabase } from "./db/connection.js";
+import { createPostgresRateLimitStore } from "./services/postgres-rate-limit.store.js";
+import { MAX_SIGNALING_MESSAGE_BYTES } from "./utils/ws.js";
 
 export async function buildApp() {
   const jwtSecret = env.jwtSecret;
@@ -19,13 +21,17 @@ export async function buildApp() {
   const pool = env.databaseUrl ? await connectDatabase(env.databaseUrl) : undefined;
   const catalog = pool ? new CatalogService(pool) : undefined;
 
-  const app = Fastify({ logger: true });
+  const app = Fastify({
+    logger: true,
+    trustProxy: env.trustProxy,
+    bodyLimit: 16 * 1024,
+  });
 
   if (pool) app.addHook("onClose", async () => pool.end());
 
   await app.register(websocket, {
     options: {
-      maxPayload: 128 * 1024,
+      maxPayload: MAX_SIGNALING_MESSAGE_BYTES,
       perMessageDeflate: false,
     },
   });
@@ -48,6 +54,7 @@ export async function buildApp() {
   await app.register(rateLimit, {
     max: 100,
     timeWindow: "1 minute",
+    ...(pool ? { store: createPostgresRateLimitStore(pool) } : {}),
   });
 
   registerErrorHandler(app);

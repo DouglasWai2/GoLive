@@ -10,7 +10,9 @@ type Props = { token: string; kind: Kind; onUnauthorized: () => void };
 
 export function CatalogManager({ token, kind, onUnauthorized }: Props) {
   const [records, setRecords] = useState<CatalogRecord[]>([]);
+  const [nextOffset, setNextOffset] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [name, setName] = useState("");
@@ -28,14 +30,30 @@ export function CatalogManager({ token, kind, onUnauthorized }: Props) {
 
   const refresh = useCallback(async (signal?: AbortSignal) => {
     try {
-      const result = await listCatalog(token, kind, signal);
-      if (!signal?.aborted) { setRecords(result); setError(""); }
+      const result = await listCatalog(token, kind, 0, signal);
+      if (!signal?.aborted) {
+        setRecords(result.records);
+        setNextOffset(result.nextOffset);
+        setError("");
+      }
     } catch (caught) {
       if (!signal?.aborted) handleError(caught);
     } finally {
       if (!signal?.aborted) setLoading(false);
     }
   }, [token, kind, handleError]);
+
+  const loadMore = async () => {
+    if (nextOffset === null || loadingMore || busy) return;
+    setLoadingMore(true);
+    setError("");
+    try {
+      const result = await listCatalog(token, kind, nextOffset);
+      setRecords((current) => [...current, ...result.records]);
+      setNextOffset(result.nextOffset);
+    } catch (caught) { handleError(caught); }
+    finally { setLoadingMore(false); }
+  };
 
   useEffect(() => {
     const controller = new AbortController();
@@ -91,7 +109,7 @@ export function CatalogManager({ token, kind, onUnauthorized }: Props) {
   const title = kind === "rooms" ? "Saved rooms" : "Guest profiles";
   return (
     <section className="admin-data-section admin-catalog" aria-label={title}>
-      <header><h2>{title}</h2><span>{records.length.toLocaleString()} total</span></header>
+      <header><h2>{title}</h2><span>{records.length.toLocaleString()}{nextOffset !== null ? "+" : ""} loaded</span></header>
       <p className="admin-catalog-note">{kind === "rooms"
         ? "Room records remain while at least one device has access. Rooms with members cannot be deleted."
         : "Joined devices appear here. Profiles created by admins have no device credential until enrollment is implemented."}</p>
@@ -122,6 +140,9 @@ export function CatalogManager({ token, kind, onUnauthorized }: Props) {
           </tr>)}</tbody>
         </table></div>
       ) : <p className="admin-empty-state">No {kind === "rooms" ? "saved rooms" : "guest profiles"} yet.</p>}
+      {nextOffset !== null && <button type="button" className="admin-action-button" onClick={() => void loadMore()} disabled={busy || loadingMore}>
+        {loadingMore ? "Loading…" : "Load more"}
+      </button>}
     </section>
   );
 }

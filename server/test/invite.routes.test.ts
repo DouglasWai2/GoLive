@@ -90,6 +90,13 @@ test("binds invites and guest sessions to the current room instance", async () =
     assert.equal(inviteClaims.roomId, "roomAAAA");
     assert.equal(inviteClaims.roomInstanceId, host.session.roomInstanceId);
 
+    const oversizedInvite = await app.inject({
+      method: "POST",
+      url: "/invite/verify",
+      payload: { roomId: "roomAAAA", name: "Guest", inviteToken: "x".repeat(4097) },
+    });
+    assert.equal(oversizedInvite.statusCode, 400);
+
     const wrongRoom = await app.inject({
       method: "POST",
       url: "/invite/verify",
@@ -131,6 +138,13 @@ test("rejects non-canonical room IDs instead of normalizing aliases", async () =
       });
       assert.equal(response.statusCode, 400, roomId);
     }
+
+    const controlCharacterName = await app.inject({
+      method: "POST",
+      url: "/room",
+      payload: { roomId: "roomCCCC", name: "Guest\nInjected" },
+    });
+    assert.equal(controlCharacterName.statusCode, 400);
   } finally {
     await app.close();
   }
@@ -298,6 +312,15 @@ test("authorizes and scopes room voice signaling", async () => {
       data: null,
     }));
     assert.equal((await malformedSignal).message, "Invalid message.");
+
+    const unexpectedCandidateField = nextMessage(hostSocket);
+    hostSocket.send(JSON.stringify({
+      type: "signal",
+      target: guestId,
+      channel: "voice",
+      data: { candidate: { candidate: "candidate:1", unknown: true } },
+    }));
+    assert.equal((await unexpectedCandidateField).message, "Invalid message.");
 
     const hostAccepted = nextMessage(hostSocket);
     const guestSawHost = nextMessage(guestSocket);

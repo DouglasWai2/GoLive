@@ -9,6 +9,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "tsx --test test/*.test.ts",
     "cleanup:empty-rooms": "node dist/scripts/cleanup-empty-rooms.js",
+    "cleanup:retention": "node dist/scripts/cleanup-empty-rooms.js",
     "start": "node dist/index.js"
   },
   "dependencies": {

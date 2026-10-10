@@ -9,6 +9,7 @@ class FakeWebSocket extends EventEmitter {
   readonly OPEN = 1;
   readyState = this.OPEN;
   readonly sent: Array<Record<string, unknown>> = [];
+  closeCode?: number;
 
   send(data: string): void {
     const message = JSON.parse(data) as Record<string, unknown>;
@@ -18,6 +19,7 @@ class FakeWebSocket extends EventEmitter {
 
   close(code = 1000): void {
     if (this.readyState !== this.OPEN) return;
+    this.closeCode = code;
     this.readyState = 3;
     this.emit("close", code, Buffer.alloc(0));
   }
@@ -87,5 +89,29 @@ test("answers keepalive pings from every room member after the host leaves", { t
   } finally {
     hostSocket.close();
     guestSocket.close();
+  }
+});
+
+test("closes a signaling socket before its pending message queue can grow without bound", async () => {
+  const rooms = new RoomService();
+  const host = rooms.createRoomSession("queue-room", "Host");
+  assert.ok(host);
+  const service = new SignalingService(rooms, (token) => token === "host-token" ? { ...host, host: true } : null);
+  const socket = new FakeWebSocket();
+  service.handleConnection(socket as unknown as WebSocket, "127.0.0.41");
+
+  try {
+    socket.receive({ type: "auth", token: "host-token" });
+    await waitForMessage(socket, "authenticated");
+    socket.receive({ type: "join", room: "queue-room", name: "Host" });
+    await waitForMessage(socket, "room-state");
+
+    for (let timestamp = 0; timestamp < 70; timestamp += 1) {
+      socket.receive({ type: "ping", timestamp });
+    }
+
+    assert.equal(socket.closeCode, 1008);
+  } finally {
+    socket.close();
   }
 });

@@ -1,9 +1,13 @@
 import type { FastifyInstance } from "fastify";
+import { normalizeIP } from "@fastify/rate-limit";
 import { createInviteController } from "../controllers/invite.controller.js";
 import { RoomService } from "../services/room.service.js";
 import { isRoomToken } from "../types/room.js";
 import { ROOM_ID_PATTERN } from "../utils/room-id.js";
+import { DISPLAY_NAME_PATTERN, DEVICE_TOKEN_LENGTH } from "../utils/validation.js";
 import type { CatalogService } from "../services/catalog.service.js";
+
+const DAILY_INVITE_VERIFICATION_LIMIT = 300;
 
 export function registerInviteRoutes(
   app: FastifyInstance,
@@ -11,6 +15,11 @@ export function registerInviteRoutes(
   catalog?: CatalogService,
 ): void {
   const controller = createInviteController(roomService, app, catalog);
+  const dailyVerificationLimit = app.createRateLimit({
+    max: DAILY_INVITE_VERIFICATION_LIMIT,
+    timeWindow: "1 day",
+    keyGenerator: (request) => `invite-verify:${normalizeIP(request.ip)}`,
+  });
 
   app.post(
     "/invite",
@@ -59,6 +68,14 @@ export function registerInviteRoutes(
           timeWindow: "1 minute",
         },
       },
+      preHandler: async (request, reply) => {
+        const result = await dailyVerificationLimit(request);
+        if (result.isAllowed || !result.isExceeded) return;
+        return reply
+          .code(429)
+          .header("Retry-After", String(result.ttlInSeconds))
+          .send({ error: "Daily invite verification limit exceeded" });
+      },
       schema: {
         body: {
           type: "object",
@@ -75,11 +92,18 @@ export function registerInviteRoutes(
               type: "string",
               minLength: 1,
               maxLength: 32,
+              pattern: DISPLAY_NAME_PATTERN,
             },
             inviteToken: {
               type: "string",
+              minLength: 1,
+              maxLength: 4096,
             },
-            deviceToken: { type: "string", minLength: 45, maxLength: 100 },
+            deviceToken: {
+              type: "string",
+              minLength: DEVICE_TOKEN_LENGTH,
+              maxLength: DEVICE_TOKEN_LENGTH,
+            },
           },
         },
       },
