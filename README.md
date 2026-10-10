@@ -9,20 +9,21 @@ peer-to-peer link.
 
 ## Run locally
 
-Requirements: Node.js 22 or newer, npm, PostgreSQL, and `psql`.
+Requirements: Node.js 22 or newer, npm, and Docker.
 
 ```bash
 npm install
+npm run db:start
 cp server/.env.example server/.env
-# Create the database, then set JWT_SECRET and DATABASE_URL in server/.env.
-export DATABASE_URL='postgres://golive:golive@localhost:5432/golive'
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f server/db/migrations/001_create_catalog.sql
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f server/db/migrations/002_add_room_memberships.sql
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f server/db/migrations/003_multi_room_profiles_and_retention.sql
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f server/db/migrations/004_rate_limits_and_profile_activity.sql
+# Set JWT_SECRET and DATABASE_URL in server/.env.
+# DATABASE_URL=postgres://golive:golive@localhost:5432/golive
 npm run dev -w server # in one terminal
 npm run dev -w web    # in another terminal
 ```
+
+The database runs in a Docker container and keeps its data in the
+`golive-local-postgres-data` volume. Start it again with `npm run db:start`; stop
+it with `npm run db:stop`.
 
 Open `http://localhost:5173`, create a room, and open its invite link in another
 browser or incognito window. Enter a different display name in each window, then
@@ -44,8 +45,9 @@ customize them (see [Environment variables](#environment-variables)).
 
 These instructions cover Android emulators and physical Android devices. Install
 Android Studio, an Android SDK/emulator, a compatible JDK, and `adb`. Run
-`npm install`, configure PostgreSQL and `server/.env`, apply the migrations, and
-start the signaling server and web app as described in [Run locally](#run-locally).
+`npm install`, start the local database with `npm run db:start`, configure
+`server/.env`, and start the signaling server and web app as described in
+[Run locally](#run-locally).
 Keep both processes running. The mobile app uses native WebRTC, so it needs an
 Expo **development build**; Expo Go cannot run it. Run all commands below from
 the repository root.
