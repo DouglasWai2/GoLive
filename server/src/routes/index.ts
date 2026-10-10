@@ -13,8 +13,9 @@ import { SystemMetricsService } from "../services/system-metrics.service.js";
 import { registerAdminRoutes } from "./admin.routes.js";
 import type { CatalogService } from "../services/catalog.service.js";
 import { registerDeviceRoutes } from "./device.routes.js";
+import type { NeonAuthVerifier } from "../services/neon-auth.service.js";
 
-export function registerRoutes(app: FastifyInstance, catalog?: CatalogService): void {
+export function registerRoutes(app: FastifyInstance, catalog?: CatalogService, verifyNeonAuth?: NeonAuthVerifier): void {
   const roomService = new RoomService();
   const turnService = new TurnService();
   const systemMetrics = new SystemMetricsService();
@@ -33,8 +34,8 @@ export function registerRoutes(app: FastifyInstance, catalog?: CatalogService): 
   registerHealthRoutes(app);
   registerSignalingRoutes(app, signalingService);
   registerTurnRoutes(app, roomService, turnService);
-  registerRoomRoutes(app, roomService, catalog);
-  registerInviteRoutes(app, roomService, catalog);
-  registerDeviceRoutes(app, roomService, catalog, signalingService);
+  registerRoomRoutes(app, roomService, catalog, verifyNeonAuth);
+  registerInviteRoutes(app, roomService, catalog, verifyNeonAuth);
+  registerDeviceRoutes(app, roomService, catalog, signalingService, verifyNeonAuth);
   registerAdminRoutes(app, roomService, turnService, systemMetrics, catalog);
 }

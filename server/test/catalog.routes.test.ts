@@ -30,15 +30,17 @@ async function connectAndJoin(
   return { socket, state: await state };
 }
 
-test("device profiles own multiple rooms, control room access, and retain a shared display name", {
+test("authenticated device profiles own multiple rooms while invite guests retain device access", {
   skip: !process.env.TEST_DATABASE_URL,
 }, async () => {
   const original = {
     DATABASE_URL: process.env.DATABASE_URL,
+    TRUST_PROXY: process.env.TRUST_PROXY,
     ADMIN_SECRET: process.env.ADMIN_SECRET,
     JWT_SECRET: process.env.JWT_SECRET,
   };
   process.env.DATABASE_URL = process.env.TEST_DATABASE_URL;
+  process.env.TRUST_PROXY = "1";
   process.env.ADMIN_SECRET = "test-admin-secret";
   process.env.JWT_SECRET = "test-jwt-secret-with-enough-entropy";
   const firstId = id();
@@ -49,16 +51,25 @@ test("device profiles own multiple rooms, control room access, and retain a shar
   const recentEmptyId = id();
   const testRoomIds = [firstId, secondId, invitedId, unrelatedId, staleEmptyId, recentEmptyId];
   const testUserIds: string[] = [];
+  const accountUserId = randomUUID();
   let app: Awaited<ReturnType<typeof buildApp>> | undefined;
+  let testIpSuffix = 1;
+  const testRequestHeaders = (headers: Record<string, string> = {}) => ({
+    ...headers,
+    "x-forwarded-for": `198.18.1.${testIpSuffix++}`,
+  });
   const pool = new Pool({ connectionString: process.env.TEST_DATABASE_URL });
   let hostSocket: WebSocket | undefined;
   let guestSocket: WebSocket | undefined;
 
   try {
-    app = await buildApp();
+    app = await buildApp({
+      verifyNeonAuth: async (token) => token === "test-account" ? { id: accountUserId } : null,
+    });
     const admin = { authorization: `Bearer ${app.jwt.sign({ kind: "admin" }, { expiresIn: 3600 })}` };
+    const account = { authorization: "Bearer test-account" };
 
-    const firstRoomResponse = await app.inject({ method: "POST", url: "/room", payload: { roomId: firstId, name: "Primary profile" } });
+    const firstRoomResponse = await app.inject({ method: "POST", url: "/room", headers: testRequestHeaders(account), payload: { roomId: firstId, name: "Primary profile" } });
     assert.equal(firstRoomResponse.statusCode, 200, firstRoomResponse.body);
     const primary = firstRoomResponse.json<{ token: string; deviceToken: string; session: { name: string; userId: string } }>();
     testUserIds.push(primary.session.userId);
@@ -67,6 +78,7 @@ test("device profiles own multiple rooms, control room access, and retain a shar
     const secondRoomResponse = await app.inject({
       method: "POST",
       url: "/room",
+      headers: testRequestHeaders(account),
       payload: { roomId: secondId, name: "Per-room alias", deviceToken: primary.deviceToken },
     });
     assert.equal(secondRoomResponse.statusCode, 200, secondRoomResponse.body);
@@ -77,48 +89,51 @@ test("device profiles own multiple rooms, control room access, and retain a shar
     assert.equal(roomPage.json<{ rooms: unknown[] }>().rooms.length, 1);
     assert.equal(typeof roomPage.json<{ nextOffset: number | null }>().nextOffset, "number");
 
-    const externalRoomResponse = await app.inject({ method: "POST", url: "/room", payload: { roomId: invitedId, name: "External owner" } });
+    const externalRoomResponse = await app.inject({ method: "POST", url: "/room", headers: testRequestHeaders(), payload: { roomId: invitedId, name: "External owner" } });
+    assert.equal(externalRoomResponse.statusCode, 200, externalRoomResponse.body);
     const external = externalRoomResponse.json<{ token: string; deviceToken: string; session: { userId: string } }>();
     testUserIds.push(external.session.userId);
-    const inviteResponse = await app.inject({ method: "POST", url: "/invite", headers: { authorization: `Bearer ${external.token}` }, payload: { roomId: invitedId } });
+    const inviteResponse = await app.inject({ method: "POST", url: "/invite", headers: testRequestHeaders({ authorization: `Bearer ${external.token}` }), payload: { roomId: invitedId } });
     const inviteToken = inviteResponse.json<{ inviteToken: string }>().inviteToken;
     const joinedByInvite = await app.inject({
       method: "POST",
       url: "/invite/verify",
+      headers: testRequestHeaders(account),
       payload: { roomId: invitedId, inviteToken, deviceToken: primary.deviceToken },
     });
     assert.equal(joinedByInvite.statusCode, 200, joinedByInvite.body);
     assert.equal(joinedByInvite.json().session.name, "Primary profile");
     assert.equal(app.jwt.verify<Record<string, unknown>>(joinedByInvite.json().token).host, false);
 
-    const roomsResponse = await app.inject({ method: "GET", url: "/device/rooms", headers: { authorization: `Bearer ${primary.deviceToken}` } });
+    const primaryDeviceHeaders = { authorization: "Bearer test-account", "x-device-token": primary.deviceToken };
+    const roomsResponse = await app.inject({ method: "GET", url: "/device/rooms", headers: primaryDeviceHeaders });
     assert.equal(roomsResponse.statusCode, 200, roomsResponse.body);
     const listedRoomIds = roomsResponse.json<{ rooms: Array<{ id: string; owner: boolean }> }>().rooms.map((room) => room.id);
     assert.deepEqual(new Set(listedRoomIds), new Set([firstId, secondId, invitedId]));
     assert.equal(roomsResponse.json<{ rooms: Array<{ id: string; owner: boolean }> }>().rooms.find((room) => room.id === invitedId)?.owner, false);
     assert.equal((await app.inject({ method: "GET", url: "/device/rooms" })).statusCode, 401);
     assert.equal((await app.inject({ method: "DELETE", url: "/device/room", headers: { authorization: `Bearer ${primary.deviceToken}` } })).statusCode, 204);
-    assert.equal((await app.inject({ method: "GET", url: "/device/rooms", headers: { authorization: `Bearer ${primary.deviceToken}` } })).json().rooms.length, 3);
+    assert.equal((await app.inject({ method: "GET", url: "/device/rooms", headers: primaryDeviceHeaders })).json().rooms.length, 3);
 
-    const unrelatedResponse = await app.inject({ method: "POST", url: "/room", payload: { roomId: unrelatedId, name: "Unrelated" } });
+    const unrelatedResponse = await app.inject({ method: "POST", url: "/room", headers: testRequestHeaders(), payload: { roomId: unrelatedId, name: "Unrelated" } });
     assert.equal(unrelatedResponse.statusCode, 200);
     const unrelated = unrelatedResponse.json<{ deviceToken: string; session: { userId: string } }>();
     testUserIds.push(unrelated.session.userId);
     const forbiddenSession = await app.inject({
       method: "POST",
       url: `/device/rooms/${unrelatedId}/session`,
-      headers: { authorization: `Bearer ${primary.deviceToken}` },
+      headers: primaryDeviceHeaders,
     });
     assert.equal(forbiddenSession.statusCode, 404);
-    assert.equal((await app.inject({ method: "GET", url: "/device/rooms", headers: { authorization: `Bearer ${primary.deviceToken}` } })).json().rooms.some((room: { id: string }) => room.id === unrelatedId), false);
+    assert.equal((await app.inject({ method: "GET", url: "/device/rooms", headers: primaryDeviceHeaders })).json().rooms.some((room: { id: string }) => room.id === unrelatedId), false);
     assert.equal((await app.inject({ method: "POST", url: `/device/rooms/${unrelatedId}/session`, headers: { authorization: `Bearer ${unrelated.deviceToken}` } })).statusCode, 200);
 
-    const profileResponse = await app.inject({ method: "GET", url: "/device/profile", headers: { authorization: `Bearer ${primary.deviceToken}` } });
+    const profileResponse = await app.inject({ method: "GET", url: "/device/profile", headers: primaryDeviceHeaders });
     assert.equal(profileResponse.statusCode, 200);
     assert.equal(profileResponse.json().name, "Primary profile");
     assert.equal(profileResponse.json().id, undefined);
 
-    const roomSessionResponse = await app.inject({ method: "POST", url: `/device/rooms/${firstId}/session`, headers: { authorization: `Bearer ${primary.deviceToken}` } });
+    const roomSessionResponse = await app.inject({ method: "POST", url: `/device/rooms/${firstId}/session`, headers: primaryDeviceHeaders });
     assert.equal(roomSessionResponse.statusCode, 200, roomSessionResponse.body);
     const primarySession = roomSessionResponse.json<{ token: string; session: { name: string } }>();
 
@@ -168,12 +183,12 @@ test("device profiles own multiple rooms, control room access, and retain a shar
     guestSocket = undefined;
 
     const hostClosed = once(hostSocket, "close");
-    const revokeOneRoom = await app.inject({ method: "DELETE", url: `/device/rooms/${firstId}`, headers: { authorization: `Bearer ${primary.deviceToken}` } });
+    const revokeOneRoom = await app.inject({ method: "DELETE", url: `/device/rooms/${firstId}`, headers: primaryDeviceHeaders });
     assert.equal(revokeOneRoom.statusCode, 204);
     assert.equal((await hostClosed)[0], 4003);
     hostSocket = undefined;
-    assert.equal((await app.inject({ method: "POST", url: `/device/rooms/${firstId}/session`, headers: { authorization: `Bearer ${primary.deviceToken}` } })).statusCode, 404);
-    const remaining = (await app.inject({ method: "GET", url: "/device/rooms", headers: { authorization: `Bearer ${primary.deviceToken}` } })).json().rooms.map((room: { id: string }) => room.id);
+    assert.equal((await app.inject({ method: "POST", url: `/device/rooms/${firstId}/session`, headers: primaryDeviceHeaders })).statusCode, 404);
+    const remaining = (await app.inject({ method: "GET", url: "/device/rooms", headers: primaryDeviceHeaders })).json().rooms.map((room: { id: string }) => room.id);
     assert.deepEqual(new Set(remaining), new Set([secondId, invitedId]));
 
     assert.equal((await app.inject({ method: "POST", url: "/admin/rooms", headers: admin, payload: { id: staleEmptyId, name: "Old empty room" } })).statusCode, 201);

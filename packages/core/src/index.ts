@@ -43,6 +43,7 @@ export {
   parseInviteUrl,
 } from "./signaling";
 export type { DeviceProfile, DeviceRoom, JoinRoomResult, InviteLink } from "./signaling";
+export { fetchNeonAuthToken, NeonAuthTokenError } from "./neonAuth";
 export {
   getSelectedIceRoute,
   logSelectedIceRoute,

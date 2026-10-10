@@ -16,6 +16,8 @@ import { Brand } from "../components/Brand";
 import { BackIcon } from "../components/icons";
 import { SIGNALING_URL } from "../config";
 import { loadDeviceToken, saveDeviceToken } from "../session";
+import { getNativeAuthAccessToken } from "../auth";
+import { NeonAuthTokenError } from "@golive/core";
 import { colors, radii, raisedSurface, technicalText } from "../theme";
 
 type NameGateScreenProps = {
@@ -24,6 +26,7 @@ type NameGateScreenProps = {
   initialName: string;
   onBack: () => void;
   onJoined: (name: string, token: string) => void;
+  onAuthExpired: (error: NeonAuthTokenError) => void;
 };
 
 export function NameGateScreen({
@@ -32,6 +35,7 @@ export function NameGateScreen({
   initialName,
   onBack,
   onJoined,
+  onAuthExpired,
 }: NameGateScreenProps) {
   const [name, setName] = useState(initialName);
   const [isJoining, setIsJoining] = useState(false);
@@ -48,8 +52,17 @@ export function NameGateScreen({
     try {
       const currentDeviceToken = await loadDeviceToken();
       const { token, deviceToken } = inviteToken
-        ? await verifyInvite(SIGNALING_URL, roomId, trimmed, inviteToken, currentDeviceToken ?? undefined)
-        : await joinRoom(SIGNALING_URL, roomId, trimmed, currentDeviceToken ?? undefined);
+        ? await verifyInvite(
+            SIGNALING_URL, roomId, trimmed, inviteToken, currentDeviceToken ?? undefined,
+            await getNativeAuthAccessToken() ?? undefined,
+          )
+        : await joinRoom(
+            SIGNALING_URL,
+            roomId,
+            trimmed,
+            currentDeviceToken ?? undefined,
+            await getNativeAuthAccessToken() ?? undefined,
+          );
 
       if (!deviceToken) throw new Error("Missing device credential");
       await saveDeviceToken(deviceToken);
@@ -57,6 +70,9 @@ export function NameGateScreen({
     } catch (caught) {
       if (caught instanceof TypeError) {
         setError("Could not reach GoLive. Check your connection and try again.");
+      } else if (caught instanceof NeonAuthTokenError) {
+        onAuthExpired(caught);
+        setError(caught.message);
       } else if (
         inviteToken &&
         caught instanceof Error &&
@@ -65,6 +81,10 @@ export function NameGateScreen({
         setError("This invite is invalid or has expired.");
       } else if (caught instanceof Error && caught.message.endsWith(": 403")) {
         setError("This room requires an invite link to join.");
+      } else if (caught instanceof Error && caught.message.endsWith(": 409")) {
+        setError(caught.message.includes("Guests can keep access")
+          ? "Remove access to your current room before creating another, or sign in with Google."
+          : "You already have five active rooms. End one before creating another.");
       } else {
         setError("Could not enter the room. Try again in a moment.");
       }

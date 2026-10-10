@@ -27,11 +27,16 @@ export type DeviceMembership = {
   owner: boolean;
 };
 
-export type Enrollment = DeviceMembership & { deviceToken: string };
+export type Enrollment = DeviceMembership & { deviceToken: string; replacedRoomIds?: string[] };
 
 export type DeviceRoom = StoredRoom & { owner: boolean };
 
-type ResolvedDevice = { id: string; name: string };
+type ResolvedDevice = {
+  id: string;
+  name: string;
+  auth_user_id: string | null;
+  guest_room_id: string | null;
+};
 
 export class CatalogError extends Error {
   constructor(readonly status: number, message: string) { super(message); }
@@ -82,17 +87,22 @@ function profile(row: ProfileRow): GuestProfile {
 export class CatalogService {
   constructor(private readonly pool: Pool) {}
 
-  private async resolveDevice(client: PoolClient, deviceToken: string, lock = false): Promise<ResolvedDevice | null> {
+  private async resolveDevice(
+    client: PoolClient,
+    deviceToken: string,
+    lock = false,
+    authUserId?: string,
+  ): Promise<ResolvedDevice | null> {
     const match = DEVICE_TOKEN_PATTERN.exec(deviceToken);
     if (!match) return null;
-    const result = await client.query<{ id: string; name: string; credential_hash: string; needs_touch: boolean }>(
-      `SELECT id, name, credential_hash,
+    const result = await client.query<ResolvedDevice & { credential_hash: string; needs_touch: boolean }>(
+      `SELECT id, name, credential_hash, auth_user_id, guest_room_id,
          last_seen_at < now() - interval '1 day' AS needs_touch
-       FROM guest_profiles WHERE id = $1 ${lock ? "FOR UPDATE" : ""}`,
+       FROM guest_profiles WHERE id = $1 ${lock || authUserId ? "FOR UPDATE" : ""}`,
       [match[1]],
     );
     const user = result.rows[0];
-    if (!user || user.credential_hash !== tokenHash(match[2]!)) return null;
+    if (user?.credential_hash !== tokenHash(match[2]!)) return null;
 
     // Touch at most once per day so routine device checks do not write on every request.
     if (user.needs_touch) {
@@ -107,48 +117,110 @@ export class CatalogService {
         if (!stillExists.rowCount) return null;
       }
     }
-    return { id: user.id, name: user.name };
+    if (authUserId) {
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`golive:room-owner:${authUserId}`]);
+      if (user.auth_user_id && user.auth_user_id !== authUserId) {
+        throw new CatalogError(403, "This device profile is linked to a different Google account.");
+      }
+      if (!user.auth_user_id) {
+        await client.query("UPDATE guest_profiles SET auth_user_id = $2 WHERE id = $1", [user.id, authUserId]);
+        user.auth_user_id = authUserId;
+      }
+    }
+    return user;
   }
 
-  async getMembership(deviceToken: string): Promise<DeviceMembership | null> {
+  async getDeviceAuthUserId(deviceToken: string): Promise<string | null> {
+    const match = DEVICE_TOKEN_PATTERN.exec(deviceToken);
+    if (!match) throw new CatalogError(401, "Invalid device credential");
+    const result = await this.pool.query<{ credential_hash: string; auth_user_id: string | null }>(
+      "SELECT credential_hash, auth_user_id FROM guest_profiles WHERE id = $1", [match[1]],
+    );
+    const profile = result.rows[0];
+    if (!profile || profile.credential_hash !== tokenHash(match[2]!)) {
+      throw new CatalogError(401, "Invalid device credential");
+    }
+    return profile.auth_user_id;
+  }
+
+  private async guestRoomForDevice(
+    client: PoolClient,
+    user: { id: string; auth_user_id: string | null; guest_room_id: string | null },
+    authUserId?: string,
+  ): Promise<string | null> {
+    if (authUserId) return null;
+    if (user.auth_user_id) return user.guest_room_id;
+    if (user.guest_room_id) return user.guest_room_id;
+
+    // Older guest profiles may not have a current-room pointer yet.
+    const result = await client.query<{ room_id: string }>(
+      `SELECT room_memberships.room_id
+       FROM room_memberships
+       JOIN rooms ON rooms.id = room_memberships.room_id
+       WHERE room_memberships.user_id = $1
+       ORDER BY rooms.created_at DESC, rooms.id LIMIT 1`,
+      [user.id],
+    );
+    return result.rows[0]?.room_id ?? null;
+  }
+
+  async getMembership(deviceToken: string, authUserId?: string): Promise<DeviceMembership | null> {
     return transaction(this.pool, async (client) => {
-      const user = await this.resolveDevice(client, deviceToken);
+      const user = await this.resolveDevice(client, deviceToken, false, authUserId);
       if (!user) throw new CatalogError(401, "Invalid device credential");
+      const guestRoomId = await this.guestRoomForDevice(client, user, authUserId);
       const result = await client.query<{ room_id: string; owner: boolean }>(
         `SELECT room_memberships.room_id, room_memberships.owner
          FROM room_memberships
          JOIN rooms ON rooms.id = room_memberships.room_id
          WHERE room_memberships.user_id = $1
-         ORDER BY rooms.created_at DESC, rooms.id LIMIT 1`, [user.id],
+           AND CASE WHEN $2::varchar IS NOT NULL
+             THEN (room_memberships.owner = false OR rooms.owner_auth_user_id = $2)
+             ELSE room_memberships.room_id = $3
+           END
+         ORDER BY rooms.created_at DESC, rooms.id LIMIT 1`,
+        [user.id, authUserId ?? null, guestRoomId],
       );
       const member = result.rows[0];
       return member ? { userId: user.id, roomId: member.room_id, name: user.name, owner: member.owner } : null;
     });
   }
 
-  async listDeviceRooms(deviceToken: string): Promise<DeviceRoom[]> {
+  async listDeviceRooms(deviceToken: string, authUserId?: string): Promise<DeviceRoom[]> {
     return transaction(this.pool, async (client) => {
-      const user = await this.resolveDevice(client, deviceToken);
+      const user = await this.resolveDevice(client, deviceToken, false, authUserId);
       if (!user) throw new CatalogError(401, "Invalid device credential");
+      const guestRoomId = await this.guestRoomForDevice(client, user, authUserId);
       const result = await client.query<RoomRow & { owner: boolean }>(
         `SELECT rooms.id, rooms.name, rooms.created_at, rooms.updated_at, room_memberships.owner
          FROM room_memberships
          JOIN rooms ON rooms.id = room_memberships.room_id
-         WHERE room_memberships.user_id = $1
-         ORDER BY rooms.created_at DESC, rooms.id`,
-        [user.id],
+           WHERE room_memberships.user_id = $1
+             AND CASE WHEN $2::varchar IS NOT NULL
+               THEN (room_memberships.owner = false OR rooms.owner_auth_user_id = $2)
+               ELSE room_memberships.room_id = $3
+             END
+           ORDER BY rooms.created_at DESC, rooms.id`,
+        [user.id, authUserId ?? null, guestRoomId],
       );
       return result.rows.map((row) => ({ ...room(row), owner: row.owner }));
     });
   }
 
-  async getDeviceMembership(deviceToken: string, roomId: string): Promise<DeviceMembership | null> {
+  async getDeviceMembership(deviceToken: string, roomId: string, authUserId?: string): Promise<DeviceMembership | null> {
     return transaction(this.pool, async (client) => {
-      const user = await this.resolveDevice(client, deviceToken);
+      const user = await this.resolveDevice(client, deviceToken, false, authUserId);
       if (!user) throw new CatalogError(401, "Invalid device credential");
+      const guestRoomId = await this.guestRoomForDevice(client, user, authUserId);
       const result = await client.query<{ owner: boolean }>(
-        "SELECT owner FROM room_memberships WHERE user_id = $1 AND room_id = $2",
-        [user.id, roomId],
+        `SELECT room_memberships.owner FROM room_memberships
+         JOIN rooms ON rooms.id = room_memberships.room_id
+         WHERE user_id = $1 AND room_id = $2
+           AND CASE WHEN $3::varchar IS NOT NULL
+             THEN (room_memberships.owner = false OR rooms.owner_auth_user_id = $3)
+             ELSE room_memberships.room_id = $4
+           END`,
+        [user.id, roomId, authUserId ?? null, guestRoomId],
       );
       const member = result.rows[0];
       return member ? { userId: user.id, roomId, name: user.name, owner: member.owner } : null;
@@ -167,9 +239,9 @@ export class CatalogService {
     return member ? { userId, roomId, name: member.name, owner: member.owner } : null;
   }
 
-  async getDeviceProfile(deviceToken: string): Promise<GuestProfile> {
+  async getDeviceProfile(deviceToken: string, authUserId?: string): Promise<GuestProfile> {
     return transaction(this.pool, async (client) => {
-      const user = await this.resolveDevice(client, deviceToken);
+      const user = await this.resolveDevice(client, deviceToken, false, authUserId);
       if (!user) throw new CatalogError(401, "Invalid device credential");
       const result = await client.query<ProfileRow>(
         "SELECT id, name, created_at, updated_at FROM guest_profiles WHERE id = $1",
@@ -179,9 +251,9 @@ export class CatalogService {
     });
   }
 
-  async updateDeviceProfile(deviceToken: string, name: string): Promise<{ userId: string; profile: GuestProfile }> {
+  async updateDeviceProfile(deviceToken: string, name: string, authUserId?: string): Promise<{ userId: string; profile: GuestProfile }> {
     return transaction(this.pool, async (client) => {
-      const user = await this.resolveDevice(client, deviceToken, true);
+      const user = await this.resolveDevice(client, deviceToken, true, authUserId);
       if (!user) throw new CatalogError(401, "Invalid device credential");
       const result = await client.query<ProfileRow>(
         `UPDATE guest_profiles SET name = $2, updated_at = now()
@@ -204,10 +276,30 @@ export class CatalogService {
     return result.rows[0]?.generation ?? null;
   }
 
-  async createOwnedRoom(roomId: string, name: string | undefined, deviceToken?: string): Promise<Enrollment> {
+  async createOwnedRoom(
+    roomId: string,
+    name: string | undefined,
+    deviceToken?: string,
+    authUserId?: string,
+  ): Promise<Enrollment> {
     return transaction(this.pool, async (client) => {
-      let user = deviceToken ? await this.resolveDevice(client, deviceToken, true) : null;
+      if (authUserId) {
+        await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`golive:room-owner:${authUserId}`]);
+      }
+
+      let user = deviceToken ? await this.resolveDevice(client, deviceToken, true, authUserId) : null;
       if (deviceToken && !user) throw new CatalogError(401, "Invalid device credential");
+
+      if (authUserId) {
+        const active = await client.query<{ count: string }>(
+          "SELECT count(*)::text AS count FROM rooms WHERE owner_auth_user_id = $1 AND empty_since IS NULL",
+          [authUserId],
+        );
+        if (Number(active.rows[0]?.count ?? 0) >= 5) {
+          throw new CatalogError(409, "You already have five active rooms. End one before creating another.");
+        }
+      }
+
       const trimmedName = name?.trim();
       if (!user && !trimmedName) throw new CatalogError(400, "Name is required");
       if (user) {
@@ -219,9 +311,35 @@ export class CatalogService {
           throw new CatalogError(409, "Device room limit reached");
         }
       }
+      let replacedRoomIds: string[] = [];
+      if (user && !authUserId) {
+        if (user.auth_user_id) {
+          const existing = await client.query<{ room_id: string }>(
+            "SELECT room_id FROM room_memberships WHERE user_id = $1", [user.id],
+          );
+          replacedRoomIds = existing.rows.map((row) => row.room_id);
+          if (user.guest_room_id) {
+            const removed = await client.query<{ room_id: string }>(
+              "DELETE FROM room_memberships WHERE user_id = $1 AND room_id = $2 RETURNING room_id",
+              [user.id, user.guest_room_id],
+            );
+            for (const replacedRoomId of removed.rows.map((row) => row.room_id)) {
+              await this.markEmptyRoom(client, replacedRoomId);
+            }
+          }
+        } else {
+          const removed = await client.query<{ room_id: string }>(
+            "DELETE FROM room_memberships WHERE user_id = $1 RETURNING room_id",
+            [user.id],
+          );
+          replacedRoomIds = removed.rows.map((row) => row.room_id);
+          for (const replacedRoomId of replacedRoomIds) await this.markEmptyRoom(client, replacedRoomId);
+        }
+      }
       const created = await client.query(
-        "INSERT INTO rooms (id, name) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING RETURNING id",
-        [roomId, `Room ${roomId}`],
+        `INSERT INTO rooms (id, name, owner_auth_user_id)
+         VALUES ($1, $2, $3) ON CONFLICT (id) DO NOTHING RETURNING id`,
+        [roomId, `Room ${roomId}`, authUserId ?? null],
       );
       if (!created.rowCount) throw new CatalogError(403, "This room requires an invite to join.");
       let issuedToken = deviceToken;
@@ -229,19 +347,37 @@ export class CatalogService {
         const id = randomUUID();
         const secret = randomBytes(32).toString("base64url");
         issuedToken = `${id}.${secret}`;
-        await client.query("INSERT INTO guest_profiles (id, name, credential_hash) VALUES ($1, $2, $3)",
-          [id, trimmedName, tokenHash(secret)]);
-        user = { id, name: trimmedName! };
+        await client.query(
+          "INSERT INTO guest_profiles (id, name, credential_hash, auth_user_id, guest_room_id) VALUES ($1, $2, $3, $4, $5)",
+          [id, trimmedName, tokenHash(secret), authUserId ?? null, authUserId ? null : roomId],
+        );
+        user = { id, name: trimmedName!, auth_user_id: authUserId ?? null, guest_room_id: authUserId ? null : roomId };
       }
       await client.query("INSERT INTO room_memberships (user_id, room_id, owner) VALUES ($1, $2, true)", [user.id, roomId]);
       await client.query("UPDATE rooms SET empty_since = NULL WHERE id = $1", [roomId]);
-      return { userId: user.id, roomId, name: user.name, owner: true, deviceToken: issuedToken! };
+      if (!authUserId) {
+        await client.query("UPDATE guest_profiles SET guest_room_id = $2 WHERE id = $1", [user.id, roomId]);
+      }
+      return {
+        userId: user.id,
+        roomId,
+        name: user.name,
+        owner: true,
+        deviceToken: issuedToken!,
+        ...(replacedRoomIds.length ? { replacedRoomIds } : {}),
+      };
     });
   }
 
-  async joinByInvite(roomId: string, generation: string, name: string | undefined, deviceToken?: string): Promise<Enrollment> {
+  async joinByInvite(
+    roomId: string,
+    generation: string,
+    name: string | undefined,
+    deviceToken?: string,
+    authUserId?: string,
+  ): Promise<Enrollment> {
     return transaction(this.pool, async (client) => {
-      let user = deviceToken ? await this.resolveDevice(client, deviceToken, true) : null;
+      let user = deviceToken ? await this.resolveDevice(client, deviceToken, true, authUserId) : null;
       if (deviceToken && !user) throw new CatalogError(401, "Invalid device credential");
       // Lock the room so deletion and enrollment cannot race.
       const room = await client.query("SELECT 1 FROM rooms WHERE id = $1 AND generation = $2 FOR UPDATE", [roomId, generation]);
@@ -279,9 +415,38 @@ export class CatalogService {
         const id = randomUUID();
         const secret = randomBytes(32).toString("base64url");
         issuedToken = `${id}.${secret}`;
-        await client.query("INSERT INTO guest_profiles (id, name, credential_hash) VALUES ($1, $2, $3)",
-          [id, trimmedName, tokenHash(secret)]);
-        user = { id, name: trimmedName };
+        await client.query(
+          "INSERT INTO guest_profiles (id, name, credential_hash, auth_user_id, guest_room_id) VALUES ($1, $2, $3, $4, $5)",
+          [id, trimmedName, tokenHash(secret), authUserId ?? null, authUserId ? null : roomId],
+        );
+        user = { id, name: trimmedName, auth_user_id: authUserId ?? null, guest_room_id: authUserId ? null : roomId };
+      }
+      let replacedRoomIds: string[] = [];
+      if (!authUserId) {
+        if (user.auth_user_id) {
+          const existing = await client.query<{ room_id: string }>(
+            "SELECT room_id FROM room_memberships WHERE user_id = $1", [user.id],
+          );
+          replacedRoomIds = existing.rows.map((row) => row.room_id);
+          if (user.guest_room_id && user.guest_room_id !== roomId) {
+            const removed = await client.query<{ room_id: string }>(
+              "DELETE FROM room_memberships WHERE user_id = $1 AND room_id = $2 RETURNING room_id",
+              [user.id, user.guest_room_id],
+            );
+            for (const replacedRoomId of removed.rows.map((row) => row.room_id)) {
+              await this.markEmptyRoom(client, replacedRoomId);
+            }
+          }
+        } else {
+          const removed = await client.query<{ room_id: string }>(
+            "DELETE FROM room_memberships WHERE user_id = $1 AND room_id <> $2 RETURNING room_id",
+            [user.id, roomId],
+          );
+          replacedRoomIds = removed.rows.map((row) => row.room_id);
+          for (const replacedRoomId of replacedRoomIds) await this.markEmptyRoom(client, replacedRoomId);
+        }
+        await client.query("UPDATE guest_profiles SET guest_room_id = $2 WHERE id = $1", [user.id, roomId]);
+        user.guest_room_id = roomId;
       }
       const member = await client.query<{ owner: boolean }>(
         `INSERT INTO room_memberships (user_id, room_id, owner) VALUES ($1, $2, false)
@@ -290,7 +455,14 @@ export class CatalogService {
         [user.id, roomId],
       );
       await client.query("UPDATE rooms SET empty_since = NULL WHERE id = $1", [roomId]);
-      return { userId: user.id, roomId, name: user.name, owner: member.rows[0]!.owner, deviceToken: issuedToken! };
+      return {
+        userId: user.id,
+        roomId,
+        name: user.name,
+        owner: member.rows[0]!.owner,
+        deviceToken: issuedToken!,
+        ...(replacedRoomIds.length ? { replacedRoomIds } : {}),
+      };
     });
   }
 
@@ -301,15 +473,19 @@ export class CatalogService {
     );
   }
 
-  async leaveRoom(deviceToken: string, roomId: string): Promise<DeviceMembership | null> {
+  async leaveRoom(deviceToken: string, roomId: string, authUserId?: string): Promise<DeviceMembership | null> {
     return transaction(this.pool, async (client) => {
-      const user = await this.resolveDevice(client, deviceToken, true);
+      const user = await this.resolveDevice(client, deviceToken, true, authUserId);
       if (!user) throw new CatalogError(401, "Invalid device credential");
+      if (!authUserId && roomId !== await this.guestRoomForDevice(client, user)) return null;
       const deleted = await client.query<{ room_id: string; owner: boolean }>(
         "DELETE FROM room_memberships WHERE user_id = $1 AND room_id = $2 RETURNING room_id, owner", [user.id, roomId],
       );
       const member = deleted.rows[0];
       if (!member) return null;
+      if (user.guest_room_id === member.room_id) {
+        await client.query("UPDATE guest_profiles SET guest_room_id = NULL WHERE id = $1", [user.id]);
+      }
       await this.markEmptyRoom(client, member.room_id);
       return { userId: user.id, roomId: member.room_id, name: user.name, owner: member.owner };
     });

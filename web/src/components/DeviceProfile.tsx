@@ -3,8 +3,11 @@ import { DeviceRequestError, getDeviceProfile, updateDeviceProfile } from "@goli
 import { Brand } from "./Brand";
 import { configuredBaseUrl } from "../services/sessionDeps";
 import { clearDeviceToken, loadDeviceToken, saveDeviceName } from "../utils/session";
+import { useAuth } from "../services/auth";
+import { GoogleAuthControls } from "./GoogleAuthControls";
 
 export function DeviceProfile() {
+  const auth = useAuth();
   const [deviceToken, setDeviceToken] = useState(loadDeviceToken);
   const [name, setName] = useState("");
   const [loading, setLoading] = useState(Boolean(deviceToken));
@@ -14,25 +17,31 @@ export function DeviceProfile() {
 
   useEffect(() => {
     if (!deviceToken) return;
+    if (auth.loading) { setLoading(true); return; }
     let cancelled = false;
-    void getDeviceProfile(configuredBaseUrl(), deviceToken).then((profile) => {
-      if (cancelled) return;
-      setName(profile.name);
-      saveDeviceName(profile.name);
-    }).catch((caught: unknown) => {
-      if (cancelled) return;
-      if (caught instanceof DeviceRequestError && caught.status === 401) {
-        clearDeviceToken();
-        setDeviceToken(null);
-        setError("This device profile is no longer available. Accept an invite to create a new one.");
-      } else {
-        setError("Could not load your profile. Check your connection and retry.");
+    void (async () => {
+      try {
+        const profile = await getDeviceProfile(configuredBaseUrl(), deviceToken, await auth.getAccessToken() ?? undefined);
+        if (cancelled) return;
+        setName(profile.name);
+        saveDeviceName(profile.name);
+      } catch (caught) {
+        if (cancelled) return;
+        if (caught instanceof DeviceRequestError && caught.status === 401) {
+          clearDeviceToken();
+          setDeviceToken(null);
+          setError("This device profile is no longer available. Accept an invite to create a new one.");
+        } else {
+          setError(caught instanceof Error && caught.message.includes("Google account")
+            ? "Sign in with the Google account linked to this device profile."
+            : "Could not load your profile. Check your connection and retry.");
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
       }
-    }).finally(() => {
-      if (!cancelled) setLoading(false);
-    });
+    })();
     return () => { cancelled = true; };
-  }, [deviceToken]);
+  }, [deviceToken, auth.loading, auth.getAccessToken]);
 
   const save = async (event: FormEvent) => {
     event.preventDefault();
@@ -42,7 +51,9 @@ export function DeviceProfile() {
     setSaved(false);
     setError("");
     try {
-      const profile = await updateDeviceProfile(configuredBaseUrl(), deviceToken, trimmed);
+      const profile = await updateDeviceProfile(
+        configuredBaseUrl(), deviceToken, trimmed, await auth.getAccessToken() ?? undefined,
+      );
       setName(profile.name);
       saveDeviceName(profile.name);
       setSaved(true);
@@ -66,6 +77,7 @@ export function DeviceProfile() {
         <div className="account-nav-links">
           {deviceToken && <a href="/rooms">My rooms</a>}
           <a href="/profile" aria-current="page">Profile</a>
+          <GoogleAuthControls />
         </div>
       </nav>
       <section className="account-content profile-content">

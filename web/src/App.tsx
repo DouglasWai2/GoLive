@@ -14,12 +14,15 @@ import { Brand } from "./components/Brand";
 import { SwitchRoomDialog } from "./components/SwitchRoomDialog";
 import { VersionInfo } from "./components/VersionInfo";
 import { configuredBaseUrl } from "./services/sessionDeps";
-import { clearDeviceToken, clearSavedRoom, loadDeviceToken, loadSavedRoom, saveDeviceName, saveDeviceRoom } from "./utils/session";
+import { clearDeviceToken, clearSavedRoom, loadDeviceName, loadDeviceToken, loadSavedRoom, saveDeviceName, saveDeviceRoom } from "./utils/session";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { useAuth } from "./services/auth";
+import { GoogleAuthControls } from "./components/GoogleAuthControls";
 
 type Join = { name: string; token: string };
 
 function RoomApp() {
+  const auth = useAuth();
   const roomId = roomFromPath();
   const inviteToken = inviteTokenFromUrl();
   const [join, setJoin] = useState<Join | null>(null);
@@ -28,6 +31,7 @@ function RoomApp() {
   const [replaced, setReplaced] = useState(false);
   const [switchFromRoom, setSwitchFromRoom] = useState<string | null>(null);
   const [leavingError, setLeavingError] = useState(false);
+  const hasJoined = join !== null;
 
   const acceptResult = (result: JoinRoomResult) => {
     if (!roomId) return;
@@ -55,7 +59,9 @@ function RoomApp() {
     setLoading(true);
     setError("");
     try {
-      acceptResult(await verifyInvite(configuredBaseUrl(), roomId, undefined, inviteToken, deviceToken));
+      acceptResult(await verifyInvite(
+        configuredBaseUrl(), roomId, loadDeviceName(), inviteToken, deviceToken, await auth.getAccessToken() ?? undefined,
+      ));
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : "Could not accept this invite.";
       setError(message.includes(": 403") || message.toLowerCase().includes("invite")
@@ -70,6 +76,10 @@ function RoomApp() {
     let cancelled = false;
 
     const restore = async () => {
+      // A new room token replaces the RoomSession and stops any active screen
+      // capture. Auth refreshes (e.g. when the screen picker returns focus)
+      // must not restore a session that is already running.
+      if (auth.loading || hasJoined) return;
       if (!roomId) {
         setLoading(false);
         return;
@@ -81,7 +91,7 @@ function RoomApp() {
       }
 
       try {
-        const restored = await restoreRoom(configuredBaseUrl(), deviceToken, roomId);
+        const restored = await restoreRoom(configuredBaseUrl(), deviceToken, roomId, await auth.getAccessToken() ?? undefined);
         if (cancelled) return;
         acceptResult(restored);
       } catch (caught) {
@@ -89,6 +99,10 @@ function RoomApp() {
         if (caught instanceof DeviceRequestError && caught.status === 401) {
           clearDeviceToken();
           setLoading(false);
+          return;
+        }
+        if (caught instanceof DeviceRequestError && caught.status === 403) {
+          setError("Sign in with the Google account linked to this device profile to reopen this room.");
           return;
         }
 
@@ -100,7 +114,9 @@ function RoomApp() {
               return;
             }
             try {
-              const invited = await verifyInvite(configuredBaseUrl(), roomId, undefined, inviteToken, deviceToken);
+              const invited = await verifyInvite(
+                configuredBaseUrl(), roomId, loadDeviceName(), inviteToken, deviceToken, await auth.getAccessToken() ?? undefined,
+              );
               if (cancelled) return;
               acceptResult(invited);
             } catch (inviteError) {
@@ -114,7 +130,13 @@ function RoomApp() {
           }
 
           try {
-            const created = await joinRoom(configuredBaseUrl(), roomId, undefined, deviceToken);
+            const created = await joinRoom(
+              configuredBaseUrl(),
+              roomId,
+              loadDeviceName(),
+              deviceToken,
+              await auth.getAccessToken() ?? undefined,
+            );
             if (cancelled) return;
             acceptResult(created);
           } catch (joinError) {
@@ -122,6 +144,10 @@ function RoomApp() {
             const message = joinError instanceof Error ? joinError.message : "Could not enter the room.";
             setError(message.includes(": 403")
               ? "This room requires a valid invite link."
+              : message.includes(": 409")
+                ? message.includes("Guests can keep access")
+                  ? "Remove access to your current room from My rooms before creating another, or sign in with Google."
+                  : "You already have five active rooms. End one before creating another."
               : "Could not open this room. Check your connection and retry.");
           }
           return;
@@ -135,13 +161,15 @@ function RoomApp() {
 
     void restore();
     return () => { cancelled = true; };
-  }, [roomId, inviteToken]);
+  }, [roomId, inviteToken, auth.loading, auth.getAccessToken, hasJoined]);
 
   const rejectSession = async () => {
     const deviceToken = loadDeviceToken();
     if (!deviceToken) { setJoin(null); window.location.assign("/rooms"); return; }
     try {
-      const result = await restoreRoom(configuredBaseUrl(), deviceToken, roomId ?? undefined);
+      const result = await restoreRoom(
+        configuredBaseUrl(), deviceToken, roomId ?? undefined, await auth.getAccessToken() ?? undefined,
+      );
       acceptResult(result);
       setReplaced(false);
     } catch (caught) {
@@ -183,6 +211,7 @@ function RoomApp() {
       <Brand />
       <div className="name-card">
         <p role="alert">{error}</p>
+        <GoogleAuthControls />
         <button className="primary-button" onClick={() => window.location.reload()} disabled={leavingError}>Retry</button>
         <button className="gate-leave-button" onClick={leaveWithoutConnection} disabled={leavingError}>
           {leavingError ? "Leaving..." : "Back to my rooms"}
@@ -211,6 +240,28 @@ function RoomApp() {
     onSessionReplaced={() => setReplaced(true)} />;
 }
 
+function MyRoomsRoute() {
+  const auth = useAuth();
+
+  useEffect(() => {
+    if (!auth.loading && !auth.user) window.location.replace("/");
+  }, [auth.loading, auth.user]);
+
+  if (auth.loading || !auth.user) {
+    return (
+      <main className="gate-shell room-restore" aria-live="polite">
+        <Brand />
+        <div className="room-restore-status" role="status">
+          <span className="room-restore-spinner" aria-hidden="true" />
+          Checking your account…
+        </div>
+      </main>
+    );
+  }
+
+  return <DeviceRooms />;
+}
+
 export default function App() {
   useEffect(() => {
     const removeAudioPrimingListeners = () => {
@@ -235,7 +286,7 @@ export default function App() {
   return (
     <ErrorBoundary>
       <VersionInfo />
-      {pathname === "/rooms" ? <DeviceRooms /> : pathname === "/profile" ? <DeviceProfile /> : <RoomApp />}
+      {pathname === "/rooms" ? <MyRoomsRoute /> : pathname === "/profile" ? <DeviceProfile /> : <RoomApp />}
     </ErrorBoundary>
   );
 }

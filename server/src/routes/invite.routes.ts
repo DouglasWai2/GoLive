@@ -6,6 +6,7 @@ import { isRoomToken } from "../types/room.js";
 import { ROOM_ID_PATTERN } from "../utils/room-id.js";
 import { DISPLAY_NAME_PATTERN, DEVICE_TOKEN_LENGTH } from "../utils/validation.js";
 import type { CatalogService } from "../services/catalog.service.js";
+import type { NeonAuthVerifier } from "../services/neon-auth.service.js";
 
 const DAILY_INVITE_VERIFICATION_LIMIT = 300;
 
@@ -13,8 +14,9 @@ export function registerInviteRoutes(
   app: FastifyInstance,
   roomService: RoomService,
   catalog?: CatalogService,
+  verifyNeonAuth?: NeonAuthVerifier,
 ): void {
-  const controller = createInviteController(roomService, app, catalog);
+  const controller = createInviteController(roomService, app, catalog, verifyNeonAuth);
   const dailyVerificationLimit = app.createRateLimit({
     max: DAILY_INVITE_VERIFICATION_LIMIT,
     timeWindow: "1 day",

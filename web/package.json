@@ -11,10 +11,11 @@
   },
   "dependencies": {
     "@golive/core": "1.2.0",
+    "@neondatabase/auth": "^0.5.0-beta",
     "@vitejs/plugin-react": "^5.0.2",
-    "vite": "^7.1.7",
     "react": "^19.1.1",
-    "react-dom": "^19.1.1"
+    "react-dom": "^19.1.1",
+    "vite": "^7.1.7"
   },
   "devDependencies": {
     "@types/react": "^19.1.13",

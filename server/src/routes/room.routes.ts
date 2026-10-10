@@ -5,6 +5,7 @@ import { RoomService } from "../services/room.service.js";
 import { ROOM_ID_PATTERN } from "../utils/room-id.js";
 import { DISPLAY_NAME_PATTERN, DEVICE_TOKEN_LENGTH } from "../utils/validation.js";
 import type { CatalogService } from "../services/catalog.service.js";
+import type { NeonAuthVerifier } from "../services/neon-auth.service.js";
 
 const DAILY_ROOM_CREATION_LIMIT = 20;
 
@@ -12,8 +13,9 @@ export function registerRoomRoutes(
   app: FastifyInstance,
   roomService: RoomService,
   catalog?: CatalogService,
+  verifyNeonAuth?: NeonAuthVerifier,
 ): void {
-  const controller = createRoomController(roomService, app, catalog);
+  const controller = createRoomController(roomService, app, catalog, verifyNeonAuth);
   const dailyCreationLimit = app.createRateLimit({
     max: DAILY_ROOM_CREATION_LIMIT,
     timeWindow: "1 day",

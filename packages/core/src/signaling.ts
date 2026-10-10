@@ -66,22 +66,34 @@ export class DeviceRequestError extends Error {
   constructor(readonly status: number, message: string) { super(message); }
 }
 
+function deviceHeaders(deviceToken: string, authToken?: string): Record<string, string> {
+  return authToken
+    ? { Authorization: `Bearer ${authToken}`, "X-Device-Token": deviceToken }
+    : { Authorization: `Bearer ${deviceToken}` };
+}
+
 export async function joinRoom(
   baseUrl: string,
   roomId: string,
   name?: string,
   deviceToken?: string,
+  authToken?: string,
 ): Promise<JoinRoomResult> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (authToken) headers.Authorization = `Bearer ${authToken}`;
   const response = await fetch(signalingHttpUrl(baseUrl, "/room"), {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers,
     body: JSON.stringify({ roomId, name, deviceToken }),
   });
 
   if (!response.ok) {
-    throw new Error(`Failed to join room: ${response.status}`);
+    const message = await errorFrom(response);
+    if (response.status === 401 && message === "Invalid device credential" && deviceToken && name?.trim()) {
+      // Recover a stale device profile without keeping the room creation blocked.
+      return joinRoom(baseUrl, roomId, name, undefined, authToken);
+    }
+    throw new Error(`${message}: ${response.status}`);
   }
 
   return (await response.json()) as JoinRoomResult;
@@ -145,9 +157,7 @@ export async function createInvite(
     body: JSON.stringify({ roomId }),
   });
 
-  if (!response.ok) {
-    throw new Error(await errorFrom(response));
-  }
+  if (!response.ok) throw new Error(await errorFrom(response));
 
   const data = (await response.json()) as { inviteToken?: string };
 
@@ -164,25 +174,30 @@ export async function verifyInvite(
   name: string | undefined,
   inviteToken: string,
   deviceToken?: string,
+  authToken?: string,
 ): Promise<JoinRoomResult> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (authToken) headers.Authorization = `Bearer ${authToken}`;
   const response = await fetch(signalingHttpUrl(baseUrl, "/invite/verify"), {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers,
     body: JSON.stringify({ roomId, name, inviteToken, deviceToken }),
   });
 
   if (!response.ok) {
-    throw new Error(await errorFrom(response));
+    const message = await errorFrom(response);
+    if (response.status === 401 && message === "Invalid device credential" && deviceToken && name?.trim()) {
+      return verifyInvite(baseUrl, roomId, name, inviteToken, undefined, authToken);
+    }
+    throw new Error(`${message}: ${response.status}`);
   }
 
   return (await response.json()) as JoinRoomResult;
 }
 
-export async function listDeviceRooms(baseUrl: string, deviceToken: string): Promise<DeviceRoom[]> {
+export async function listDeviceRooms(baseUrl: string, deviceToken: string, authToken?: string): Promise<DeviceRoom[]> {
   const response = await fetch(signalingHttpUrl(baseUrl, "/device/rooms"), {
-    headers: { Authorization: `Bearer ${deviceToken}` },
+    headers: deviceHeaders(deviceToken, authToken),
   });
   if (!response.ok) throw new DeviceRequestError(response.status, await errorFrom(response));
   const data = (await response.json()) as { rooms?: DeviceRoom[] };
@@ -193,29 +208,30 @@ export async function restoreRoom(
   baseUrl: string,
   deviceToken: string,
   roomId?: string,
+  authToken?: string,
 ): Promise<JoinRoomResult> {
   const url = roomId
     ? signalingHttpUrl(baseUrl, `/device/rooms/${encodeURIComponent(roomId)}/session`)
     : signalingHttpUrl(baseUrl, "/device/room");
   const response = await fetch(url, {
     method: roomId ? "POST" : "GET",
-    headers: { Authorization: `Bearer ${deviceToken}` },
+    headers: deviceHeaders(deviceToken, authToken),
   });
   if (!response.ok) throw new DeviceRequestError(response.status, await errorFrom(response));
   return (await response.json()) as JoinRoomResult;
 }
 
-export async function removeDeviceRoom(baseUrl: string, deviceToken: string, roomId: string): Promise<void> {
+export async function removeDeviceRoom(baseUrl: string, deviceToken: string, roomId: string, authToken?: string): Promise<void> {
   const response = await fetch(signalingHttpUrl(baseUrl, `/device/rooms/${encodeURIComponent(roomId)}`), {
     method: "DELETE",
-    headers: { Authorization: `Bearer ${deviceToken}` },
+    headers: deviceHeaders(deviceToken, authToken),
   });
   if (!response.ok) throw new DeviceRequestError(response.status, await errorFrom(response));
 }
 
-export async function getDeviceProfile(baseUrl: string, deviceToken: string): Promise<DeviceProfile> {
+export async function getDeviceProfile(baseUrl: string, deviceToken: string, authToken?: string): Promise<DeviceProfile> {
   const response = await fetch(signalingHttpUrl(baseUrl, "/device/profile"), {
-    headers: { Authorization: `Bearer ${deviceToken}` },
+    headers: deviceHeaders(deviceToken, authToken),
   });
   if (!response.ok) throw new DeviceRequestError(response.status, await errorFrom(response));
   return (await response.json()) as DeviceProfile;
@@ -225,12 +241,13 @@ export async function updateDeviceProfile(
   baseUrl: string,
   deviceToken: string,
   name: string,
+  authToken?: string,
 ): Promise<DeviceProfile> {
   const response = await fetch(signalingHttpUrl(baseUrl, "/device/profile"), {
     method: "PATCH",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${deviceToken}`,
+      ...deviceHeaders(deviceToken, authToken),
     },
     body: JSON.stringify({ name }),
   });
@@ -238,10 +255,10 @@ export async function updateDeviceProfile(
   return (await response.json()) as DeviceProfile;
 }
 
-export async function leaveRoom(baseUrl: string, deviceToken: string): Promise<void> {
+export async function leaveRoom(baseUrl: string, deviceToken: string, authToken?: string): Promise<void> {
   const response = await fetch(signalingHttpUrl(baseUrl, "/device/room"), {
     method: "DELETE",
-    headers: { Authorization: `Bearer ${deviceToken}` },
+    headers: deviceHeaders(deviceToken, authToken),
   });
   if (!response.ok) throw new DeviceRequestError(response.status, await errorFrom(response));
 }

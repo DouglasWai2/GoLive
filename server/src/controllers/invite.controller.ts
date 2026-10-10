@@ -4,6 +4,7 @@ import { RoomService } from "../services/room.service.js";
 import { isInviteToken, type RoomToken } from "../types/room.js";
 import { CatalogError, type CatalogService } from "../services/catalog.service.js";
 import { issueRoomSession } from "../services/access.service.js";
+import type { NeonAuthVerifier } from "../services/neon-auth.service.js";
 
 const INVITE_TTL_SECONDS = 24 * 60 * 60;
 const ROOM_SESSION_TTL_SECONDS = 8 * 60 * 60;
@@ -19,7 +20,12 @@ type VerifyInviteBody = {
   deviceToken?: string;
 };
 
-export function createInviteController(roomService: RoomService, app: FastifyInstance, catalog?: CatalogService) {
+export function createInviteController(
+  roomService: RoomService,
+  app: FastifyInstance,
+  catalog?: CatalogService,
+  verifyNeonAuth: NeonAuthVerifier = async () => null,
+) {
   return {
     async createInvite(
       request: FastifyRequest,
@@ -75,7 +81,19 @@ export function createInviteController(roomService: RoomService, app: FastifyIns
       if (catalog) {
         if (!invite.generation) return reply.code(403).send({ error: "Invite does not match this room." });
         try {
-          const enrolled = await catalog.joinByInvite(roomId, invite.generation, name, deviceToken);
+          let authUserId: string | undefined;
+          if (request.headers.authorization !== undefined) {
+            const match = /^Bearer (\S+)$/i.exec(request.headers.authorization);
+            if (!match) return reply.code(401).send({ error: "Invalid authorization token" });
+            const identity = await verifyNeonAuth(match[1]!);
+            if (!identity) return reply.code(401).send({ error: "Invalid or expired Neon Auth token" });
+            authUserId = identity.id;
+          }
+          const enrolled = await catalog.joinByInvite(roomId, invite.generation, name, deviceToken, authUserId);
+          for (const previousRoomId of enrolled.replacedRoomIds ?? []) {
+            roomService.disconnectUser(enrolled.userId, previousRoomId);
+            if (!await catalog.hasMembers(previousRoomId)) roomService.invalidateRoom(previousRoomId);
+          }
           return reply.header("Cache-Control", "no-store").send({
             ...issueRoomSession(app, roomService, enrolled),
             deviceToken: enrolled.deviceToken,
