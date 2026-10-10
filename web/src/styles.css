@@ -189,6 +189,14 @@ button { cursor: pointer; }
 .participant-name strong { overflow: hidden; color: var(--paper); font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .participant-name small { flex: 0 0 auto; color: #77776f; font-family: ui-monospace, monospace; font-size: 8px; text-transform: uppercase; letter-spacing: .1em; }
 .stage-actions { display: flex; align-items: center; gap: 12px; }
+.stream-selector { display: flex; gap: 8px; overflow-x: auto; padding: 0 1px 12px; }
+.stream-choice { flex: 0 0 auto; min-width: 180px; min-height: 54px; padding: 9px 12px; border: 1px solid #373732; border-radius: 4px; background: #171715; color: var(--paper); display: grid; grid-template-columns: 8px minmax(0, 1fr); grid-template-rows: auto auto; align-content: center; column-gap: 8px; row-gap: 3px; text-align: left; cursor: pointer; }
+.stream-choice:hover, .stream-choice:focus-visible { border-color: #66665f; }
+.stream-choice:focus-visible { outline: 2px solid var(--acid); outline-offset: 2px; }
+.stream-choice.selected { border-color: rgba(201,255,66,.7); background: rgba(201,255,66,.08); }
+.stream-choice .live-dot { grid-row: 1 / span 2; align-self: center; }
+.stream-choice strong { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.stream-choice small { color: #85857d; font-family: ui-monospace, monospace; font-size: 8px; text-transform: uppercase; letter-spacing: .08em; }
 .video-grid { flex: 1; min-height: 380px; border: 1px solid #32322d; background-color: #171715; background-image: linear-gradient(#1d1d1a 1px, transparent 1px), linear-gradient(90deg, #1d1d1a 1px, transparent 1px); background-size: 34px 34px; display: grid; place-items: stretch; padding: 14px; gap: 14px; }
 .video-grid.has-video { grid-template-columns: repeat(auto-fit, minmax(min(440px, 100%), 1fr)); }
 .video-tile { min-width: 0; min-height: 0; background: #080808; position: relative; overflow: hidden; display: grid; place-items: center; border: 1px solid #2d2d29; }

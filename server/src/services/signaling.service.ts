@@ -1,7 +1,8 @@
+import { randomUUID } from "node:crypto";
 import type { WebSocket } from "ws";
 import { normalizeIP } from "@fastify/rate-limit";
 import type { ClientMessage, Membership } from "../types/message.js";
-import type { RoomToken } from "../types/room.js";
+import type { Client, RoomToken } from "../types/room.js";
 import { MAX_SIGNALING_MESSAGE_BYTES, send } from "../utils/ws.js";
 import { RoomService } from "./room.service.js";
 import type { CatalogService } from "./catalog.service.js";
@@ -18,6 +19,7 @@ const AUTH_TIMEOUT_MS = 10_000;
 const SESSION_REPLACED_CODE = 4001;
 const SESSION_REJECTED_CODE = 4003;
 const CONNECTION_LEASE_REFRESH_MS = 30_000;
+const STREAM_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const connectionsByIp = new Map<string, number>();
 
@@ -57,6 +59,8 @@ export class SignalingService {
        * new active connection when its old socket closes.
        */
       if (this.rooms.getClient(roomId, client.id)?.socket === client.socket) {
+        this.unsubscribeClient(roomId, client);
+        this.stopSharing(roomId, client);
         this.rooms.removeClient(roomId, client.id);
         this.broadcast(roomId, { type: "peer-left", peerId: client.id });
       }
@@ -324,21 +328,17 @@ export class SignalingService {
        * Another tab is using the same session. Evict it so the room
        * keeps exactly one peer per session.
        */
+      const wasActive = existing.sharing || existing.voiceJoined;
+      this.unsubscribeClient(roomId, existing);
+      this.stopSharing(roomId, existing);
+      existing.voiceJoined = false;
+      existing.micMuted = true;
       existing.socket.close(SESSION_REPLACED_CODE, "Session opened in another tab");
 
-      if (existing.sharing || existing.voiceJoined) {
+      if (wasActive) {
         this.broadcast(
           roomId,
-          {
-            type: "peer-updated",
-            peer: {
-              id: peerId,
-              name,
-              sharing: false,
-              voiceJoined: false,
-              micMuted: true,
-            },
-          },
+          { type: "peer-updated", peer: this.rooms.toPeer(existing) },
           peerId,
         );
       }
@@ -395,19 +395,6 @@ export class SignalingService {
 
     if (message.type === "signal") {
       const signal = message.data as Record<string, unknown>;
-
-      if (
-        signal?.type === "offer"
-        && message.channel === "screen"
-        && !client.sharing
-      ) {
-        send(socket, {
-          type: "error",
-          message: "Start sharing before sending an offer.",
-        });
-        return;
-      }
-
       if (
         signal?.type === "offer"
         && message.channel === "voice"
@@ -425,18 +412,53 @@ export class SignalingService {
        * so sender.roomId === target.roomId by construction.
        */
       const target = room.get(message.target);
-      if (
-        target
-        && target.id !== client.id
-        && (message.channel === "screen" || target.voiceJoined)
-      ) {
+      if (!target || target.id === client.id) return;
+
+      if (message.channel === "voice") {
+        if (!target.voiceJoined) return;
         send(target.socket, {
           type: "signal",
           from: client.id,
           channel: message.channel,
           data: message.data,
         });
+        return;
       }
+
+      const streamId = message.streamId;
+      if (!streamId) return;
+
+      const signalType = signal.type;
+      const isCandidate = Boolean(signal.candidate);
+      const isPublisher = client.sharing
+        && client.streamId === streamId
+        && target.subscribedStreamId === streamId;
+      const isSubscriber = client.subscribedStreamId === streamId
+        && target.sharing
+        && target.streamId === streamId;
+
+      const allowed = signalType === "offer"
+        ? isPublisher
+        : signalType === "answer" || signal.restartRequest === true
+          ? isSubscriber
+          : isCandidate && (isPublisher || isSubscriber);
+
+      if (!allowed) {
+        send(socket, {
+          type: "error",
+          code: "INVALID_STREAM_SIGNAL",
+          message: "This screen-sharing signal is not authorized.",
+        });
+        return;
+      }
+
+      send(target.socket, {
+        type: "signal",
+        from: client.id,
+        channel: "screen",
+        streamId,
+        data: message.data,
+      });
       return;
     }
 
@@ -459,26 +481,70 @@ export class SignalingService {
 
     if (message.type === "sharing") {
       if (message.sharing) {
-        const activeSharer = [...room.values()].find(
-          (peer) => peer.id !== client.id && peer.sharing,
-        );
-        if (activeSharer) {
+        client.sharing = true;
+        client.streamId ??= randomUUID();
+        send(socket, {
+          type: "sharing-accepted",
+          sharing: true,
+          streamId: client.streamId,
+        });
+      } else {
+        if (message.streamId && client.streamId !== message.streamId) {
           send(socket, {
             type: "error",
-            code: "SHARER_EXISTS",
-            message: `${activeSharer.name} is already sharing.`,
+            code: "STALE_STREAM",
+            message: "This screen-sharing session has already ended.",
           });
           return;
         }
+
+        this.stopSharing(roomId, client);
+        send(socket, { type: "sharing-accepted", sharing: false });
       }
 
-      client.sharing = message.sharing;
-      send(socket, { type: "sharing-accepted", sharing: message.sharing });
       this.broadcast(
         roomId,
         { type: "peer-updated", peer: this.rooms.toPeer(client) },
         client.id,
       );
+      return;
+    }
+
+    if (message.type === "subscribe") {
+      if (message.streamId === null) {
+        this.unsubscribeClient(roomId, client);
+        send(socket, { type: "subscription-accepted", streamId: null });
+        return;
+      }
+
+      const owner = [...room.values()].find(
+        (peer) => peer.sharing && peer.streamId === message.streamId,
+      );
+      if (!owner || owner.id === client.id) {
+        send(socket, {
+          type: "error",
+          code: "STREAM_UNAVAILABLE",
+          message: "This screen is no longer available.",
+        });
+        return;
+      }
+
+      if (client.subscribedStreamId !== message.streamId) {
+        this.unsubscribeClient(roomId, client);
+        client.subscribedStreamId = message.streamId;
+        send(owner.socket, {
+          type: "stream-subscriber",
+          peerId: client.id,
+          streamId: message.streamId,
+          subscribed: true,
+        });
+      }
+
+      send(socket, {
+        type: "subscription-accepted",
+        streamId: message.streamId,
+        ownerPeerId: owner.id,
+      });
     }
 
     if (message.type === "ping") {
@@ -493,6 +559,40 @@ export class SignalingService {
   ): void {
     for (const client of this.rooms.findRoom(roomId)?.values() ?? []) {
       if (client.id !== excludedPeerId) send(client.socket, message);
+    }
+  }
+
+  private unsubscribeClient(roomId: string, client: Client): void {
+    const streamId = client.subscribedStreamId;
+    if (!streamId) return;
+
+    delete client.subscribedStreamId;
+    const owner = [...(this.rooms.findRoom(roomId)?.values() ?? [])].find(
+      (peer) => peer.sharing && peer.streamId === streamId,
+    );
+    if (owner) {
+      send(owner.socket, {
+        type: "stream-subscriber",
+        peerId: client.id,
+        streamId,
+        subscribed: false,
+      });
+    }
+  }
+
+  private stopSharing(
+    roomId: string,
+    owner: Client,
+  ): void {
+    const streamId = owner.streamId;
+    owner.sharing = false;
+    delete owner.streamId;
+    if (!streamId) return;
+
+    for (const viewer of this.rooms.findRoom(roomId)?.values() ?? []) {
+      if (viewer.subscribedStreamId !== streamId) continue;
+      delete viewer.subscribedStreamId;
+      send(viewer.socket, { type: "subscription-ended", streamId });
     }
   }
 
@@ -557,7 +657,7 @@ function parseMessage(raw: Buffer | ArrayBuffer | Buffer[]): ClientMessage | nul
 
     if (
       message.type === "signal"
-      && hasOnlyKeys(message, ["type", "target", "channel", "data"])
+      && hasOnlyKeys(message, ["type", "target", "channel", "streamId", "data"])
       && typeof message.target === "string"
       && SESSION_ID_PATTERN.test(message.target)
     ) {
@@ -572,15 +672,36 @@ function parseMessage(raw: Buffer | ArrayBuffer | Buffer[]): ClientMessage | nul
       const data = parseSignalData(message.data);
       if (!data) return null;
       const channel = message.channel === "voice" ? "voice" : "screen";
-      return { type: "signal", target: message.target, channel, data };
+      if (channel === "screen" && !isValidStreamId(message.streamId)) return null;
+      if (channel === "voice" && message.streamId !== undefined) return null;
+      return {
+        type: "signal",
+        target: message.target,
+        channel,
+        ...(channel === "screen" ? { streamId: message.streamId as string } : {}),
+        data,
+      };
     }
 
     if (
       message.type === "sharing"
-      && hasOnlyKeys(message, ["type", "sharing"])
+      && hasOnlyKeys(message, ["type", "sharing", "streamId"])
       && typeof message.sharing === "boolean"
+      && (message.streamId === undefined || isValidStreamId(message.streamId))
     ) {
-      return { type: "sharing", sharing: message.sharing };
+      return {
+        type: "sharing",
+        sharing: message.sharing,
+        ...(typeof message.streamId === "string" ? { streamId: message.streamId } : {}),
+      };
+    }
+
+    if (
+      message.type === "subscribe"
+      && hasOnlyKeys(message, ["type", "streamId"])
+      && (message.streamId === null || isValidStreamId(message.streamId))
+    ) {
+      return { type: "subscribe", streamId: message.streamId as string | null };
     }
 
     if (
@@ -656,4 +777,8 @@ function parseSignalData(value: unknown): Record<string, unknown> | null {
     return value.sdp === undefined ? { type: value.type } : { type: value.type, sdp: value.sdp };
   }
   return null;
+}
+
+function isValidStreamId(value: unknown): value is string {
+  return typeof value === "string" && STREAM_ID_PATTERN.test(value);
 }

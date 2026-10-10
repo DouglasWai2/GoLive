@@ -1,8 +1,8 @@
 # GoLive
 
-Minimal screen sharing for web and mobile. Fastify and WebSocket handle room
-membership and WebRTC signaling; screen video and audio travel directly between
-peers. Web and mobile clients share a framework-agnostic core package
+Multi-participant screen sharing for web and mobile. Fastify and WebSocket handle
+room membership and WebRTC signaling; screen video and audio travel directly
+between peers. Web and mobile clients share a framework-agnostic core package
 (`@golive/core`) that implements signaling and WebRTC room sessions. Optional
 Google sign-in uses Managed Neon Auth for account-backed room ownership and
 quotas; guest access remains available when auth is not configured. Optional
@@ -29,7 +29,21 @@ it with `npm run db:stop`.
 
 Open `http://localhost:5173`, create a room, and open its invite link in another
 browser or incognito window. Enter a different display name in each window, then
-select **Share screen** in either one.
+select **Share screen** in either one. Other participants can start sharing at
+the same time; choose which live screen to focus from the screen selector.
+
+## Multiple transmissions and focus
+
+Each participant can share one screen at a time, and multiple participants can
+share concurrently. A viewer selects one active remote screen to focus. Only the
+focused screen's video and shared audio are negotiated and received; switching
+focus closes the previous screen connection. Room voice audio remains separate.
+
+Screen media stays peer-to-peer. The signaling server assigns a fresh ID to each
+share and authorizes subscriptions and screen signals for room members. The
+server does not relay or store screen media. Rooms currently support up to 10
+participants, so the number of simultaneous screen shares is bounded by that
+room limit.
 
 - Web app: `http://localhost:5173`
 - Signaling server: `ws://localhost:3000/ws`
@@ -176,14 +190,17 @@ data).
 ## Commands
 
 ```bash
-npm run dev -w server       # signaling server
-npm run dev -w web          # web app
-npm run start -w mobile     # Expo dev client
-npm run typecheck -w server # server typecheck (repeat for core, web, mobile)
-npm run test -w packages/core # shared signaling/auth tests
-npm run test -w server      # server tests; integration tests need TEST_DATABASE_URL
-npm run build -w server     # compiled signaling server
-npm run build -w web        # production web assets
+npm run dev -w server        # signaling server
+npm run dev -w web           # web app
+npm run start -w mobile      # Expo dev client
+npm run test -w server       # integration tests use TEST_DATABASE_URL when set
+npm run test -w packages/core # shared WebRTC/session tests
+npm run typecheck -w server
+npm run typecheck -w packages/core
+npm run typecheck -w web
+npm run typecheck -w mobile
+npm run build -w server      # compiled signaling server
+npm run build -w web         # production web assets
 ```
 
 ## Deploy
@@ -525,8 +542,11 @@ does not arrive.
 - WebSocket connections and room instances are process-local. Short-lived room
   JWTs must be renewed after a restart; invite tokens remain valid for up to
   24 hours while their room exists.
-- One participant can share at a time; one peer connection is created per viewer.
-- The same captured screen stream is reused for every viewer.
+- Each participant can share one screen; multiple participants can share at once.
+- Each viewer subscribes to only one remote screen at a time; the server enforces
+  that limit and room membership before forwarding screen signals.
+- The same captured screen stream is reused for each viewer subscribed to it.
+- Room capacity is 10 participants; simultaneous shares cannot exceed that cap.
 - STUN is always available. TURN uses Cloudflare first and ExpressTURN after the
   configured Cloudflare egress threshold (see [Environment variables](#environment-variables)).
 - Device credentials, display names, and room grants are device-specific; Google

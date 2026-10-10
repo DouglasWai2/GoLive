@@ -78,6 +78,10 @@ type ShareRequestResult =
   | "disconnected"
   | "cancelled"
   | "timeout";
+type ShareRequestOutcome = {
+  result: ShareRequestResult;
+  streamId?: string;
+};
 
 /*
  * Owns the entire WebSocket + WebRTC lifecycle for one room session.
@@ -108,6 +112,7 @@ export class RoomSession {
 
   private peers: Peer[] = [];
   private localStream: MediaStream | null = null;
+  private localStreamId: string | null = null;
   private disposedStreams = new WeakSet<MediaStream>();
 
   private shareSettings: ShareSettings | null = null;
@@ -118,6 +123,21 @@ export class RoomSession {
   private pendingOffers = new Map<string, symbol>();
   private signalQueues = new Map<string, Promise<void>>();
   private peerGenerations = new Map<string, number>();
+  private subscribers = new Set<string>();
+
+  private focusedPeerId: string | null = null;
+  private focusedOwnerPeerId: string | null = null;
+  private focusedStreamId: string | null = null;
+  private focusedConnection: RTCPeerConnection | null = null;
+  private focusedCandidates: unknown[] = [];
+  private focusedGeneration = 0;
+  private focusedSignalQueues = new Map<string, Promise<void>>();
+  private focusedRecoveryTimer: TimerHandle | null = null;
+  private focusedStatsTimer: TimerHandle | null = null;
+  private focusedInboundSample: InboundVideoSample | null = null;
+  private focusedStatsInFlight: RTCPeerConnection | null = null;
+  private focusedSubscriptionSent = false;
+  private focusedLastRecoveryAt = 0;
 
   private voiceDesired = false;
   private voiceJoined = false;
@@ -147,7 +167,7 @@ export class RoomSession {
   private lastIceRestartAt = new Map<string, number>();
   private offerAnswerTimers = new Map<string, TimerHandle>();
 
-  private sharingRequest: ((result: ShareRequestResult) => void) | null = null;
+  private sharingRequest: ((result: ShareRequestResult, streamId?: string) => void) | null = null;
   private startingShare = false;
   private sharingGeneration = 0;
   private restoringShare = false;
@@ -195,11 +215,27 @@ export class RoomSession {
     this.sharingAnnounced = false;
     this.joined = false;
 
+    if (this.focusedSubscriptionSent) {
+      this.send({ type: "subscribe", streamId: null });
+      this.focusedSubscriptionSent = false;
+    }
+    this.closeFocusedConnection();
+    this.focusedPeerId = null;
+    this.focusedOwnerPeerId = null;
+    this.focusedStreamId = null;
+    this.localStreamId = null;
+    this.subscribers.clear();
+
     this.signalQueues.clear();
     this.voiceSignalQueues.clear();
+    this.focusedSignalQueues.clear();
 
     for (const timer of this.statsTimers.values()) {
       clearInterval(timer);
+    }
+    if (this.focusedStatsTimer) {
+      clearInterval(this.focusedStatsTimer);
+      this.focusedStatsTimer = null;
     }
 
     this.clearKeepalive();
@@ -237,6 +273,8 @@ export class RoomSession {
     this.inboundStatsSamples.clear();
     this.outboundStatsSamples.clear();
     this.statsInFlight.clear();
+    this.focusedStatsInFlight = null;
+    this.focusedInboundSample = null;
     this.iceRecoveryTimers.clear();
     this.lastIceRestartAt.clear();
     this.offerAnswerTimers.clear();
@@ -322,6 +360,22 @@ export class RoomSession {
         this.clearIceRecoveryTimer(peerId);
         this.scheduleIceRecovery(peerId, 0);
       }
+    }
+
+    if (
+      this.focusedConnection
+      && (
+        this.focusedConnection.connectionState === "disconnected"
+        || this.focusedConnection.connectionState === "failed"
+      )
+      && this.focusedStreamId
+      && this.focusedOwnerPeerId
+    ) {
+      this.scheduleFocusedRecovery(
+        this.focusedStreamId,
+        this.focusedOwnerPeerId,
+        this.focusedConnection,
+      );
     }
 
     for (const [peerId, connection] of this.voicePeerConnections) {
@@ -511,7 +565,7 @@ export class RoomSession {
     if (
       this.startingShare ||
       this.localStream ||
-      this.peers.some((peer) => peer.sharing) ||
+      this.sharingRequest !== null ||
       this.socket?.readyState !== SOCKET_OPEN
     ) {
       return;
@@ -594,10 +648,10 @@ export class RoomSession {
        * Ask signaling server whether we're
        * allowed to become this room's sharer.
        */
-      const shareResult = await this.requestSharing();
-      const accepted = shareResult === "accepted";
+      const shareOutcome = await this.requestSharing();
+      const accepted = shareOutcome.result === "accepted" && Boolean(shareOutcome.streamId);
 
-      if (shareResult === "timeout") {
+      if (shareOutcome.result === "timeout") {
         this.callbacks.onError(
           "The signaling server did not respond to the share request.",
         );
@@ -606,10 +660,11 @@ export class RoomSession {
       if (!accepted || !this.active || generation !== this.sharingGeneration) {
         this.disposeCapturedStream(stream);
 
-        if (!accepted && this.active) {
+        if (this.active && this.socket?.readyState === SOCKET_OPEN) {
           this.send({
             type: "sharing",
             sharing: false,
+            ...(shareOutcome.streamId ? { streamId: shareOutcome.streamId } : {}),
           });
         }
 
@@ -619,7 +674,13 @@ export class RoomSession {
       this.sharingAnnounced = true;
 
       this.localStream = stream;
+      this.localStreamId = shareOutcome.streamId!;
       this.callbacks.onLocalStream(stream);
+
+      for (const peerId of this.subscribers) {
+        if (generation !== this.sharingGeneration) break;
+        await this.createOffer(peerId);
+      }
 
       /*
        * Platform's native "Stop sharing" control (browser button,
@@ -635,17 +696,6 @@ export class RoomSession {
           { once: true },
         );
 
-      /*
-       * Create one P2P connection for each
-       * peer already in the room.
-       */
-      for (const peer of this.peers) {
-        if (generation !== this.sharingGeneration) {
-          break;
-        }
-
-        await this.createOffer(peer.id);
-      }
     } catch (caught) {
       if (stream === this.localStream) {
         this.stopSharing();
@@ -670,11 +720,10 @@ export class RoomSession {
 
   stopSharing() {
     const stream = this.localStream;
+    const streamId = this.localStreamId;
 
     this.sharingGeneration += 1;
 
-    this.sharingRequest?.("cancelled");
-    this.sharingRequest = null;
     this.restoringShare = false;
     this.sharingAnnounced = false;
 
@@ -683,6 +732,8 @@ export class RoomSession {
     this.callbacks.onIsStartingShare(false);
 
     this.localStream = null;
+    this.localStreamId = null;
+    this.subscribers.clear();
     this.callbacks.onLocalStream(null);
 
     this.shareSettings = null;
@@ -698,8 +749,14 @@ export class RoomSession {
       this.send({
         type: "sharing",
         sharing: false,
+        ...(streamId ? { streamId } : {}),
       });
     }
+  }
+
+  focusPeer(peerId: string | null) {
+    this.focusedPeerId = peerId && peerId !== this.selfId ? peerId : null;
+    this.syncFocusedSubscription();
   }
 
   private connectSocket() {
@@ -771,16 +828,23 @@ export class RoomSession {
       this.joined = false;
       this.selfId = "";
       this.sharingAnnounced = false;
+      this.localStreamId = null;
+      this.subscribers.clear();
       this.clearKeepalive();
 
       this.sharingRequest?.("disconnected");
       this.sharingRequest = null;
       this.signalQueues.clear();
       this.voiceSignalQueues.clear();
+      this.focusedSignalQueues.clear();
 
       for (const peerId of Array.from(this.peerConnections.keys())) {
         this.closePeer(peerId);
       }
+      this.closeFocusedConnection();
+      this.focusedStreamId = null;
+      this.focusedOwnerPeerId = null;
+      this.focusedSubscriptionSent = false;
 
       for (const peerId of Array.from(this.voicePeerConnections.keys())) {
         this.closeVoicePeer(peerId);
@@ -859,15 +923,15 @@ export class RoomSession {
     }, delay);
   }
 
-  private requestSharing(): Promise<ShareRequestResult> {
+  private requestSharing(): Promise<ShareRequestOutcome> {
     if (this.socket?.readyState !== SOCKET_OPEN || !this.joined) {
-      return Promise.resolve("disconnected");
+      return Promise.resolve({ result: "disconnected" });
     }
 
     return new Promise((resolve) => {
       let settled = false;
 
-      const finish = (result: ShareRequestResult) => {
+      const finish = (result: ShareRequestResult, streamId?: string) => {
         if (settled) {
           return;
         }
@@ -879,7 +943,7 @@ export class RoomSession {
           this.sharingRequest = null;
         }
 
-        resolve(result);
+        resolve({ result, ...(streamId ? { streamId } : {}) });
       };
 
       const timeout = setTimeout(() => finish("timeout"), 5000);
@@ -910,46 +974,47 @@ export class RoomSession {
     this.restoringShare = true;
 
     try {
-      const result = await this.requestSharing();
+      const outcome = await this.requestSharing();
 
       if (
         !this.active ||
         generation !== this.sharingGeneration ||
         stream !== this.localStream
       ) {
+        if (outcome.result === "accepted" && outcome.streamId && this.active) {
+          this.send({
+            type: "sharing",
+            sharing: false,
+            streamId: outcome.streamId,
+          });
+        }
         return;
       }
 
-      if (result === "timeout") {
+      if (outcome.result === "timeout") {
         console.warn("Sharing restoration timed out; reconnecting signaling");
         this.socket?.close();
         return;
       }
 
-      if (result !== "accepted") {
-        if (result === "rejected" && this.joined) {
-          this.callbacks.onError(
-            "Screen sharing could not be restored because another presenter is active.",
-          );
+      if (outcome.result !== "accepted" || !outcome.streamId) {
+        if (outcome.result === "rejected" && this.joined) {
+          this.callbacks.onError("Screen sharing could not be restored.");
           this.stopSharing();
         }
 
         return;
       }
 
+      this.localStreamId = outcome.streamId;
       this.sharingAnnounced = true;
       this.callbacks.onError("");
-
-      for (const peer of this.peers) {
+      for (const peerId of this.subscribers) {
         if (
-          generation !== this.sharingGeneration ||
-          stream !== this.localStream
-        ) {
-          break;
-        }
-        
-
-        await this.createOffer(peer.id);
+          generation !== this.sharingGeneration
+          || stream !== this.localStream
+        ) break;
+        await this.createOffer(peerId);
       }
     } finally {
       this.restoringShare = false;
@@ -1420,8 +1485,6 @@ export class RoomSession {
 
     this.peerConnections.set(peerId, connection);
 
-    this.callbacks.onConnectionState(peerId, connection.connectionState);
-
     /*
      * If we're already sharing when a peer joins,
      * attach the existing screen/audio tracks.
@@ -1457,6 +1520,8 @@ export class RoomSession {
       this.send({
         type: "signal",
         target: peerId,
+        channel: "screen",
+        ...(this.localStreamId ? { streamId: this.localStreamId } : {}),
         data: {
           candidate: this.deps.adapter.serializeCandidate(event.candidate),
         },
@@ -1499,40 +1564,8 @@ export class RoomSession {
       console.log(`[${peerId}] Signaling:`, connection.signalingState);
     };
 
-    /*
-     * Remote screen/audio stream.
-     */
-    connection.ontrack = (event) => {
-      const [stream] = event.streams;
-
-      if (!stream) {
-        console.warn(`[${peerId}] Track received without MediaStream`);
-        return;
-      }
-
-      if (stream.getVideoTracks().length === 0) {
-        return;
-      }
-
-      console.log(`[${peerId}] Remote stream received`, {
-        streamId: stream.id,
-        tracks: stream
-          .getTracks()
-          .map((track) => ({
-            id: track.id,
-            kind: track.kind,
-            enabled: track.enabled,
-            readyState: track.readyState,
-          })),
-      });
-
-      this.callbacks.onRemoteStream(peerId, stream);
-    };
-
     connection.onconnectionstatechange = () => {
       console.log(`[${peerId}] Connection:`, connection.connectionState);
-
-      this.callbacks.onConnectionState(peerId, connection.connectionState);
 
       if (connection.connectionState === "connected") {
         this.clearIceRecoveryTimer(peerId);
@@ -1572,6 +1605,341 @@ export class RoomSession {
     this.statsTimers.set(peerId, timer);
 
     return connection;
+  }
+
+  private syncFocusedSubscription() {
+    if (!this.joined || this.socket?.readyState !== SOCKET_OPEN) return;
+
+    const focusedPeer = this.focusedPeerId
+      ? this.peers.find((peer) => (
+        peer.id === this.focusedPeerId && peer.sharing && Boolean(peer.streamId)
+      ))
+      : undefined;
+    const nextOwnerPeerId = focusedPeer?.id ?? null;
+    const nextStreamId = focusedPeer?.streamId ?? null;
+    const changed = nextOwnerPeerId !== this.focusedOwnerPeerId
+      || nextStreamId !== this.focusedStreamId;
+
+    if (changed) {
+      this.closeFocusedConnection();
+      this.focusedOwnerPeerId = nextOwnerPeerId;
+      this.focusedStreamId = nextStreamId;
+      this.focusedLastRecoveryAt = 0;
+    }
+
+    if (nextStreamId && (changed || !this.focusedSubscriptionSent)) {
+      this.send({ type: "subscribe", streamId: nextStreamId });
+      this.focusedSubscriptionSent = true;
+    } else if (this.focusedSubscriptionSent) {
+      this.send({ type: "subscribe", streamId: null });
+      this.focusedSubscriptionSent = false;
+    }
+  }
+
+  private enqueueFocusedSignal(
+    peerId: string,
+    streamId: string,
+    data: SignalData,
+    signalingGeneration: number,
+  ) {
+    if (
+      streamId !== this.focusedStreamId
+      || peerId !== this.focusedOwnerPeerId
+    ) return;
+
+    const generation = this.focusedGeneration;
+    const previous = this.focusedSignalQueues.get(streamId) ?? Promise.resolve();
+    const next = previous
+      .catch(() => {})
+      .then(() => this.processFocusedSignal(
+        peerId,
+        streamId,
+        data,
+        signalingGeneration,
+        generation,
+      ))
+      .catch((caught) => {
+        if (
+          this.active
+          && signalingGeneration === this.signalingGeneration
+          && generation === this.focusedGeneration
+          && streamId === this.focusedStreamId
+        ) {
+          console.error(`[screen:${streamId}] Negotiation failed`, caught);
+          this.callbacks.onError("The focused screen could not connect.");
+          this.closeFocusedConnection();
+        }
+      });
+
+    this.focusedSignalQueues.set(streamId, next);
+    void next.finally(() => {
+      if (this.focusedSignalQueues.get(streamId) === next) {
+        this.focusedSignalQueues.delete(streamId);
+      }
+    });
+  }
+
+  private async processFocusedSignal(
+    peerId: string,
+    streamId: string,
+    data: SignalData,
+    signalingGeneration: number,
+    generation: number,
+  ) {
+    const isCurrent = () => (
+      this.active
+      && this.joined
+      && signalingGeneration === this.signalingGeneration
+      && generation === this.focusedGeneration
+      && streamId === this.focusedStreamId
+      && peerId === this.focusedOwnerPeerId
+      && this.peers.some((peer) => peer.id === peerId && peer.sharing && peer.streamId === streamId)
+    );
+    if (!isCurrent() || "restartRequest" in data) return;
+
+    const connection = this.createFocusedConnection(peerId, streamId);
+    if ("candidate" in data) {
+      await this.addOrQueueFocusedCandidate(connection, data.candidate);
+      return;
+    }
+
+    if (data.type !== "offer" || connection.signalingState !== "stable") return;
+
+    await connection.setRemoteDescription(data);
+    if (!isCurrent() || this.focusedConnection !== connection) return;
+
+    await this.flushFocusedCandidates(connection);
+    if (!isCurrent() || this.focusedConnection !== connection) return;
+
+    const answer = await connection.createAnswer();
+    if (!isCurrent() || this.focusedConnection !== connection) return;
+
+    await connection.setLocalDescription(answer);
+    if (!isCurrent() || this.focusedConnection !== connection) return;
+
+    this.send({
+      type: "signal",
+      target: peerId,
+      channel: "screen",
+      streamId,
+      data: connection.localDescription,
+    });
+  }
+
+  private createFocusedConnection(peerId: string, streamId: string): RTCPeerConnection {
+    const existing = this.focusedConnection;
+    if (existing && existing.signalingState !== "closed") return existing;
+
+    const connection = this.deps.adapter.createPeerConnection({
+      iceServers: this.iceServers,
+      purpose: "screen",
+    });
+    if (this.hasTurnServers(this.iceServers)) this.turnConnections.add(connection);
+    this.focusedConnection = connection;
+    this.focusedCandidates = [];
+    this.focusedInboundSample = null;
+    this.callbacks.onConnectionState(streamId, connection.connectionState);
+
+    connection.onicecandidate = (event) => {
+      if (!event.candidate || this.focusedConnection !== connection) return;
+      this.send({
+        type: "signal",
+        target: peerId,
+        channel: "screen",
+        streamId,
+        data: { candidate: this.deps.adapter.serializeCandidate(event.candidate) },
+      });
+    };
+    connection.onicecandidateerror = (event) => {
+      console.warn(`[screen:${streamId}] ICE candidate error`, event);
+    };
+    connection.ontrack = (event) => {
+      if (
+        this.focusedConnection !== connection
+        || this.focusedStreamId !== streamId
+      ) return;
+      const [stream] = event.streams;
+      if (!stream || stream.getVideoTracks().length === 0) return;
+      this.callbacks.onRemoteStream(streamId, stream);
+    };
+    connection.onconnectionstatechange = () => {
+      if (this.focusedConnection !== connection) return;
+      this.callbacks.onConnectionState(streamId, connection.connectionState);
+
+      if (connection.connectionState === "connected") {
+        this.clearFocusedRecoveryTimer();
+        void logSelectedIceRoute(streamId, connection);
+      } else if (
+        connection.connectionState === "failed"
+        || connection.connectionState === "disconnected"
+      ) {
+        this.scheduleFocusedRecovery(streamId, peerId, connection);
+      } else if (connection.connectionState === "closed") {
+        this.closeFocusedConnection();
+      }
+    };
+
+    this.focusedStatsTimer = setInterval(() => {
+      this.pollFocusedStats(streamId, connection);
+    }, 1000);
+    return connection;
+  }
+
+  private async addOrQueueFocusedCandidate(
+    connection: RTCPeerConnection,
+    candidate: unknown,
+  ) {
+    if (connection.signalingState === "closed") return;
+    if (connection.remoteDescription) {
+      try {
+        await connection.addIceCandidate(candidate as never);
+      } catch (caught) {
+        console.warn("Could not add focused-screen ICE candidate", caught);
+      }
+      return;
+    }
+    this.focusedCandidates.push(candidate);
+  }
+
+  private async flushFocusedCandidates(connection: RTCPeerConnection) {
+    const pending = this.focusedCandidates;
+    this.focusedCandidates = [];
+    for (const candidate of pending) {
+      if (connection.signalingState === "closed") return;
+      try {
+        await connection.addIceCandidate(candidate as never);
+      } catch (caught) {
+        console.warn("Could not add queued focused-screen ICE candidate", caught);
+      }
+    }
+  }
+
+  private closeFocusedConnection() {
+    this.focusedGeneration += 1;
+    this.focusedSignalQueues.clear();
+    this.clearFocusedRecoveryTimer();
+    if (this.focusedStatsTimer) {
+      clearInterval(this.focusedStatsTimer);
+      this.focusedStatsTimer = null;
+    }
+
+    const streamId = this.focusedStreamId;
+    const connection = this.focusedConnection;
+    this.focusedConnection = null;
+    this.focusedCandidates = [];
+    this.focusedInboundSample = null;
+    this.focusedStatsInFlight = null;
+
+    if (connection) {
+      connection.ontrack = null;
+      connection.onicecandidate = null;
+      connection.onicecandidateerror = null;
+      connection.onconnectionstatechange = null;
+      connection.close();
+    }
+
+    if (streamId) {
+      this.callbacks.onRemoteStream(streamId, null);
+      this.callbacks.onConnectionState(streamId, null);
+      this.callbacks.onRemoteStats(streamId, null);
+    }
+  }
+
+  private scheduleFocusedRecovery(
+    streamId: string,
+    peerId: string,
+    failedConnection: RTCPeerConnection,
+  ) {
+    if (
+      this.focusedRecoveryTimer
+      || this.focusedConnection !== failedConnection
+      || this.focusedStreamId !== streamId
+      || this.focusedOwnerPeerId !== peerId
+    ) return;
+
+    this.focusedRecoveryTimer = setTimeout(() => {
+      this.focusedRecoveryTimer = null;
+      if (
+        !this.active
+        || !this.joined
+        || this.focusedConnection !== failedConnection
+        || this.focusedStreamId !== streamId
+        || this.focusedOwnerPeerId !== peerId
+      ) return;
+
+      const elapsed = Date.now() - this.focusedLastRecoveryAt;
+      if (elapsed < ICE_RESTART_COOLDOWN_MS) {
+        this.scheduleFocusedRecovery(streamId, peerId, failedConnection);
+        return;
+      }
+      this.focusedLastRecoveryAt = Date.now();
+
+      void this.ensureTurnServers().catch((caught) => {
+        console.warn(`[screen:${streamId}] TURN is unavailable during recovery`, caught);
+      }).finally(() => {
+        if (
+          !this.active
+          || !this.joined
+          || this.focusedConnection !== failedConnection
+          || this.focusedStreamId !== streamId
+        ) return;
+
+        this.closeFocusedConnection();
+        this.send({
+          type: "signal",
+          target: peerId,
+          channel: "screen",
+          streamId,
+          data: { restartRequest: true },
+        });
+      });
+    }, failedConnection.connectionState === "failed" ? 0 : ICE_DISCONNECTED_GRACE_MS);
+  }
+
+  private clearFocusedRecoveryTimer() {
+    if (!this.focusedRecoveryTimer) return;
+    clearTimeout(this.focusedRecoveryTimer);
+    this.focusedRecoveryTimer = null;
+  }
+
+  private pollFocusedStats(streamId: string, connection: RTCPeerConnection) {
+    if (!this.active || this.focusedStatsInFlight) return;
+    this.focusedStatsInFlight = connection;
+
+    void (async () => {
+      try {
+        const { inbound, iceRoute } = await getPeerMediaStats(connection);
+        if (
+          !this.active
+          || this.focusedConnection !== connection
+          || this.focusedStatsInFlight !== connection
+        ) return;
+
+        if (inbound) {
+          const stats = computeInboundVideoStats(inbound, this.focusedInboundSample);
+          this.focusedInboundSample = inbound;
+          this.callbacks.onRemoteStats(streamId, {
+            width: stats.width,
+            height: stats.height,
+            fps: stats.fps,
+            bitrateKbps: stats.bitrateKbps ?? 0,
+            codec: inbound.codecMimeType,
+            route: iceRoute?.route ?? null,
+            rttMs: iceRoute?.rtt != null ? iceRoute.rtt * 1000 : null,
+            packetLossPercent: stats.packetLossPercent,
+            jitterMs: inbound.jitter != null ? inbound.jitter * 1000 : null,
+            framesDecoded: inbound.framesDecoded,
+            framesDropped: inbound.framesDropped,
+          });
+        }
+      } catch (caught) {
+        console.warn(`[screen:${streamId}] Could not read focused stream stats`, caught);
+      } finally {
+        if (this.focusedStatsInFlight === connection) {
+          this.focusedStatsInFlight = null;
+        }
+      }
+    })();
   }
 
   /*
@@ -1732,7 +2100,12 @@ export class RoomSession {
    * The screen sharer creates an offer for each peer.
    */
   private async createOffer(peerId: string, iceRestart = false) {
-    if (this.pendingOffers.has(peerId) || !this.localStream) {
+    if (
+      this.pendingOffers.has(peerId)
+      || !this.localStream
+      || !this.localStreamId
+      || !this.subscribers.has(peerId)
+    ) {
       return;
     }
 
@@ -1775,6 +2148,8 @@ export class RoomSession {
         !this.sharingAnnounced ||
         generation !== this.sharingGeneration ||
         !this.localStream ||
+        !this.localStreamId ||
+        !this.subscribers.has(peerId) ||
         this.peerConnections.get(peerId) !== connection
       ) {
         return;
@@ -1788,6 +2163,8 @@ export class RoomSession {
         !this.sharingAnnounced ||
         generation !== this.sharingGeneration ||
         !this.localStream ||
+        !this.localStreamId ||
+        !this.subscribers.has(peerId) ||
         this.peerConnections.get(peerId) !== connection
       ) {
         return;
@@ -1800,6 +2177,8 @@ export class RoomSession {
       this.send({
         type: "signal",
         target: peerId,
+        channel: "screen",
+        streamId: this.localStreamId,
         data: connection.localDescription,
       });
       this.startOfferAnswerTimer(peerId, connection);
@@ -1823,7 +2202,8 @@ export class RoomSession {
           this.joined &&
           this.sharingAnnounced &&
           this.localStream &&
-          this.peers.some((peer) => peer.id === peerId)
+          this.localStreamId &&
+          this.subscribers.has(peerId)
         ) {
           this.scheduleIceRecovery(
             peerId,
@@ -1847,6 +2227,7 @@ export class RoomSession {
    */
   private async processSignal(
     from: string,
+    streamId: string,
     data: SignalData,
     signalingGeneration: number,
     peerGeneration: number,
@@ -1854,6 +2235,7 @@ export class RoomSession {
     if (
       !this.active ||
       !this.joined ||
+      streamId !== this.localStreamId ||
       signalingGeneration !== this.signalingGeneration ||
       peerGeneration !== (this.peerGenerations.get(from) ?? 0)
     ) {
@@ -1863,7 +2245,7 @@ export class RoomSession {
     if ("restartRequest" in data) {
       if (this.turnUpgrades.has(from)) {
         this.pendingRestartRequests.add(from);
-      } else if (this.localStream && this.sharingAnnounced) {
+      } else if (this.localStream && this.localStreamId && this.sharingAnnounced) {
         this.scheduleIceRecovery(from, 0, true);
       }
 
@@ -1914,55 +2296,6 @@ export class RoomSession {
       return;
     }
 
-    /*
-     * SDP OFFER
-     *
-     * In our architecture the screen sharer creates offers
-     * and viewers normally answer them.
-     */
-    if (data.type === "offer") {
-      if (connection.signalingState !== "stable") {
-        console.warn(`[${from}] Ignoring offer in unexpected state`, {
-          signalingState: connection.signalingState,
-        });
-
-        return;
-      }
-
-      console.log(`[${from}] Applying offer`);
-
-      await connection.setRemoteDescription(data);
-
-      if (this.peerConnections.get(from) !== connection || !this.joined) {
-        return;
-      }
-
-      await this.flushCandidates(from, connection);
-
-      if (this.peerConnections.get(from) !== connection || !this.joined) {
-        return;
-      }
-
-      const answer = await connection.createAnswer();
-
-      if (this.peerConnections.get(from) !== connection || !this.joined) {
-        return;
-      }
-
-      await connection.setLocalDescription(answer);
-
-      if (this.peerConnections.get(from) !== connection || !this.joined) {
-        return;
-      }
-
-      console.log(`[${from}] Sending answer`);
-
-      this.send({
-        type: "signal",
-        target: from,
-        data: connection.localDescription,
-      });
-    }
   }
 
   /*
@@ -1988,6 +2321,7 @@ export class RoomSession {
    */
   private enqueueSignal(
     from: string,
+    streamId: string,
     data: SignalData,
     signalingGeneration: number,
   ) {
@@ -2005,6 +2339,7 @@ export class RoomSession {
         if (
           !this.active ||
           !this.joined ||
+          streamId !== this.localStreamId ||
           signalingGeneration !== this.signalingGeneration ||
           peerGeneration !== (this.peerGenerations.get(from) ?? 0)
         ) {
@@ -2014,6 +2349,7 @@ export class RoomSession {
         try {
           await this.processSignal(
             from,
+            streamId,
             data,
             signalingGeneration,
             peerGeneration,
@@ -2077,6 +2413,7 @@ export class RoomSession {
       this.startKeepalive();
       this.callbacks.onPeers(message.peers);
       this.callbacks.onStatus("connected");
+      this.syncFocusedSubscription();
 
       if (this.voiceDesired) {
         this.announceVoiceState();
@@ -2109,6 +2446,7 @@ export class RoomSession {
 
       this.signalQueues.delete(message.peer.id);
       this.closePeer(message.peer.id);
+      this.subscribers.delete(message.peer.id);
       this.voiceSignalQueues.delete(message.peer.id);
       this.closeVoicePeer(message.peer.id);
 
@@ -2119,14 +2457,7 @@ export class RoomSession {
 
       this.callbacks.onPeers(this.peers);
       if (isNewPeer) this.callbacks.onPeerJoined?.(message.peer);
-
-      /*
-       * If we're currently sharing, the new viewer
-       * immediately gets an offer.
-       */
-      if (this.localStream && this.sharingAnnounced) {
-        void this.createOffer(message.peer.id);
-      }
+      this.syncFocusedSubscription();
 
       return;
     }
@@ -2139,11 +2470,13 @@ export class RoomSession {
 
       this.closePeer(message.peerId);
       this.closeVoicePeer(message.peerId);
+      this.subscribers.delete(message.peerId);
 
       this.peers = this.peers.filter((peer) => peer.id !== message.peerId);
 
       this.callbacks.onPeers(this.peers);
       if (departingPeer) this.callbacks.onPeerLeft?.(departingPeer);
+      this.syncFocusedSubscription();
 
       return;
     }
@@ -2159,10 +2492,7 @@ export class RoomSession {
         this.callbacks.onPeerSharingChanged?.(message.peer);
       }
 
-      if (previous?.sharing && !message.peer.sharing) {
-        this.signalQueues.delete(message.peer.id);
-        this.closePeer(message.peer.id);
-      }
+      this.syncFocusedSubscription();
 
       if (!message.peer.voiceJoined) {
         this.voiceSignalQueues.delete(message.peer.id);
@@ -2189,11 +2519,43 @@ export class RoomSession {
           this.signalingGeneration,
         );
       } else {
-        this.enqueueSignal(
-          message.from,
-          message.data,
-          this.signalingGeneration,
-        );
+        if (!message.streamId) return;
+        if (message.streamId === this.localStreamId) {
+          this.enqueueSignal(
+            message.from,
+            message.streamId,
+            message.data,
+            this.signalingGeneration,
+          );
+        } else {
+          this.enqueueFocusedSignal(
+            message.from,
+            message.streamId,
+            message.data,
+            this.signalingGeneration,
+          );
+        }
+      }
+      return;
+    }
+
+    if (message.type === "stream-subscriber") {
+      if (message.streamId !== this.localStreamId) return;
+
+      if (message.subscribed) {
+        this.subscribers.add(message.peerId);
+        if (this.sharingAnnounced && this.localStream) void this.createOffer(message.peerId);
+      } else {
+        this.subscribers.delete(message.peerId);
+        this.closePeer(message.peerId);
+      }
+      return;
+    }
+
+    if (message.type === "subscription-ended") {
+      if (message.streamId === this.focusedStreamId) {
+        this.focusedSubscriptionSent = false;
+        this.closeFocusedConnection();
       }
       return;
     }
@@ -2215,7 +2577,13 @@ export class RoomSession {
     }
 
     if (message.type === "sharing-accepted") {
-      this.sharingRequest?.(message.sharing ? "accepted" : "rejected");
+      if (message.sharing && message.streamId) {
+        this.localStreamId = message.streamId;
+      }
+      this.sharingRequest?.(
+        message.sharing ? "accepted" : "rejected",
+        message.streamId,
+      );
 
       return;
     }
@@ -2293,6 +2661,8 @@ export class RoomSession {
         this.send({
           type: "signal",
           target: peerId,
+          channel: "screen",
+          ...(this.localStreamId ? { streamId: this.localStreamId } : {}),
           data: { restartRequest: true },
         });
       }
@@ -2334,7 +2704,8 @@ export class RoomSession {
       if (
         this.localStream &&
         this.sharingAnnounced &&
-        this.peers.some((peer) => peer.id === peerId)
+        this.localStreamId &&
+        this.subscribers.has(peerId)
       ) {
         this.scheduleIceRecovery(peerId, 0, true);
       }
@@ -2580,6 +2951,8 @@ export class RoomSession {
       this.send({
         type: "signal",
         target: peerId,
+        channel: "screen",
+        ...(this.localStreamId ? { streamId: this.localStreamId } : {}),
         data: { restartRequest: true },
       });
     }
@@ -2661,9 +3034,6 @@ export class RoomSession {
     this.outboundStatsSamples.delete(peerId);
     this.statsInFlight.delete(peerId);
 
-    this.callbacks.onRemoteStream(peerId, null);
-    this.callbacks.onConnectionState(peerId, null);
-    this.callbacks.onRemoteStats(peerId, null);
     this.callbacks.onOutboundStats(peerId, null);
   }
 

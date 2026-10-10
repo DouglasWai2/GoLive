@@ -155,6 +155,7 @@ export class RoomService {
       id: client.id,
       name: client.name,
       sharing: client.sharing,
+      ...(client.sharing && client.streamId ? { streamId: client.streamId } : {}),
       voiceJoined: client.voiceJoined,
       micMuted: client.micMuted,
     };

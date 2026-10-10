@@ -364,7 +364,11 @@ test("keeps captured media alive and restores sharing after signaling reconnects
 
     const startSharing = session.startSharing(settings);
     await flushAsyncWork();
-    firstSocket.receive({ type: "sharing-accepted", sharing: true });
+    firstSocket.receive({
+      type: "sharing-accepted",
+      sharing: true,
+      streamId: "11111111-1111-4111-8111-111111111111",
+    });
     await startSharing;
     assert.equal(localStreams.at(-1), stream);
 
@@ -387,7 +391,11 @@ test("keeps captured media alive and restores sharing after signaling reconnects
       message.type === "sharing" && message.sharing === true
     )));
 
-    reconnectedSocket.receive({ type: "sharing-accepted", sharing: true });
+    reconnectedSocket.receive({
+      type: "sharing-accepted",
+      sharing: true,
+      streamId: "22222222-2222-4222-8222-222222222222",
+    });
     await flushAsyncWork();
     assert.equal(track.stopCount, 0);
     assert.equal(localStreams.at(-1), stream);
@@ -404,6 +412,7 @@ test("requests TURN only after direct ICE fails and rebuilds the viewer", async 
   const connections: FakePeerConnection[] = [];
   const configurations: IceServer[][] = [];
   const purposes: Array<"screen" | "voice"> = [];
+  const streamId = "33333333-3333-4333-8333-333333333333";
   let fetchCount = 0;
 
   globalThis.WebSocket = FakeSocket as unknown as typeof WebSocket;
@@ -458,13 +467,17 @@ test("requests TURN only after direct ICE fails and rebuilds the viewer", async 
         id: "sharer",
         name: "Sharer",
         sharing: true,
+        streamId,
         voiceJoined: false,
         micMuted: true,
       }],
     });
+    session.focusPeer("sharer");
     socket.receive({
       type: "signal",
       from: "sharer",
+      channel: "screen",
+      streamId,
       data: { type: "offer", sdp: "direct-offer" },
     });
     await flushAsyncWork();
@@ -480,6 +493,7 @@ test("requests TURN only after direct ICE fails and rebuilds the viewer", async 
     connections[0]!.fail();
     await flushAsyncWork();
     await flushAsyncWork();
+    await flushAsyncWork();
 
     assert.equal(fetchCount, 1);
     assert.ok(socket.sent.some((message) => {
@@ -490,6 +504,8 @@ test("requests TURN only after direct ICE fails and rebuilds the viewer", async 
     socket.receive({
       type: "signal",
       from: "sharer",
+      channel: "screen",
+      streamId,
       data: { type: "offer", sdp: "relay-offer" },
     });
     await flushAsyncWork();
@@ -687,6 +703,7 @@ test("keeps a late viewer screen offer alive across voice state updates", async 
     getVideoTracks: () => [videoTrack],
     getAudioTracks: () => [],
   };
+  const streamId = "44444444-4444-4444-8444-444444444444";
 
   globalThis.WebSocket = FakeSocket as unknown as typeof WebSocket;
   const adapter = {
@@ -731,7 +748,7 @@ test("keeps a late viewer screen offer alive across voice state updates", async 
       includeAudio: false,
     });
     await flushAsyncWork();
-    socket.receive({ type: "sharing-accepted", sharing: true });
+    socket.receive({ type: "sharing-accepted", sharing: true, streamId });
     await sharing;
 
     const viewer = {
@@ -742,6 +759,12 @@ test("keeps a late viewer screen offer alive across voice state updates", async 
       micMuted: true,
     };
     socket.receive({ type: "peer-joined", peer: viewer });
+    socket.receive({
+      type: "stream-subscriber",
+      peerId: viewer.id,
+      streamId,
+      subscribed: true,
+    });
     socket.receive({
       type: "peer-updated",
       peer: { ...viewer, voiceJoined: true },
@@ -760,6 +783,8 @@ test("keeps a late viewer screen offer alive across voice state updates", async 
     socket.receive({
       type: "signal",
       from: viewer.id,
+      channel: "screen",
+      streamId,
       data: { type: "answer", sdp: "late-viewer-answer" },
     });
     await flushAsyncWork();
@@ -803,6 +828,7 @@ test("defaults display audio on and publishes the captured audio track", async (
     getVideoTracks: () => [videoTrack],
     getAudioTracks: () => [audioTrack],
   };
+  const streamId = "55555555-5555-4555-8555-555555555555";
 
   globalThis.WebSocket = FakeSocket as unknown as typeof WebSocket;
   const adapter = {
@@ -858,9 +884,16 @@ test("defaults display audio on and publishes the captured audio track", async (
     await flushAsyncWork();
 
     assert.equal(requestedConstraints?.audio, true);
-    socket.receive({ type: "sharing-accepted", sharing: true });
+    socket.receive({ type: "sharing-accepted", sharing: true, streamId });
     await sharing;
     assert.equal(publishedStream, displayStream);
+    socket.receive({
+      type: "stream-subscriber",
+      peerId: "viewer",
+      streamId,
+      subscribed: true,
+    });
+    await flushAsyncWork();
     assert.equal(connections.length, 1);
     assert.deepEqual(
       connections[0]?.addedTracks.map(({ track, stream }) => [track.id, stream.id]),
@@ -869,6 +902,180 @@ test("defaults display audio on and publishes the captured audio track", async (
         ["display-audio", "display-stream"],
       ],
     );
+  } finally {
+    session.stop();
+    globalThis.WebSocket = originalWebSocket;
+    FakeSocket.instance = null;
+  }
+});
+
+test("keeps publishing independent from one focused incoming screen", async () => {
+  const originalWebSocket = globalThis.WebSocket;
+  const connections: FakePeerConnection[] = [];
+  const localTrack: MediaTrack = {
+    id: "local-screen",
+    kind: "video",
+    enabled: true,
+    stop: () => {},
+    addEventListener: () => {},
+  };
+  const localStream: MediaStream = {
+    id: "local-screen-stream",
+    getTracks: () => [localTrack],
+    getVideoTracks: () => [localTrack],
+    getAudioTracks: () => [],
+  };
+  const remoteTrack: MediaTrack = {
+    id: "remote-screen",
+    kind: "video",
+    enabled: true,
+    stop: () => {},
+    addEventListener: () => {},
+  };
+  const remoteStream: MediaStream = {
+    id: "focused-remote-stream",
+    getTracks: () => [remoteTrack],
+    getVideoTracks: () => [remoteTrack],
+    getAudioTracks: () => [],
+  };
+  const remoteStreamOne = "77777777-7777-4777-8777-777777777771";
+  const remoteStreamTwo = "77777777-7777-4777-8777-777777777772";
+  const localStreamId = "77777777-7777-4777-8777-777777777773";
+  const remoteStreams = new Map<string, MediaStream | null>();
+
+  globalThis.WebSocket = FakeSocket as unknown as typeof WebSocket;
+  const adapter = {
+    getDisplayMedia: async () => localStream,
+    isCaptureRejected: () => false,
+    serializeCandidate: () => ({ candidate: "candidate" }),
+    createPeerConnection: () => {
+      const connection = new FakePeerConnection();
+      connections.push(connection);
+      return connection as unknown as RTCPeerConnection;
+    },
+  } as PlatformAdapter;
+  const session = new RoomSession(
+    {
+      onStatus: () => {},
+      onPeers: () => {},
+      onLocalStream: () => {},
+      onIsStartingShare: () => {},
+      onRemoteStream: (streamId, stream) => remoteStreams.set(streamId, stream),
+      onConnectionState: () => {},
+      onRemoteStats: () => {},
+      onOutboundStats: () => {},
+      onError: () => {},
+    },
+    { baseUrl: "https://signal.example.com", adapter },
+  );
+
+  try {
+    session.start("room-id", "Viewer and sharer", "room-token");
+    const socket = FakeSocket.instance;
+    assert.ok(socket);
+    socket.open();
+    socket.receive({ type: "authenticated" });
+    socket.receive({
+      type: "room-state",
+      selfId: "local-peer",
+      peers: [
+        {
+          id: "remote-one",
+          name: "Remote one",
+          sharing: true,
+          streamId: remoteStreamOne,
+          voiceJoined: false,
+          micMuted: true,
+        },
+        {
+          id: "remote-two",
+          name: "Remote two",
+          sharing: true,
+          streamId: remoteStreamTwo,
+          voiceJoined: false,
+          micMuted: true,
+        },
+      ],
+    });
+
+    session.focusPeer("remote-one");
+    assert.ok(socket.sent.some((message) => (
+      message.type === "subscribe" && message.streamId === remoteStreamOne
+    )));
+    socket.receive({
+      type: "signal",
+      from: "remote-one",
+      channel: "screen",
+      streamId: remoteStreamOne,
+      data: { type: "offer", sdp: "remote-one-offer" },
+    });
+    await flushAsyncWork();
+    assert.equal(connections.length, 1);
+
+    const startSharing = session.startSharing(DEFAULT_SHARE_SETTINGS);
+    await flushAsyncWork();
+    socket.receive({ type: "sharing-accepted", sharing: true, streamId: localStreamId });
+    await startSharing;
+    socket.receive({
+      type: "stream-subscriber",
+      peerId: "local-viewer",
+      streamId: localStreamId,
+      subscribed: true,
+    });
+    await flushAsyncWork();
+
+    assert.equal(connections.length, 2);
+    assert.deepEqual(
+      connections[1]?.addedTracks.map(({ track }) => track.id),
+      [localTrack.id],
+    );
+    assert.ok(socket.sent.some((message) => (
+      message.type === "signal"
+      && message.channel === "screen"
+      && message.streamId === localStreamId
+      && message.target === "local-viewer"
+      && (message.data as Record<string, unknown>).type === "offer"
+    )));
+
+    session.focusPeer("remote-two");
+    assert.equal(connections[0]?.connectionState, "closed");
+    assert.equal(connections[1]?.connectionState, "new");
+    assert.ok(socket.sent.some((message) => (
+      message.type === "subscribe" && message.streamId === remoteStreamTwo
+    )));
+
+    socket.receive({
+      type: "signal",
+      from: "remote-one",
+      channel: "screen",
+      streamId: remoteStreamOne,
+      data: { type: "offer", sdp: "stale-offer" },
+    });
+    await flushAsyncWork();
+    assert.equal(connections.length, 2);
+
+    socket.receive({
+      type: "signal",
+      from: "remote-two",
+      channel: "screen",
+      streamId: remoteStreamTwo,
+      data: { type: "offer", sdp: "remote-two-offer" },
+    });
+    await flushAsyncWork();
+    assert.equal(connections.length, 3);
+    assert.equal(connections[1]?.connectionState, "new");
+    assert.notEqual(connections[2]?.signalingState, "closed");
+
+    connections[2]?.ontrack?.({ track: remoteTrack, streams: [remoteStream] });
+    assert.equal(remoteStreams.get(remoteStreamTwo), remoteStream);
+
+    session.stopSharing();
+    assert.equal(connections[1]?.connectionState, "closed");
+    assert.notEqual(connections[2]?.signalingState, "closed");
+
+    session.focusPeer(null);
+    assert.equal(connections[2]?.connectionState, "closed");
+    assert.equal(remoteStreams.get(remoteStreamTwo), null);
   } finally {
     session.stop();
     globalThis.WebSocket = originalWebSocket;

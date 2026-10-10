@@ -45,6 +45,25 @@ function waitForMessage(socket: FakeWebSocket, type: string, timestamp?: number)
   });
 }
 
+function waitFor(socket: FakeWebSocket, predicate: (message: Record<string, unknown>) => boolean): Promise<Record<string, unknown>> {
+  const existing = socket.sent.find(predicate);
+  if (existing) return Promise.resolve(existing);
+
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      socket.off("sent", onSent);
+      reject(new Error(`Timed out waiting for a signaling message. Recent messages: ${JSON.stringify(socket.sent.slice(-5))}`));
+    }, 5000);
+    const onSent = (message: Record<string, unknown>) => {
+      if (!predicate(message)) return;
+      clearTimeout(timeout);
+      socket.off("sent", onSent);
+      resolve(message);
+    };
+    socket.on("sent", onSent);
+  });
+}
+
 test("answers keepalive pings from every room member after the host leaves", { timeout: 5000 }, async () => {
   const rooms = new RoomService();
   const host = rooms.createRoomSession("keepalive-room", "Host");
@@ -113,5 +132,183 @@ test("closes a signaling socket before its pending message queue can grow withou
     assert.equal(socket.closeCode, 1008);
   } finally {
     socket.close();
+  }
+});
+
+test("allows concurrent screen shares and enforces one authorized focused subscription", async () => {
+  const rooms = new RoomService();
+  const alice = rooms.createRoomSession("multi-stream-room", "Alice");
+  assert.ok(alice);
+  const bob = rooms.createSession("multi-stream-room", "Bob", alice.roomInstanceId);
+  const carol = rooms.createSession("multi-stream-room", "Carol", alice.roomInstanceId);
+  const sessions = new Map([
+    ["alice-token", alice],
+    ["bob-token", bob],
+    ["carol-token", carol],
+  ]);
+  const service = new SignalingService(rooms, (token) => {
+    const session = sessions.get(token);
+    return session ? { ...session, host: token === "alice-token" } : null;
+  });
+  const sockets = [new FakeWebSocket(), new FakeWebSocket(), new FakeWebSocket()];
+  const identities = [alice, bob, carol];
+  const tokens = ["alice-token", "bob-token", "carol-token"];
+
+  try {
+    for (let index = 0; index < sockets.length; index += 1) {
+      const socket = sockets[index]!;
+      const identity = identities[index]!;
+      service.handleConnection(socket as unknown as WebSocket, `127.0.0.${index + 40}`);
+      socket.receive({ type: "auth", token: tokens[index] });
+      await waitForMessage(socket, "authenticated");
+      socket.receive({ type: "join", room: "multi-stream-room", name: identity.name });
+      await waitForMessage(socket, "room-state");
+    }
+
+    const [aliceSocket, bobSocket, carolSocket] = sockets;
+    assert.ok(aliceSocket && bobSocket && carolSocket);
+
+    const aliceStarted = waitFor(aliceSocket, (message) => message.type === "sharing-accepted");
+    aliceSocket.receive({ type: "sharing", sharing: true });
+    const aliceStartAck = await aliceStarted;
+    assert.equal(aliceStartAck.sharing, true);
+    assert.equal(typeof aliceStartAck.streamId, "string");
+    const aliceStreamId = aliceStartAck.streamId as string;
+
+    const bobStarted = waitFor(bobSocket, (message) => message.type === "sharing-accepted");
+    bobSocket.receive({ type: "sharing", sharing: true });
+    const bobStartAck = await bobStarted;
+    assert.equal(bobStartAck.sharing, true);
+    assert.equal(typeof bobStartAck.streamId, "string");
+    const bobStreamId = bobStartAck.streamId as string;
+    assert.notEqual(aliceStreamId, bobStreamId);
+
+    assert.equal(rooms.getClient("multi-stream-room", alice.sessionId)?.sharing, true);
+    assert.equal(rooms.getClient("multi-stream-room", bob.sessionId)?.sharing, true);
+
+    const aliceSubscribed = waitFor(aliceSocket, (message) => (
+      message.type === "stream-subscriber"
+      && message.peerId === carol.sessionId
+      && message.subscribed === true
+    ));
+    carolSocket.receive({ type: "subscribe", streamId: aliceStreamId });
+    assert.equal((await waitFor(carolSocket, (message) => (
+      message.type === "subscription-accepted" && message.streamId === aliceStreamId
+    ))).streamId, aliceStreamId);
+    assert.equal((await aliceSubscribed).streamId, aliceStreamId);
+
+    const aliceUnsubscribed = waitFor(aliceSocket, (message) => (
+      message.type === "stream-subscriber"
+      && message.peerId === carol.sessionId
+      && message.subscribed === false
+    ));
+    const bobSubscribed = waitFor(bobSocket, (message) => (
+      message.type === "stream-subscriber"
+      && message.peerId === carol.sessionId
+      && message.subscribed === true
+    ));
+    carolSocket.receive({ type: "subscribe", streamId: bobStreamId });
+    assert.equal((await waitFor(carolSocket, (message) => (
+      message.type === "subscription-accepted" && message.streamId === bobStreamId
+    ))).streamId, bobStreamId);
+    await Promise.all([aliceUnsubscribed, bobSubscribed]);
+    assert.equal(
+      rooms.getClient("multi-stream-room", carol.sessionId)?.subscribedStreamId,
+      bobStreamId,
+    );
+
+    const invalidSignal = waitFor(aliceSocket, (message) => (
+      message.type === "error" && message.code === "INVALID_STREAM_SIGNAL"
+    ));
+    aliceSocket.receive({
+      type: "signal",
+      target: carol.sessionId,
+      channel: "screen",
+      streamId: aliceStreamId,
+      data: { type: "offer", sdp: "unauthorized" },
+    });
+    await invalidSignal;
+    assert.equal(carolSocket.sent.some((message) => (
+      message.type === "signal"
+      && message.from === alice.sessionId
+      && (message.data as Record<string, unknown>).sdp === "unauthorized"
+    )), false);
+
+    const forwardedOffer = waitFor(carolSocket, (message) => (
+      message.type === "signal"
+      && message.from === bob.sessionId
+      && message.streamId === bobStreamId
+    ));
+    bobSocket.receive({
+      type: "signal",
+      target: carol.sessionId,
+      channel: "screen",
+      streamId: bobStreamId,
+      data: { type: "offer", sdp: "authorized-offer" },
+    });
+    await forwardedOffer;
+
+    const forwardedAnswer = waitFor(bobSocket, (message) => (
+      message.type === "signal"
+      && message.from === carol.sessionId
+      && message.streamId === bobStreamId
+    ));
+    carolSocket.receive({
+      type: "signal",
+      target: bob.sessionId,
+      channel: "screen",
+      streamId: bobStreamId,
+      data: { type: "answer", sdp: "authorized-answer" },
+    });
+    await forwardedAnswer;
+
+    const ended = waitFor(carolSocket, (message) => (
+      message.type === "subscription-ended" && message.streamId === bobStreamId
+    ));
+    bobSocket.receive({ type: "sharing", sharing: false, streamId: bobStreamId });
+    await ended;
+    assert.equal(rooms.getClient("multi-stream-room", bob.sessionId)?.sharing, false);
+    assert.equal(rooms.getClient("multi-stream-room", carol.sessionId)?.subscribedStreamId, undefined);
+
+    const bobRestarted = waitFor(bobSocket, (message) => (
+      message.type === "sharing-accepted" && message.sharing === true && message.streamId !== bobStreamId
+    ));
+    bobSocket.receive({ type: "sharing", sharing: true });
+    const newBobStreamId = (await bobRestarted).streamId as string;
+    assert.notEqual(newBobStreamId, bobStreamId);
+
+    const staleStop = waitFor(bobSocket, (message) => (
+      message.type === "error" && message.code === "STALE_STREAM"
+    ));
+    bobSocket.receive({ type: "sharing", sharing: false, streamId: bobStreamId });
+    await staleStop;
+    assert.equal(rooms.getClient("multi-stream-room", bob.sessionId)?.streamId, newBobStreamId);
+
+    const invalidSubscription = waitFor(carolSocket, (message) => (
+      message.type === "error" && message.message === "Invalid message."
+    ));
+    carolSocket.receive({ type: "subscribe", streamId: "not-a-stream-id" });
+    await invalidSubscription;
+    assert.equal(
+      rooms.getClient("multi-stream-room", carol.sessionId)?.subscribedStreamId,
+      undefined,
+    );
+
+    const bobSubscriber = waitFor(bobSocket, (message) => (
+      message.type === "stream-subscriber"
+      && message.peerId === carol.sessionId
+      && message.subscribed === true
+      && message.streamId === newBobStreamId
+    ));
+    carolSocket.receive({ type: "subscribe", streamId: newBobStreamId });
+    await bobSubscriber;
+    const streamEnded = waitFor(carolSocket, (message) => (
+      message.type === "subscription-ended" && message.streamId === newBobStreamId
+    ));
+    bobSocket.close();
+    await streamEnded;
+    assert.equal(rooms.getClient("multi-stream-room", carol.sessionId)?.subscribedStreamId, undefined);
+  } finally {
+    for (const socket of sockets) socket.close();
   }
 });

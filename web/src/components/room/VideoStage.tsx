@@ -24,6 +24,8 @@ import { VideoLoadingOverlay } from "../VideoLoadingOverlay";
 type VideoStageProps = {
   localStream: MediaStream | null;
   peers: Peer[];
+  focusedPeerId: string | null;
+  onFocusPeer: (peerId: string) => void;
   remoteStreams: Record<string, MediaStream>;
   connectionStates: Record<string, PeerConnectionState>;
   remoteStats: Record<string, RemoteVideoStats | null>;
@@ -44,7 +46,7 @@ function isNotAllowedError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "NotAllowedError";
 }
 
-export function VideoStage({ localStream, peers, remoteStreams, connectionStates, remoteStats, outboundStats, localQuality, localName, status, localMicMuted, deafened, onLeaveDisconnected }: VideoStageProps) {
+export function VideoStage({ localStream, peers, focusedPeerId, onFocusPeer, remoteStreams, connectionStates, remoteStats, outboundStats, localQuality, localName, status, localMicMuted, deafened, onLeaveDisconnected }: VideoStageProps) {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [fullscreenPeerId, setFullscreenPeerId] = useState<string | null>(null);
   const [showCinemaControls, setShowCinemaControls] = useState(false);
@@ -79,15 +81,18 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
   const participantsRef = useRef<HTMLDivElement>(null);
   const participantsButtonRef = useRef<HTMLButtonElement>(null);
 
-  const activeSharer = peers.find((peer) => peer.sharing);
-  const remoteTiles = peers.filter((peer) => remoteStreams[peer.id]);
-
-  const cinemaPeer = remoteTiles[0];
-  const cinemaStream = cinemaPeer ? remoteStreams[cinemaPeer.id]! : null;
+  const activeSharers = peers.filter((peer) => peer.sharing && Boolean(peer.streamId));
+  const focusedPeer = activeSharers.find((peer) => peer.id === focusedPeerId)
+    ?? activeSharers.find((peer) => Boolean(peer.streamId && remoteStreams[peer.streamId]))
+    ?? activeSharers[0];
+  const focusedStreamId = focusedPeer?.streamId ?? null;
+  const focusedStream = focusedStreamId ? remoteStreams[focusedStreamId] ?? null : null;
+  const cinemaPeer = focusedStream ? focusedPeer : undefined;
+  const cinemaStream = focusedStream;
   const cinemaHasAudio = Boolean(cinemaStream?.getAudioTracks().length);
   const cinemaName = cinemaPeer?.name ?? "";
-  const cinemaStats = cinemaPeer ? remoteStats[cinemaPeer.id] ?? null : null;
-  const cinemaConnectionState = cinemaPeer ? connectionStates[cinemaPeer.id] : undefined;
+  const cinemaStats = focusedStreamId ? remoteStats[focusedStreamId] ?? null : null;
+  const cinemaConnectionState = focusedStreamId ? connectionStates[focusedStreamId] : undefined;
   const cinemaPlaybackPhase = useVideoPlaybackState(
     cinemaVideoRef,
     cinemaStream,
@@ -100,19 +105,23 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
   const emptyTitle =
     status === "reconnecting"
       ? "Reconnecting to the room..."
-        : status === "disconnected"
-          ? "Connection lost"
-          : activeSharer
-          ? "Negotiating secure connection..."
-          : "No screen on air";
+      : status === "disconnected"
+        ? "Connection lost"
+        : focusedPeer
+          ? `Connecting to ${focusedPeer.name}'s screen...`
+          : activeSharers.length > 0
+            ? "Choose a screen to focus"
+            : "No screen on air";
   const emptyMessage =
     status === "reconnecting"
       ? "Your session will resume automatically when the connection returns."
-        : status === "disconnected"
-          ? "Leave and rejoin the room to start a new session."
-          : activeSharer
+      : status === "disconnected"
+        ? "Leave and rejoin the room to start a new session."
+        : focusedPeer
           ? "Checking available peer and relay paths."
-          : "Share this room link, then choose a window or display to begin.";
+          : activeSharers.length > 0
+            ? "Select one live screen to receive its video and audio."
+            : "Share this room link, then choose a window or display to begin.";
 
   const clearCinemaControlsTimer = () => {
     if (cinemaControlsTimer.current !== null) {
@@ -457,7 +466,7 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
       <div className="stage-heading">
         <div>
           <p className="eyebrow"><span /> Live room</p>
-          <h1>{localStream ? "You are presenting" : activeSharer ? `${activeSharer.name} is presenting` : "Ready when you are"}</h1>
+          <h1>{localStream ? "You are presenting" : focusedPeer ? `Focused on ${focusedPeer.name}` : "Ready when you are"}</h1>
         </div>
         <div className="stage-actions">
           <div className="participants" ref={participantsRef}>
@@ -497,7 +506,25 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
         </div>
       </div>
 
-      <div className={`video-grid ${localStream || remoteTiles.length ? "has-video" : ""}`}>
+      {activeSharers.length > 0 && (
+        <div className="stream-selector" role="group" aria-label="Choose a screen to focus">
+          {activeSharers.map((peer) => (
+            <button
+              key={peer.id}
+              type="button"
+              className={`stream-choice ${peer.id === focusedPeer?.id ? "selected" : ""}`}
+              aria-pressed={peer.id === focusedPeer?.id}
+              onClick={() => onFocusPeer(peer.id)}
+            >
+              <span className="live-dot" />
+              <strong>{peer.name}</strong>
+              <small>{peer.id === focusedPeer?.id ? "Focused" : "Select to watch"}</small>
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className={`video-grid ${localStream || focusedStream ? "has-video" : ""}`}>
         {localStream && (
           <VideoTile
             stream={localStream}
@@ -509,27 +536,25 @@ export function VideoStage({ localStream, peers, remoteStreams, connectionStates
             onToggleStats={toggleStats}
           />
         )}
-        {remoteTiles
-          .filter((peer) => !isFullscreen || peer.id !== cinemaPeer?.id)
-          .map((peer) => (
+        {focusedPeer && focusedStream && (!isFullscreen || focusedPeer.id !== cinemaPeer?.id) && (
           <VideoTile
-            key={peer.id}
-            stream={remoteStreams[peer.id]!}
-            name={peer.name}
-            state={connectionStates[peer.id]}
-            stats={statsEnabled ? remoteStats[peer.id] ?? null : null}
+            key={focusedPeer.id}
+            stream={focusedStream}
+            name={focusedPeer.name}
+            state={focusedStreamId ? connectionStates[focusedStreamId] : undefined}
+            stats={statsEnabled && focusedStreamId ? remoteStats[focusedStreamId] ?? null : null}
             volume={volume}
             muted={muted}
             statsEnabled={statsEnabled}
-            fullscreenId={peer.id}
-            isFullscreen={fullscreenPeerId === peer.id}
+            fullscreenId={focusedPeer.id}
+            isFullscreen={fullscreenPeerId === focusedPeer.id}
             onVolumeChange={changeVolume}
             onToggleMute={toggleMute}
             onToggleStats={toggleStats}
             onFullscreen={(video, tile) => void toggleFullscreen(video, tile)}
           />
-        ))}
-        {!localStream && remoteTiles.length === 0 && (
+        )}
+        {!localStream && !focusedStream && (
           <div className="empty-stage">
             <div className="screen-outline"><ScreenIcon size={38} /><span className="scan-line" /></div>
             <h2>{emptyTitle}</h2>
