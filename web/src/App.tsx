@@ -28,6 +28,7 @@ function RoomApp() {
   const [replaced, setReplaced] = useState(false);
   const [switchFromRoom, setSwitchFromRoom] = useState<string | null>(null);
   const [leavingError, setLeavingError] = useState(false);
+  const hasJoined = join !== null;
 
   const acceptResult = (result: JoinRoomResult) => {
     if (!roomId) return;
@@ -70,6 +71,10 @@ function RoomApp() {
     let cancelled = false;
 
     const restore = async () => {
+      // Replacing the active room token remounts RoomSession and stops screen capture.
+      // Avoid restoring again after the room has already been joined.
+      if (hasJoined) return;
+
       if (!roomId) {
         setLoading(false);
         return;
@@ -135,7 +140,7 @@ function RoomApp() {
 
     void restore();
     return () => { cancelled = true; };
-  }, [roomId, inviteToken]);
+  }, [roomId, inviteToken, hasJoined]);
 
   const rejectSession = async () => {
     const deviceToken = loadDeviceToken();
