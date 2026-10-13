@@ -9,8 +9,10 @@
 - PostgreSQL stores rooms, guest profiles, memberships, shared HTTP rate limits,
   and expiring WebSocket connection leases. Active room state remains
   process-local.
-- Only one participant can share a screen per room. WebRTC carries media
-  peer-to-peer; the server handles signaling and membership.
+- Each participant can share one screen, and multiple participants can share
+  concurrently. A viewer receives only the focused remote screen; voice audio is
+  separate. WebRTC carries media peer-to-peer; the server handles signaling and
+  membership.
 - `neon.ts` declares Neon configuration and enables Auth. Preserve existing
   settings when changing that configuration.
 
@@ -65,5 +67,7 @@
 ## Change boundaries
 - Keep browser/native media APIs in their platform adapters and shared session
   behavior in `packages/core`.
+- Use `.agents/skills/golive-web-ux` for GoLive web UI/UX changes, reviews, and
+  user-facing copy; use `ui-ux-pro-max` for focused design guidance.
 - When changing shared core APIs or signaling messages, check all consumers
   (`server`, `web`, and `mobile`) and run their typechecks and relevant tests.
