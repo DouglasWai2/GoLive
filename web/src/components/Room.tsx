@@ -2,13 +2,15 @@ import { useEffect, useState } from "react";
 import { useRoom } from "../hooks/useRoom";
 import type { ShareSettings } from "@golive/core";
 import { formatBitrate, formatResolution } from "@golive/core";
-import type { CallStageSource } from "../types";
+import type { CallStageSource, VoicePlaybackSettings } from "../types";
 import { RoomHeader } from "./room/RoomHeader";
 import { ErrorBanner } from "./room/ErrorBanner";
 import { VideoStage } from "./room/VideoStage";
 import { ControlDock } from "./room/ControlDock";
 import { VoiceAudio } from "./room/VoiceAudio";
 import { playNotificationSound } from "../utils/notificationSounds";
+
+const DEFAULT_VOICE_PLAYBACK_SETTINGS: VoicePlaybackSettings = { volume: 1, muted: false };
 
 type RoomProps = {
   roomId: string;
@@ -36,6 +38,7 @@ export function Room({
   const [focusedPeerId, setFocusedPeerId] = useState<string | null>(null);
   const [stoppedWatchingRemote, setStoppedWatchingRemote] = useState(false);
   const [stageSource, setStageSource] = useState<CallStageSource>("remote");
+  const [voicePlaybackSettings, setVoicePlaybackSettings] = useState<Record<string, VoicePlaybackSettings>>({});
 
   useEffect(() => {
     const activeSharers = room.peers.filter((peer) => peer.sharing && peer.streamId);
@@ -56,6 +59,16 @@ export function Room({
   useEffect(() => {
     room.focusPeer(focusedPeerId);
   }, [focusedPeerId, room.focusPeer]);
+
+  useEffect(() => {
+    const activePeerIds = new Set(room.peers.map((peer) => peer.id));
+    setVoicePlaybackSettings((current) => {
+      if (!Object.keys(current).some((peerId) => !activePeerIds.has(peerId))) return current;
+      return Object.fromEntries(
+        Object.entries(current).filter(([peerId]) => activePeerIds.has(peerId)),
+      );
+    });
+  }, [room.peers]);
 
   useEffect(() => {
     const updateName = (event: StorageEvent) => {
@@ -83,6 +96,23 @@ export function Room({
   const stopWatchingRemote = () => {
     setStoppedWatchingRemote(true);
     setFocusedPeerId(null);
+  };
+
+  const changeVoiceVolume = (peerId: string, volume: number) => {
+    setVoicePlaybackSettings((current) => {
+      const previous = current[peerId] ?? DEFAULT_VOICE_PLAYBACK_SETTINGS;
+      return {
+        ...current,
+        [peerId]: { volume, muted: volume > 0 ? false : previous.muted },
+      };
+    });
+  };
+
+  const togglePeerVoiceMute = (peerId: string) => {
+    setVoicePlaybackSettings((current) => {
+      const previous = current[peerId] ?? DEFAULT_VOICE_PLAYBACK_SETTINGS;
+      return { ...current, [peerId]: { ...previous, muted: !previous.muted } };
+    });
   };
 
   const toggleDeafen = () => {
@@ -121,10 +151,13 @@ export function Room({
         status={room.status}
         localMicMuted={room.voiceState.micMuted}
         deafened={deafened}
+        voicePlaybackSettings={voicePlaybackSettings}
+        onVoiceVolumeChange={changeVoiceVolume}
+        onTogglePeerVoiceMute={togglePeerVoiceMute}
         onLeaveDisconnected={onLeaveDisconnected}
       />
 
-      <VoiceAudio streams={room.remoteVoiceStreams} deafened={deafened} />
+      <VoiceAudio streams={room.remoteVoiceStreams} deafened={deafened} settings={voicePlaybackSettings} />
 
       <ControlDock
         name={displayName}

@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { FullscreenExitIcon, ScreenIcon, UsersIcon } from "../icons";
+import { FullscreenExitIcon, ScreenIcon } from "../icons";
 import { VideoTile } from "../VideoTile";
 import { StreamStats } from "./StreamStats";
 import { ShareRail } from "./ShareRail";
+import { ParticipantsPanel } from "./ParticipantsPanel";
 import type {
   CallStageSource,
   OutboundVideoStats,
@@ -10,6 +11,7 @@ import type {
   PeerConnectionState,
   RemoteVideoStats,
   SocketStatus,
+  VoicePlaybackSettings,
 } from "../../types";
 import {
   exitFullscreen,
@@ -40,6 +42,9 @@ type VideoStageProps = {
   status: SocketStatus;
   localMicMuted: boolean;
   deafened: boolean;
+  voicePlaybackSettings: Record<string, VoicePlaybackSettings>;
+  onVoiceVolumeChange: (peerId: string, volume: number) => void;
+  onTogglePeerVoiceMute: (peerId: string) => void;
   onLeaveDisconnected: () => void;
 };
 
@@ -51,13 +56,12 @@ function isNotAllowedError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "NotAllowedError";
 }
 
-export function VideoStage({ localStream, peers, focusedPeerId, onFocusPeer, onStopWatchingRemote, stageSource, onStageSourceChange, remoteStreams, connectionStates, remoteStats, outboundStats, localQuality, localName, status, localMicMuted, deafened, onLeaveDisconnected }: VideoStageProps) {
+export function VideoStage({ localStream, peers, focusedPeerId, onFocusPeer, onStopWatchingRemote, stageSource, onStageSourceChange, remoteStreams, connectionStates, remoteStats, outboundStats, localQuality, localName, status, localMicMuted, deafened, voicePlaybackSettings, onVoiceVolumeChange, onTogglePeerVoiceMute, onLeaveDisconnected }: VideoStageProps) {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [fullscreenPeerId, setFullscreenPeerId] = useState<string | null>(null);
   const [showCinemaControls, setShowCinemaControls] = useState(false);
   const [cinemaAudioBlocked, setCinemaAudioBlocked] = useState(false);
   const [cinemaPlaybackBlocked, setCinemaPlaybackBlocked] = useState(false);
-  const [showParticipants, setShowParticipants] = useState(false);
   const [statsEnabled, setStatsEnabled] = useState(() => {
     try {
       return localStorage.getItem(STATS_STORAGE_KEY) !== "0";
@@ -83,8 +87,6 @@ export function VideoStage({ localStream, peers, focusedPeerId, onFocusPeer, onS
   const cinemaRef = useRef<HTMLDivElement>(null);
   const cinemaVideoRef = useRef<HTMLVideoElement>(null);
   const cinemaControlsTimer = useRef<number | null>(null);
-  const participantsRef = useRef<HTMLDivElement>(null);
-  const participantsButtonRef = useRef<HTMLButtonElement>(null);
 
   const activeSharers = peers.filter((peer) => peer.sharing && Boolean(peer.streamId));
   const focusedPeer = activeSharers.find((peer) => peer.id === focusedPeerId);
@@ -172,30 +174,6 @@ export function VideoStage({ localStream, peers, focusedPeerId, onFocusPeer, onS
       document.removeEventListener("mozfullscreenchange", onChange);
     };
   }, []);
-
-  useEffect(() => {
-    if (!showParticipants) return;
-
-    const closeOnOutsideClick = (event: PointerEvent) => {
-      if (event.target instanceof Node && !participantsRef.current?.contains(event.target)) {
-        setShowParticipants(false);
-      }
-    };
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-
-      setShowParticipants(false);
-      participantsButtonRef.current?.focus();
-    };
-
-    document.addEventListener("pointerdown", closeOnOutsideClick);
-    document.addEventListener("keydown", closeOnEscape);
-
-    return () => {
-      document.removeEventListener("pointerdown", closeOnOutsideClick);
-      document.removeEventListener("keydown", closeOnEscape);
-    };
-  }, [showParticipants]);
 
   useEffect(() => {
     if (!isFullscreen) {
@@ -525,40 +503,15 @@ export function VideoStage({ localStream, peers, focusedPeerId, onFocusPeer, onS
           </h1>
         </div>
         <div className="stage-actions">
-          <div className="participants" ref={participantsRef}>
-            <button
-              ref={participantsButtonRef}
-              type="button"
-              className="people-count"
-              aria-expanded={showParticipants}
-              aria-controls="participants-list"
-              onClick={() => setShowParticipants((current) => !current)}
-            >
-              <UsersIcon />
-              <strong>{peers.length + 1}</strong>
-              <span className="people-count-label">in room</span>
-            </button>
-            {showParticipants && (
-              <div id="participants-list" className="participants-popover" role="region" aria-label="Participants in room">
-                <div className="participants-heading">
-                  <strong>Participants</strong>
-                  <span>{peers.length + 1}</span>
-                </div>
-                <ul>
-                  <li>
-                    <span className="participant-avatar">{localName.slice(0, 1).toUpperCase()}</span>
-                    <span className="participant-name"><strong>{localName}</strong><small>You · {localMicMuted ? "Muted" : "Mic on"}{deafened ? " · Deafened" : ""}</small></span>
-                  </li>
-                  {peers.map((peer) => (
-                    <li key={peer.id}>
-                      <span className="participant-avatar">{peer.name.slice(0, 1).toUpperCase()}</span>
-                      <span className="participant-name"><strong>{peer.name}</strong><small>{peer.voiceJoined ? peer.micMuted ? "Muted" : "Mic on" : "No voice"}</small></span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </div>
+          <ParticipantsPanel
+            localName={localName}
+            peers={peers}
+            localMicMuted={localMicMuted}
+            deafened={deafened}
+            voicePlaybackSettings={voicePlaybackSettings}
+            onVoiceVolumeChange={onVoiceVolumeChange}
+            onTogglePeerVoiceMute={onTogglePeerVoiceMute}
+          />
         </div>
       </div>
 

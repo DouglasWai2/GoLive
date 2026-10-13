@@ -1,46 +1,70 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { VoicePlaybackSettings } from "../../types";
+
+const DEFAULT_VOICE_SETTINGS: VoicePlaybackSettings = { volume: 1, muted: false };
 
 type VoiceAudioProps = {
   streams: Record<string, MediaStream>;
   deafened: boolean;
+  settings: Record<string, VoicePlaybackSettings>;
 };
 
 type RemoteVoiceProps = {
   peerId: string;
   stream: MediaStream;
   deafened: boolean;
+  settings: VoicePlaybackSettings;
   onBlocked: (peerId: string, blocked: boolean) => void;
 };
 
-function RemoteVoice({ peerId, stream, deafened, onBlocked }: RemoteVoiceProps) {
+function RemoteVoice({ peerId, stream, deafened, settings, onBlocked }: RemoteVoiceProps) {
   const audioRef = useRef<HTMLAudioElement>(null);
 
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
 
-    let active = true;
     audio.srcObject = stream;
-    audio.muted = deafened;
-
-    if (!deafened) {
-      void audio.play().then(
-        () => active && onBlocked(peerId, false),
-        () => active && onBlocked(peerId, true),
-      );
-    }
 
     return () => {
-      active = false;
       audio.srcObject = null;
       onBlocked(peerId, false);
     };
-  }, [deafened, onBlocked, peerId, stream]);
+  }, [onBlocked, peerId, stream]);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    audio.volume = settings.volume;
+    audio.muted = deafened || settings.muted;
+    audio.dataset.individuallyMuted = String(settings.muted);
+
+    if (deafened || settings.muted) {
+      onBlocked(peerId, false);
+    }
+  }, [deafened, onBlocked, peerId, settings.muted, settings.volume]);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio || deafened || settings.muted) return;
+    if (!audio.paused) return;
+
+    let active = true;
+    void audio.play().then(
+      () => active && onBlocked(peerId, false),
+      () => active && onBlocked(peerId, true),
+    );
+
+    return () => {
+      active = false;
+    };
+  }, [deafened, onBlocked, peerId, settings.muted, stream]);
 
   return <audio ref={audioRef} autoPlay playsInline data-voice-peer={peerId} />;
 }
 
-export function VoiceAudio({ streams, deafened }: VoiceAudioProps) {
+export function VoiceAudio({ streams, deafened, settings }: VoiceAudioProps) {
   const [blockedPeers, setBlockedPeers] = useState<Set<string>>(new Set());
 
   const setBlocked = useCallback((peerId: string, blocked: boolean) => {
@@ -59,6 +83,7 @@ export function VoiceAudio({ streams, deafened }: VoiceAudioProps) {
     await Promise.all([...document.querySelectorAll<HTMLAudioElement>("audio[data-voice-peer]")].map(async (audio) => {
       const peerId = audio.dataset.voicePeer;
       if (!peerId) return;
+      if (audio.dataset.individuallyMuted === "true") return;
 
       attempted.set(peerId, audio);
       audio.muted = false;
@@ -87,6 +112,7 @@ export function VoiceAudio({ streams, deafened }: VoiceAudioProps) {
           peerId={peerId}
           stream={stream}
           deafened={deafened}
+          settings={settings[peerId] ?? DEFAULT_VOICE_SETTINGS}
           onBlocked={setBlocked}
         />
       ))}
