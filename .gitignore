@@ -10,3 +10,4 @@ dist/
 /vendor/react-native-webrtc/android/.gradle/
 /vendor/react-native-webrtc/android/build/
 .neon
+/web/.certs/

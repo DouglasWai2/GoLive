@@ -448,6 +448,8 @@ export class SignalingService {
           type: "error",
           code: "INVALID_STREAM_SIGNAL",
           message: "This screen-sharing signal is not authorized.",
+          streamId,
+          targetPeerId: target.id,
         });
         return;
       }
@@ -525,6 +527,7 @@ export class SignalingService {
           type: "error",
           code: "STREAM_UNAVAILABLE",
           message: "This screen is no longer available.",
+          streamId: message.streamId,
         });
         return;
       }

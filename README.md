@@ -57,6 +57,58 @@ In development the Vite server proxies `/ws` to the signaling server. Copy
 the `.env.example` files into `.env` in each workspace when you need to
 customize them (see [Environment variables](#environment-variables)).
 
+### Test the web app in an Android browser over Wi-Fi
+
+`http://localhost:5173` is a secure browser context on the computer, but
+`http://<HOST_IP>:5173` on a phone is not. Use HTTPS to join a room and view
+screen shares from Android Chrome:
+
+1. Install [mkcert](https://github.com/FiloSottile/mkcert) on the development
+   computer. Find the computer's LAN IPv4 address. If `web/.certs/lan.pem` and
+   `web/.certs/lan-key.pem` already exist and the certificate covers that IP,
+   keep them; otherwise, from the repository root generate a local certificate:
+
+   ```bash
+   mkcert -install
+   mkdir -p web/.certs
+   mkcert -cert-file web/.certs/lan.pem -key-file web/.certs/lan-key.pem \
+     192.168.18.249 localhost 127.0.0.1
+   ```
+
+   Replace the example IP with your computer's IP. Generate a new certificate
+   if the IP changes. `web/.certs/` is Git-ignored; keep its private key and
+   mkcert's root CA key on the development computer.
+2. Install **only the CA certificate** on the Android phone. With USB debugging
+   and `adb`, you can transfer it using:
+
+   ```bash
+   adb push "$(mkcert -CAROOT)/rootCA.pem" /sdcard/Download/golive-rootCA.crt
+   ```
+
+   On the phone, choose **Settings → Security → Encryption & credentials →
+   Install a certificate → CA certificate**, then select `golive-rootCA.crt`
+   from Downloads (menu names vary by device). Confirm the trust prompt.
+3. Start the database and signaling server as in [Run locally](#run-locally),
+   then start Vite over HTTPS from the repository root:
+
+   ```bash
+   npm run dev-https
+   ```
+
+   This uses `web/.certs/lan.pem` and `web/.certs/lan-key.pem`. Run
+   `npm run dev -w web` for the usual HTTP localhost server.
+
+4. Open `https://192.168.18.249:5173` in desktop Chrome and Android Chrome,
+   substituting your IP and using the port Vite prints if 5173 is busy. Create
+   a room on the desktop, copy its invite link,
+   and open that link on the phone to join and view the desktop's share. Keep
+   `VITE_SIGNALING_URL` unset so the app uses Vite's HTTPS/WSS proxy for its
+   signaling and API requests. The phone needs access to Vite's port on the
+   computer; allow it through the firewall if the page does not load.
+
+This workflow is for joining and viewing. Android browsers may not support
+sharing the phone screen via `getDisplayMedia`.
+
 ### Mobile
 
 These instructions cover Android emulators and physical Android devices. Install
@@ -192,6 +244,7 @@ data).
 ```bash
 npm run dev -w server        # signaling server
 npm run dev -w web           # web app
+npm run dev-https            # HTTPS web app for LAN testing (requires web/.certs/)
 npm run start -w mobile      # Expo dev client
 npm run test -w server       # integration tests use TEST_DATABASE_URL when set
 npm run test -w packages/core # shared WebRTC/session tests

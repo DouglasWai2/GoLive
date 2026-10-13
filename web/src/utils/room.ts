@@ -1,7 +1,12 @@
 import { buildInviteUrl, parseInviteUrl } from "@golive/core";
 
 export function createRoomId(): string {
-  return crypto.randomUUID().replaceAll("-", "").slice(0, 8);
+  if (typeof globalThis.crypto.randomUUID === "function") {
+    return globalThis.crypto.randomUUID().replaceAll("-", "").slice(0, 8);
+  }
+
+  const bytes = globalThis.crypto.getRandomValues(new Uint8Array(4));
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 export function roomFromPath(): string | null {

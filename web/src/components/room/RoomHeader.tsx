@@ -26,9 +26,19 @@ export function RoomHeader({ roomId, token, status, onLeave }: RoomHeaderProps) 
     try {
       const inviteToken = await createInvite(configuredBaseUrl(), roomId, token);
       const url = buildInviteUrl(window.location.origin, roomId, inviteToken);
-      await navigator.clipboard.writeText(url);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1800);
+
+      if (navigator.clipboard?.writeText) {
+        try {
+          await navigator.clipboard.writeText(url);
+          setCopied(true);
+          window.setTimeout(() => setCopied(false), 1800);
+          return;
+        } catch {
+          // Clipboard writes require a secure context in some browsers.
+        }
+      }
+
+      window.prompt("Copy this invite link:", url);
     } catch (caught) {
       setError(true);
     } finally {

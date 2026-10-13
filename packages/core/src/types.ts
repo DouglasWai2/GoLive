@@ -116,7 +116,13 @@ export type ServerMessage =
   | { type: "subscription-ended"; streamId: string }
   | { type: "subscription-accepted"; streamId: string | null; ownerPeerId?: string }
   | { type: "voice-accepted"; joined: boolean; micMuted: boolean }
-  | { type: "error"; code?: string; message: string };
+  | {
+      type: "error";
+      code?: string;
+      message: string;
+      streamId?: string;
+      targetPeerId?: string;
+    };
 
 export type ClientMessage =
   | { type: "auth"; token: string }
@@ -195,6 +201,7 @@ export type RTCRtpSender = {
 
 export type RTCRtpTransceiver = {
   sender: RTCRtpSender;
+  direction?: "sendrecv" | "sendonly" | "recvonly" | "inactive";
 };
 
 /*

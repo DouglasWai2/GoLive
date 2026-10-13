@@ -10,6 +10,7 @@
     "mobile"
   ],
   "scripts": {
+    "dev-https": "npm run dev-https -w web",
     "db:start": "sh scripts/start-local-db.sh",
     "db:stop": "docker stop golive-local-postgres"
   },

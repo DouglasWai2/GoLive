@@ -175,16 +175,8 @@ test("allows concurrent screen shares and enforces one authorized focused subscr
     assert.equal(typeof aliceStartAck.streamId, "string");
     const aliceStreamId = aliceStartAck.streamId as string;
 
-    const bobStarted = waitFor(bobSocket, (message) => message.type === "sharing-accepted");
-    bobSocket.receive({ type: "sharing", sharing: true });
-    const bobStartAck = await bobStarted;
-    assert.equal(bobStartAck.sharing, true);
-    assert.equal(typeof bobStartAck.streamId, "string");
-    const bobStreamId = bobStartAck.streamId as string;
-    assert.notEqual(aliceStreamId, bobStreamId);
-
     assert.equal(rooms.getClient("multi-stream-room", alice.sessionId)?.sharing, true);
-    assert.equal(rooms.getClient("multi-stream-room", bob.sessionId)?.sharing, true);
+    assert.equal(rooms.getClient("multi-stream-room", bob.sessionId)?.sharing, false);
 
     const aliceSubscribed = waitFor(aliceSocket, (message) => (
       message.type === "stream-subscriber"
@@ -196,6 +188,30 @@ test("allows concurrent screen shares and enforces one authorized focused subscr
       message.type === "subscription-accepted" && message.streamId === aliceStreamId
     ))).streamId, aliceStreamId);
     assert.equal((await aliceSubscribed).streamId, aliceStreamId);
+
+    const bobStarted = waitFor(bobSocket, (message) => message.type === "sharing-accepted");
+    bobSocket.receive({ type: "sharing", sharing: true });
+    const bobStartAck = await bobStarted;
+    assert.equal(bobStartAck.sharing, true);
+    assert.equal(typeof bobStartAck.streamId, "string");
+    const bobStreamId = bobStartAck.streamId as string;
+    assert.notEqual(aliceStreamId, bobStreamId);
+    assert.equal(rooms.getClient("multi-stream-room", bob.sessionId)?.sharing, true);
+
+    const aliceStillAuthorized = waitFor(carolSocket, (message) => (
+      message.type === "signal"
+      && message.from === alice.sessionId
+      && message.streamId === aliceStreamId
+      && (message.data as Record<string, unknown>).sdp === "first-stream-after-second-start"
+    ));
+    aliceSocket.receive({
+      type: "signal",
+      target: carol.sessionId,
+      channel: "screen",
+      streamId: aliceStreamId,
+      data: { type: "offer", sdp: "first-stream-after-second-start" },
+    });
+    await aliceStillAuthorized;
 
     const aliceUnsubscribed = waitFor(aliceSocket, (message) => (
       message.type === "stream-subscriber"
@@ -227,7 +243,9 @@ test("allows concurrent screen shares and enforces one authorized focused subscr
       streamId: aliceStreamId,
       data: { type: "offer", sdp: "unauthorized" },
     });
-    await invalidSignal;
+    const invalidSignalMessage = await invalidSignal;
+    assert.equal(invalidSignalMessage.streamId, aliceStreamId);
+    assert.equal(invalidSignalMessage.targetPeerId, carol.sessionId);
     assert.equal(carolSocket.sent.some((message) => (
       message.type === "signal"
       && message.from === alice.sessionId

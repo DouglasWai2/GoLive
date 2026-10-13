@@ -1,6 +1,12 @@
+import { readFileSync } from "node:fs";
 import { fileURLToPath, URL } from "node:url";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+var certPath = process.env.GOLIVE_HTTPS_CERT;
+var keyPath = process.env.GOLIVE_HTTPS_KEY;
+if (Boolean(certPath) !== Boolean(keyPath)) {
+    throw new Error("Set both GOLIVE_HTTPS_CERT and GOLIVE_HTTPS_KEY to enable HTTPS");
+}
 export default defineConfig({
     plugins: [react()],
     resolve: {
@@ -9,6 +15,10 @@ export default defineConfig({
         },
     },
     server: {
+        https: certPath && keyPath ? {
+            cert: readFileSync(certPath),
+            key: readFileSync(keyPath),
+        } : undefined,
         proxy: {
             "/ws": {
                 target: "ws://localhost:3000",
@@ -31,6 +41,9 @@ export default defineConfig({
                 },
             },
             "/session": {
+                target: "http://localhost:3000",
+            },
+            "/device": {
                 target: "http://localhost:3000",
             },
             "/admin": {

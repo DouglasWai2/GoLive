@@ -69,14 +69,23 @@ class FakePeerConnection {
     },
   };
   transceiverCount = 0;
+  readonly transceivers: Array<{ sender: RTCRtpSender; direction: string }> = [];
   readonly addedTracks: Array<{ track: MediaTrack; stream: MediaStream }> = [];
 
   addTrack(track: MediaTrack, stream: MediaStream): void {
     this.addedTracks.push({ track, stream });
   }
-  addTransceiver() {
+  addTransceiver(
+    _kind: "audio" | "video",
+    init?: { direction?: "sendrecv" | "sendonly" | "recvonly" | "inactive" },
+  ) {
     this.transceiverCount += 1;
-    return { sender: this.sender };
+    const transceiver = {
+      sender: this.sender,
+      direction: init?.direction ?? "sendrecv",
+    };
+    this.transceivers.push(transceiver);
+    return transceiver;
   }
   async addIceCandidate(): Promise<void> {}
   async createOffer(): Promise<SessionDescriptionInit> {
@@ -532,20 +541,8 @@ test("auto-joins voice muted and requests the microphone only on unmute", async 
   const connections: FakePeerConnection[] = [];
   const purposes: Array<"screen" | "voice"> = [];
   let microphoneRequests = 0;
-
-  const microphoneTrack: MediaTrack = {
-    id: "microphone",
-    kind: "audio",
-    enabled: false,
-    stop: () => {},
-    addEventListener: () => {},
-  };
-  const microphoneStream: MediaStream = {
-    id: "microphone-stream",
-    getTracks: () => [microphoneTrack],
-    getVideoTracks: () => [],
-    getAudioTracks: () => [microphoneTrack],
-  };
+  const microphoneTracks: MediaTrack[] = [];
+  const microphoneStopCounts: number[] = [];
   const displayTrack: MediaTrack = {
     id: "display-video",
     kind: "video",
@@ -577,7 +574,24 @@ test("auto-joins voice muted and requests the microphone only on unmute", async 
     getDisplayMedia: () => displayRequest,
     getUserMedia: async () => {
       microphoneRequests += 1;
-      return microphoneStream;
+      const requestIndex = microphoneTracks.length;
+      microphoneStopCounts.push(0);
+      const microphoneTrack: MediaTrack = {
+        id: `microphone-${requestIndex}`,
+        kind: "audio",
+        enabled: false,
+        stop: () => {
+          microphoneStopCounts[requestIndex] = (microphoneStopCounts[requestIndex] ?? 0) + 1;
+        },
+        addEventListener: () => {},
+      };
+      microphoneTracks.push(microphoneTrack);
+      return {
+        id: `microphone-stream-${requestIndex}`,
+        getTracks: () => [microphoneTrack],
+        getVideoTracks: () => [],
+        getAudioTracks: () => [microphoneTrack],
+      };
     },
     isCaptureRejected: () => false,
     serializeCandidate: () => ({}),
@@ -639,6 +653,7 @@ test("auto-joins voice muted and requests the microphone only on unmute", async 
     assert.equal(connections.length, 1);
     assert.equal(purposes[0], "voice");
     assert.equal(connections[0]?.transceiverCount, 1);
+    assert.equal(connections[0]?.transceivers[0]?.direction, "recvonly");
     assert.ok(socket.sent.some((message) =>
       message.type === "signal" && message.channel === "voice",
     ));
@@ -659,8 +674,9 @@ test("auto-joins voice muted and requests the microphone only on unmute", async 
     await flushAsyncWork();
 
     assert.equal(microphoneRequests, 1);
-    assert.equal(microphoneTrack.enabled, true);
-    assert.equal(connections[0]?.sender.track, microphoneTrack);
+    assert.equal(microphoneTracks[0]?.enabled, true);
+    assert.equal(connections[0]?.sender.track, microphoneTracks[0]);
+    assert.equal(connections[0]?.transceivers[0]?.direction, "sendrecv");
     assert.ok(socket.sent.filter((message) =>
       message.type === "signal" && message.channel === "voice",
     ).length > voiceOffersBeforeUnmute);
@@ -668,16 +684,31 @@ test("auto-joins voice muted and requests the microphone only on unmute", async 
       message.type === "voice" && message.micMuted === false,
     ));
 
+    await session.setMicrophoneMuted(true);
+    assert.equal(microphoneTracks[0]?.enabled, false);
+    assert.equal(microphoneStopCounts[0], 1);
+    assert.equal(connections[0]?.sender.track, null);
+    assert.equal(connections[0]?.transceivers[0]?.direction, "recvonly");
+
+    await session.setMicrophoneMuted(false);
+    assert.equal(microphoneRequests, 2);
+    assert.equal(microphoneTracks[1]?.enabled, true);
+    assert.equal(connections[0]?.sender.track, microphoneTracks[1]);
+    assert.equal(connections[0]?.transceivers[0]?.direction, "sendrecv");
+
     const sharing = session.startSharing(DEFAULT_SHARE_SETTINGS);
     session.handleAppBackground();
-    assert.equal(microphoneTrack.enabled, true);
+    assert.equal(microphoneTracks[1]?.enabled, true);
 
     session.stopSharing();
     resolveDisplay(displayStream);
     await sharing;
 
     session.handleAppBackground();
-    assert.equal(microphoneTrack.enabled, false);
+    assert.equal(microphoneTracks[1]?.enabled, false);
+    assert.equal(microphoneStopCounts[1], 1);
+    assert.equal(connections[0]?.sender.track, null);
+    assert.equal(connections[0]?.transceivers[0]?.direction, "recvonly");
   } finally {
     session.stop();
     globalThis.WebSocket = originalWebSocket;
@@ -795,6 +826,130 @@ test("keeps a late viewer screen offer alive across voice state updates", async 
       peer: { ...viewer, voiceJoined: true, micMuted: false },
     });
     assert.notEqual(connections[0]?.signalingState, "closed");
+  } finally {
+    session.stop();
+    globalThis.WebSocket = originalWebSocket;
+    FakeSocket.instance = null;
+  }
+});
+
+test("keeps the focused screen subscribed when another sharer starts and refreshes a rejected subscription", async () => {
+  const originalWebSocket = globalThis.WebSocket;
+  const connections: FakePeerConnection[] = [];
+  const errors: string[] = [];
+  const firstStreamId = "66666666-6666-4666-8666-666666666661";
+  const secondStreamId = "66666666-6666-4666-8666-666666666662";
+
+  globalThis.WebSocket = FakeSocket as unknown as typeof WebSocket;
+  const adapter = {
+    getDisplayMedia: async () => { throw new Error("not used"); },
+    isCaptureRejected: () => false,
+    serializeCandidate: () => ({ candidate: "candidate" }),
+    createPeerConnection: () => {
+      const connection = new FakePeerConnection();
+      connections.push(connection);
+      return connection as unknown as RTCPeerConnection;
+    },
+  } as PlatformAdapter;
+  const session = new RoomSession(
+    {
+      onStatus: () => {},
+      onPeers: () => {},
+      onLocalStream: () => {},
+      onIsStartingShare: () => {},
+      onRemoteStream: () => {},
+      onConnectionState: () => {},
+      onRemoteStats: () => {},
+      onOutboundStats: () => {},
+      onError: (message) => errors.push(message),
+    },
+    { baseUrl: "https://signal.example.com", adapter },
+  );
+
+  try {
+    session.start("room-id", "Web viewer", "room-token");
+    const socket = FakeSocket.instance;
+    assert.ok(socket);
+    socket.open();
+    socket.receive({ type: "authenticated" });
+    const firstSharer = {
+      id: "native-one",
+      name: "Native one",
+      sharing: true,
+      streamId: firstStreamId,
+      voiceJoined: false,
+      micMuted: true,
+    };
+    socket.receive({
+      type: "room-state",
+      selfId: "web-viewer",
+      peers: [firstSharer],
+    });
+
+    session.focusPeer(firstSharer.id);
+    assert.ok(socket.sent.some((message) => (
+      message.type === "subscribe" && message.streamId === firstStreamId
+    )));
+    socket.receive({ type: "subscription-accepted", streamId: firstStreamId });
+    socket.receive({
+      type: "signal",
+      from: firstSharer.id,
+      channel: "screen",
+      streamId: firstStreamId,
+      data: { type: "offer", sdp: "first-offer" },
+    });
+    await flushAsyncWork();
+    assert.equal(connections.length, 1);
+
+    socket.receive({
+      type: "peer-updated",
+      peer: {
+        id: "native-two",
+        name: "Native two",
+        sharing: true,
+        streamId: secondStreamId,
+        voiceJoined: false,
+        micMuted: true,
+      },
+    });
+    assert.equal(connections[0]?.connectionState, "new");
+    assert.equal(socket.sent.some((message) => (
+      message.type === "subscribe" && message.streamId === secondStreamId
+    )), false);
+    assert.equal(socket.sent.some((message) => (
+      message.type === "subscribe" && message.streamId === null
+    )), false);
+
+    connections[0]?.onicecandidate?.({ candidate: { candidate: "late-candidate" } });
+    assert.ok(socket.sent.some((message) => (
+      message.type === "signal"
+      && message.streamId === firstStreamId
+      && message.target === firstSharer.id
+    )));
+
+    socket.receive({
+      type: "error",
+      code: "INVALID_STREAM_SIGNAL",
+      message: "This screen-sharing signal is not authorized.",
+      streamId: firstStreamId,
+      targetPeerId: firstSharer.id,
+    });
+    assert.equal(socket.sent.filter((message) => (
+      message.type === "subscribe" && message.streamId === firstStreamId
+    )).length, 2);
+    assert.deepEqual(errors.filter(Boolean), []);
+
+    socket.receive({ type: "subscription-accepted", streamId: firstStreamId });
+    socket.receive({
+      type: "signal",
+      from: firstSharer.id,
+      channel: "screen",
+      streamId: firstStreamId,
+      data: { type: "offer", sdp: "recovered-offer" },
+    });
+    await flushAsyncWork();
+    assert.equal(connections.length, 1);
+    assert.equal(connections[0]?.remoteDescription?.sdp, "recovered-offer");
   } finally {
     session.stop();
     globalThis.WebSocket = originalWebSocket;

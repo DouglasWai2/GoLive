@@ -4,8 +4,9 @@
   "version": "1.2.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --host 0.0.0.0",
-    "build": "tsc -b && vite build",
+    "dev": "vite --config vite.config.ts --host 0.0.0.0",
+    "dev-https": "GOLIVE_HTTPS_CERT=.certs/lan.pem GOLIVE_HTTPS_KEY=.certs/lan-key.pem vite --config vite.config.ts --host 0.0.0.0",
+    "build": "tsc -b && vite build --config vite.config.ts",
     "typecheck": "tsc -b --pretty false",
     "preview": "vite preview --host 0.0.0.0"
   },

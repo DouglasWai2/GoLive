@@ -8,6 +8,7 @@ import type {
   RemoteVideoStats,
   RTCPeerConnection,
   RTCRtpSender,
+  RTCRtpTransceiver as CoreRTCRtpTransceiver,
   ServerMessage,
   ShareSettings,
   SignalData,
@@ -128,6 +129,7 @@ export class RoomSession {
   private focusedPeerId: string | null = null;
   private focusedOwnerPeerId: string | null = null;
   private focusedStreamId: string | null = null;
+  private focusedSubscriptionRefresh: string | null = null;
   private focusedConnection: RTCPeerConnection | null = null;
   private focusedCandidates: unknown[] = [];
   private focusedGeneration = 0;
@@ -145,8 +147,10 @@ export class RoomSession {
   private requestingMicrophone = false;
   private microphoneGeneration = 0;
   private microphoneStream: MediaStream | null = null;
+  private microphoneRelease: Promise<void> | null = null;
   private voicePeerConnections = new Map<string, RTCPeerConnection>();
   private voiceSenders = new Map<string, RTCRtpSender>();
+  private voiceTransceivers = new Map<string, CoreRTCRtpTransceiver>();
   private voicePendingCandidates = new Map<string, unknown[]>();
   private voicePendingOffers = new Map<string, symbol>();
   private voiceSignalQueues = new Map<string, Promise<void>>();
@@ -223,6 +227,7 @@ export class RoomSession {
     this.focusedPeerId = null;
     this.focusedOwnerPeerId = null;
     this.focusedStreamId = null;
+    this.focusedSubscriptionRefresh = null;
     this.localStreamId = null;
     this.subscribers.clear();
 
@@ -444,6 +449,16 @@ export class RoomSession {
       let requestedStream: MediaStream | null = null;
 
       try {
+        await this.microphoneRelease;
+
+        if (
+          !this.active
+          || !this.voiceDesired
+          || microphoneGeneration !== this.microphoneGeneration
+        ) {
+          return;
+        }
+
         requestedStream = await getUserMedia({
           video: false,
           audio: {
@@ -487,11 +502,28 @@ export class RoomSession {
         track.addEventListener("ended", () => {
           if (this.microphoneStream !== activeStream) return;
 
+          const directionChanged = this.setVoiceTransceiverDirection("recvonly");
           this.microphoneGeneration += 1;
           this.microphoneStream = null;
           this.micMuted = true;
           this.announceVoiceState();
           this.emitVoiceState();
+          this.disposeCapturedStream(activeStream);
+
+          const release = Promise.allSettled(
+            [...this.voiceSenders.values()].map((sender) =>
+              sender.replaceTrack?.(null) ?? Promise.resolve(),
+            ),
+          ).then(() => {});
+          this.microphoneRelease = release;
+          void release.then(() => {
+            if (this.microphoneRelease === release) {
+              this.microphoneRelease = null;
+            }
+            if (directionChanged && this.active && this.voiceDesired) {
+              this.renegotiateVoicePeers();
+            }
+          });
         }, { once: true });
 
         try {
@@ -544,21 +576,49 @@ export class RoomSession {
       }
     }
 
+    if (muted && this.microphoneStream) {
+      const stream = this.microphoneStream;
+      const track = stream.getAudioTracks()[0];
+      const directionChanged = this.setVoiceTransceiverDirection("recvonly");
+      this.microphoneGeneration += 1;
+      this.microphoneStream = null;
+
+      if (track) track.enabled = false;
+      this.micMuted = true;
+      this.announceVoiceState();
+      this.emitVoiceState();
+      this.disposeCapturedStream(stream);
+
+      const release = Promise.allSettled(
+        [...this.voiceSenders.values()].map((sender) =>
+          sender.replaceTrack?.(null) ?? Promise.resolve(),
+        ),
+      ).then(() => {});
+      this.microphoneRelease = release;
+
+      try {
+        await release;
+      } finally {
+        if (this.microphoneRelease === release) {
+          this.microphoneRelease = null;
+        }
+      }
+      if (directionChanged) this.renegotiateVoicePeers();
+      return;
+    }
+
     const track = this.microphoneStream?.getAudioTracks()[0];
     if (!muted && !track) return;
+    const directionChanged = this.setVoiceTransceiverDirection(
+      muted ? "recvonly" : "sendrecv",
+    );
     if (track) track.enabled = !muted;
 
     this.micMuted = muted;
     this.announceVoiceState();
     this.emitVoiceState();
 
-    if (!muted) {
-      for (const peer of this.peers) {
-        if (peer.voiceJoined) {
-          void this.createVoiceOffer(peer.id, true);
-        }
-      }
-    }
+    if (!muted || directionChanged) this.renegotiateVoicePeers();
   }
 
   async startSharing(settings: ShareSettings) {
@@ -845,6 +905,7 @@ export class RoomSession {
       this.focusedStreamId = null;
       this.focusedOwnerPeerId = null;
       this.focusedSubscriptionSent = false;
+      this.focusedSubscriptionRefresh = null;
 
       for (const peerId of Array.from(this.voicePeerConnections.keys())) {
         this.closeVoicePeer(peerId);
@@ -1064,6 +1125,28 @@ export class RoomSession {
     }
   }
 
+  private setVoiceTransceiverDirection(
+    direction: "sendrecv" | "recvonly",
+  ): boolean {
+    let changed = false;
+
+    for (const transceiver of this.voiceTransceivers.values()) {
+      if (transceiver.direction === direction) continue;
+      transceiver.direction = direction;
+      changed = true;
+    }
+
+    return changed;
+  }
+
+  private renegotiateVoicePeers() {
+    for (const peer of this.peers) {
+      if (peer.voiceJoined) {
+        void this.createVoiceOffer(peer.id, true);
+      }
+    }
+  }
+
   private createVoicePeerConnection(peerId: string): RTCPeerConnection {
     const existing = this.voicePeerConnections.get(peerId);
     if (existing && existing.signalingState !== "closed") return existing;
@@ -1073,8 +1156,9 @@ export class RoomSession {
       iceServers: this.iceServers,
       purpose: "voice",
     });
+    // Do not create a send-capable audio transceiver until local mic capture is enabled.
     const transceiver = connection.addTransceiver?.("audio", {
-      direction: "sendrecv",
+      direction: this.micMuted ? "recvonly" : "sendrecv",
     });
 
     if (!transceiver?.sender.replaceTrack) {
@@ -1084,6 +1168,7 @@ export class RoomSession {
 
     this.voicePeerConnections.set(peerId, connection);
     this.voiceSenders.set(peerId, transceiver.sender);
+    this.voiceTransceivers.set(peerId, transceiver);
 
     connection.onicecandidate = (event) => {
       if (!event.candidate) return;
@@ -1458,6 +1543,7 @@ export class RoomSession {
     this.clearVoiceOfferAnswerTimer(peerId);
     this.clearVoiceRetryTimer(peerId);
     this.voiceSenders.delete(peerId);
+    this.voiceTransceivers.delete(peerId);
     this.voicePendingCandidates.delete(peerId);
     this.voicePendingOffers.delete(peerId);
     this.callbacks.onRemoteVoiceTrack?.(peerId, null);
@@ -1624,16 +1710,37 @@ export class RoomSession {
       this.closeFocusedConnection();
       this.focusedOwnerPeerId = nextOwnerPeerId;
       this.focusedStreamId = nextStreamId;
+      this.focusedSubscriptionRefresh = null;
       this.focusedLastRecoveryAt = 0;
     }
 
-    if (nextStreamId && (changed || !this.focusedSubscriptionSent)) {
-      this.send({ type: "subscribe", streamId: nextStreamId });
-      this.focusedSubscriptionSent = true;
+    if (nextStreamId) {
+      if (changed || !this.focusedSubscriptionSent) {
+        this.send({ type: "subscribe", streamId: nextStreamId });
+        this.focusedSubscriptionSent = true;
+      }
     } else if (this.focusedSubscriptionSent) {
       this.send({ type: "subscribe", streamId: null });
       this.focusedSubscriptionSent = false;
     }
+  }
+
+  private refreshFocusedSubscription(streamId: string): boolean {
+    if (
+      streamId !== this.focusedStreamId
+      || !this.focusedSubscriptionSent
+      || this.socket?.readyState !== SOCKET_OPEN
+      || !this.joined
+    ) {
+      return false;
+    }
+
+    if (this.focusedSubscriptionRefresh !== streamId) {
+      this.focusedSubscriptionRefresh = streamId;
+      this.send({ type: "subscribe", streamId });
+    }
+
+    return true;
   }
 
   private enqueueFocusedSignal(
@@ -2555,7 +2662,15 @@ export class RoomSession {
     if (message.type === "subscription-ended") {
       if (message.streamId === this.focusedStreamId) {
         this.focusedSubscriptionSent = false;
+        this.focusedSubscriptionRefresh = null;
         this.closeFocusedConnection();
+      }
+      return;
+    }
+
+    if (message.type === "subscription-accepted") {
+      if (message.streamId === this.focusedSubscriptionRefresh) {
+        this.focusedSubscriptionRefresh = null;
       }
       return;
     }
@@ -2589,6 +2704,22 @@ export class RoomSession {
     }
 
     if (message.type === "error") {
+      if (
+        message.code === "INVALID_STREAM_SIGNAL"
+        && message.streamId
+        && message.targetPeerId === this.focusedOwnerPeerId
+        && this.refreshFocusedSubscription(message.streamId)
+      ) {
+        return;
+      }
+
+      if (
+        message.code === "STREAM_UNAVAILABLE"
+        && message.streamId === this.focusedSubscriptionRefresh
+      ) {
+        this.focusedSubscriptionRefresh = null;
+      }
+
       this.callbacks.onError(message.message);
 
       if (message.code === "SHARER_EXISTS") {
