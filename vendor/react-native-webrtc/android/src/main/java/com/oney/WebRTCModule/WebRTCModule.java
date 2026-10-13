@@ -148,6 +148,9 @@ public class WebRTCModule extends ReactContextBaseJavaModule {
                 .setUsage(AudioAttributes.USAGE_MEDIA)
                 .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
                 .build())
+            // MediaProjection playback audio can be captured in stereo; the
+            // microphone factory above stays mono for echo-cancelled voice.
+            .setUseStereoInput(true)
             .setUseStereoOutput(true)
             .setEnableVolumeLogger(false)
             .createAudioDeviceModule();

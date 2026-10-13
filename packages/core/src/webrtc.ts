@@ -1,4 +1,54 @@
-import type { RTCPeerConnection, RTCRtpSender, StatsReportLike } from "./types";
+import type {
+  RTCPeerConnection,
+  RTCRtpSender,
+  SessionDescriptionInit,
+  StatsReportLike,
+} from "./types";
+
+// Opus defaults to speech-oriented mono unless the receiver asks for stereo.
+// Only screen connections opt in: voice chat keeps its own speech settings.
+export function preferStereoScreenAudio(description: SessionDescriptionInit): SessionDescriptionInit {
+  if (!description.sdp || !["offer", "answer"].includes(description.type)) {
+    return description;
+  }
+
+  const newline = description.sdp.includes("\r\n") ? "\r\n" : "\n";
+  const requested = description.type === "answer"
+    ? ["stereo=1", "maxaveragebitrate=128000"]
+    : ["sprop-stereo=1"];
+  let changed = false;
+
+  const sdp = description.sdp.split(/(?=^m=)/m).map((section) => {
+    if (!section.startsWith("m=audio ")) return section;
+
+    const lines = section.split(/\r?\n/);
+    const payloads = lines[0]!.trim().split(/\s+/).slice(3);
+    const codecIndex = lines.findIndex((line) => {
+      const match = /^a=rtpmap:(\d+) opus\/48000\/2$/i.exec(line);
+      return match && payloads.includes(match[1]!);
+    });
+    if (codecIndex < 0) return section;
+
+    const payload = /^a=rtpmap:(\d+)/.exec(lines[codecIndex]!)![1]!;
+    const fmtpIndex = lines.findIndex((line) => line.startsWith(`a=fmtp:${payload} `));
+    if (fmtpIndex < 0) {
+      lines.splice(codecIndex + 1, 0, `a=fmtp:${payload} ${requested.join(";")}`);
+    } else {
+      const params = lines[fmtpIndex]!.slice(`a=fmtp:${payload} `.length).split(";");
+      for (const param of requested) {
+        const key = param.split("=")[0];
+        const index = params.findIndex((entry) => entry.trim().startsWith(`${key}=`));
+        if (index < 0) params.push(param);
+        else params[index] = param;
+      }
+      lines[fmtpIndex] = `a=fmtp:${payload} ${params.join(";")}`;
+    }
+    changed = true;
+    return lines.join(newline);
+  }).join("");
+
+  return changed ? { ...description, sdp } : description;
+}
 
 export type IceRoute = {
   route: "TURN relay" | "Direct P2P via STUN" | "Direct P2P";

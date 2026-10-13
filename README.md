@@ -184,9 +184,13 @@ the signaling URL points to the **API**. Both clients should enter the same
 room before starting screen sharing. A mobile release APK also needs the API
 to be reachable, but it does not need Metro.
 
-Android plays remote screen audio through a stereo media output. For
-higher-quality shared music or game audio with Bluetooth headphones, keep the
-room microphone muted. When a Bluetooth headset's microphone is active,
+Screen sharing requests stereo Opus audio at up to 128 kb/s per viewer when
+supported by both peers; Android also captures device playback and plays
+remote screen audio in stereo. Actual quality depends on the source app,
+browser/Android capture support, and network conditions.
+
+For higher-quality shared music or game audio with Bluetooth headphones, keep
+the room microphone muted. When a Bluetooth headset's microphone is active,
 Android (and many desktop systems) switches from stereo media playback to a
 lower-bandwidth two-way call profile; this is a headset limitation, even if the
 shared audio itself is captured separately. Use a wired headset or a separate

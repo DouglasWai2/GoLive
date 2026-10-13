@@ -9,6 +9,7 @@ import type {
   RTCPeerConnection,
   RTCRtpSender,
   RTCRtpTransceiver as CoreRTCRtpTransceiver,
+  SessionDescriptionInit,
   ServerMessage,
   ShareSettings,
   SignalData,
@@ -23,6 +24,7 @@ import {
   configureVideoSender,
   getPeerMediaStats,
   logSelectedIceRoute,
+  preferStereoScreenAudio,
   type InboundVideoSample,
   type OutboundVideoSample,
 } from "./webrtc";
@@ -1821,7 +1823,7 @@ export class RoomSession {
     const answer = await connection.createAnswer();
     if (!isCurrent() || this.focusedConnection !== connection) return;
 
-    await connection.setLocalDescription(answer);
+    await this.setScreenLocalDescription(connection, answer);
     if (!isCurrent() || this.focusedConnection !== connection) return;
 
     this.send({
@@ -2206,6 +2208,24 @@ export class RoomSession {
   /*
    * The screen sharer creates an offer for each peer.
    */
+  private async setScreenLocalDescription(
+    connection: RTCPeerConnection,
+    description: SessionDescriptionInit,
+  ) {
+    const tuned = preferStereoScreenAudio(description);
+
+    if (tuned !== description) {
+      try {
+        await connection.setLocalDescription(tuned);
+        return;
+      } catch (caught) {
+        console.warn("Stereo screen audio negotiation is unavailable", caught);
+      }
+    }
+
+    await connection.setLocalDescription(description);
+  }
+
   private async createOffer(peerId: string, iceRestart = false) {
     if (
       this.pendingOffers.has(peerId)
@@ -2262,7 +2282,7 @@ export class RoomSession {
         return;
       }
 
-      await connection.setLocalDescription(offer);
+      await this.setScreenLocalDescription(connection, offer);
 
       if (
         !this.active ||

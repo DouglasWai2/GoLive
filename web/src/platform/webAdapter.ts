@@ -16,6 +16,7 @@ export const webAdapter: PlatformAdapter = {
         echoCancellation: false,
         noiseSuppression: false,
         autoGainControl: false,
+        channelCount: { ideal: 2 },
       } : false,
     });
 
