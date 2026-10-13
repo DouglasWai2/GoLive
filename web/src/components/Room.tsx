@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useRoom } from "../hooks/useRoom";
 import type { ShareSettings } from "@golive/core";
 import { formatBitrate, formatResolution } from "@golive/core";
+import type { CallStageSource } from "../types";
 import { RoomHeader } from "./room/RoomHeader";
 import { ErrorBanner } from "./room/ErrorBanner";
 import { VideoStage } from "./room/VideoStage";
@@ -33,12 +34,24 @@ export function Room({
   const [shareSettings, setShareSettings] = useState<ShareSettings | null>(null);
   const [deafened, setDeafened] = useState(false);
   const [focusedPeerId, setFocusedPeerId] = useState<string | null>(null);
+  const [stoppedWatchingRemote, setStoppedWatchingRemote] = useState(false);
+  const [stageSource, setStageSource] = useState<CallStageSource>("remote");
 
   useEffect(() => {
     const activeSharers = room.peers.filter((peer) => peer.sharing && peer.streamId);
+    if (activeSharers.length === 0) {
+      setFocusedPeerId(null);
+      setStoppedWatchingRemote(false);
+      return;
+    }
+    if (stoppedWatchingRemote) return;
     if (focusedPeerId && activeSharers.some((peer) => peer.id === focusedPeerId)) return;
-    setFocusedPeerId(activeSharers[0]?.id ?? null);
-  }, [focusedPeerId, room.peers]);
+    setFocusedPeerId(activeSharers[0].id);
+  }, [focusedPeerId, room.peers, stoppedWatchingRemote]);
+
+  useEffect(() => {
+    setStageSource(room.localStream ? "local" : "remote");
+  }, [room.localStream]);
 
   useEffect(() => {
     room.focusPeer(focusedPeerId);
@@ -60,6 +73,16 @@ export function Room({
   const stopShare = () => {
     setShareSettings(null);
     room.stopSharing();
+  };
+
+  const focusPeer = (peerId: string) => {
+    setStoppedWatchingRemote(false);
+    setFocusedPeerId(peerId);
+  };
+
+  const stopWatchingRemote = () => {
+    setStoppedWatchingRemote(true);
+    setFocusedPeerId(null);
   };
 
   const toggleDeafen = () => {
@@ -85,7 +108,10 @@ export function Room({
         localStream={room.localStream}
         peers={room.peers}
         focusedPeerId={focusedPeerId}
-        onFocusPeer={setFocusedPeerId}
+        onFocusPeer={focusPeer}
+        onStopWatchingRemote={stopWatchingRemote}
+        stageSource={stageSource}
+        onStageSourceChange={setStageSource}
         remoteStreams={room.remoteStreams}
         connectionStates={room.connectionStates}
         remoteStats={room.remoteStats}

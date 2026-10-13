@@ -20,6 +20,7 @@ type VideoTileProps = {
   statsEnabled?: boolean;
   fullscreenId?: string;
   isFullscreen?: boolean;
+  variant?: "stage" | "preview";
   onVolumeChange?: (volume: number) => void;
   onToggleMute?: () => void;
   onToggleStats?: () => void;
@@ -63,7 +64,7 @@ async function startPlayback(
   }
 }
 
-export function VideoTile({ stream, name, local = false, state, qualityLabel, stats, outboundStats = [], volume = 1, muted = false, statsEnabled = true, fullscreenId, isFullscreen = false, onVolumeChange, onToggleMute, onToggleStats, onFullscreen }: VideoTileProps) {
+export function VideoTile({ stream, name, local = false, state, qualityLabel, stats, outboundStats = [], volume = 1, muted = false, statsEnabled = true, fullscreenId, isFullscreen = false, variant = "stage", onVolumeChange, onToggleMute, onToggleStats, onFullscreen }: VideoTileProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const tileRef = useRef<HTMLElement>(null);
   const controlsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -244,7 +245,7 @@ export function VideoTile({ stream, name, local = false, state, qualityLabel, st
   return (
     <article
       ref={tileRef}
-      className={`video-tile ${isFullscreen ? "fullscreen-tile" : ""} ${!controlsVisible ? "controls-hidden" : ""}`}
+      className={`video-tile ${variant === "preview" ? "preview-tile" : ""} ${isFullscreen ? "fullscreen-tile" : ""} ${!controlsVisible ? "controls-hidden" : ""}`}
       data-peer-id={fullscreenId}
       onPointerEnter={(event) => {
         if (event.pointerType !== "touch") {
@@ -305,7 +306,7 @@ export function VideoTile({ stream, name, local = false, state, qualityLabel, st
       {local && statsEnabled && outboundStats.length > 0 && (
         <StreamStats outbound={outboundStats} />
       )}
-      {((local && onToggleStats) ||
+      {((local && (onToggleStats || onFullscreen)) ||
         (!local && (onVolumeChange || onToggleStats || onFullscreen))) && (
         <div className="tile-controls">
           {onToggleStats && <StatsButton statsEnabled={statsEnabled} toggleStats={onToggleStats} />}
