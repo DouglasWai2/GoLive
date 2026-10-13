@@ -184,6 +184,16 @@ the signaling URL points to the **API**. Both clients should enter the same
 room before starting screen sharing. A mobile release APK also needs the API
 to be reachable, but it does not need Metro.
 
+Android plays remote screen audio through a stereo media output. For
+higher-quality shared music or game audio with Bluetooth headphones, keep the
+room microphone muted. When a Bluetooth headset's microphone is active,
+Android (and many desktop systems) switches from stereo media playback to a
+lower-bandwidth two-way call profile; this is a headset limitation, even if the
+shared audio itself is captured separately. Use a wired headset or a separate
+microphone if you need to talk while listening in stereo. Native audio changes
+require reinstalling a newly built development APK (`npm run android -w mobile
+-- --device` from the repository root); restarting Metro only updates JS.
+
 If Wi-Fi access is unavailable but USB debugging works, install the development
 app over USB as above and forward both ports. Stop the old Metro process before
 switching its host:

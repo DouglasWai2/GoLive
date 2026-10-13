@@ -1,6 +1,7 @@
 package com.oney.WebRTCModule;
 
 import android.content.Context;
+import android.media.AudioAttributes;
 import android.media.AudioDeviceCallback;
 import android.media.AudioDeviceInfo;
 import android.media.AudioManager;
@@ -139,8 +140,15 @@ public class WebRTCModule extends ReactContextBaseJavaModule {
         // PeerConnectionFactory now owns the adm native pointer, and we don't need it anymore.
         adm.release();
 
-        // Keep screen playback capture independent from room microphone capture.
+        // Screen peer connections use this factory for remote playback too.
+        // Keep their output stereo/media instead of mono/voice-call audio;
+        // leave room voice on its separate communication audio device.
         mScreenAdm = JavaAudioDeviceModule.builder(reactContext)
+            .setAudioAttributes(new AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_MEDIA)
+                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                .build())
+            .setUseStereoOutput(true)
             .setEnableVolumeLogger(false)
             .createAudioDeviceModule();
 
@@ -172,11 +180,13 @@ public class WebRTCModule extends ReactContextBaseJavaModule {
     public synchronized void onMicrophoneTrackCreated() {
         microphoneTrackCount += 1;
         MediaProjectionService.setMicrophoneActive(true);
+        updatePreferredAudioRoute();
     }
 
     public synchronized void onMicrophoneTrackDisposed() {
         microphoneTrackCount = Math.max(0, microphoneTrackCount - 1);
         MediaProjectionService.setMicrophoneActive(microphoneTrackCount > 0);
+        updatePreferredAudioRoute();
     }
 
     @ReactMethod
@@ -200,6 +210,18 @@ public class WebRTCModule extends ReactContextBaseJavaModule {
         }
 
         try {
+            // Keep stereo Bluetooth playback on A2DP while the microphone is
+            // off, but still select the loudspeaker when no headset is present.
+            if (microphoneTrackCount == 0 && hasBluetoothMediaOutput()) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    mAudioManager.clearCommunicationDevice();
+                } else {
+                    stopBluetoothScoIfStarted();
+                    mAudioManager.setSpeakerphoneOn(false);
+                }
+                return;
+            }
+
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 AudioDeviceInfo currentDevice = mAudioManager.getCommunicationDevice();
                 List<AudioDeviceInfo> availableDevices = mAudioManager.getAvailableCommunicationDevices();
@@ -232,6 +254,17 @@ public class WebRTCModule extends ReactContextBaseJavaModule {
         } catch (SecurityException error) {
             Log.w(TAG, "Could not update communication audio route", error);
         }
+    }
+
+    private boolean hasBluetoothMediaOutput() {
+        for (AudioDeviceInfo device : mAudioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)) {
+            if (device.getType() == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP
+                    || device.getType() == AudioDeviceInfo.TYPE_BLE_HEADSET
+                    || device.getType() == AudioDeviceInfo.TYPE_BLE_SPEAKER) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void updateLegacyAudioRoute() {
