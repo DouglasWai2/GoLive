@@ -435,7 +435,7 @@ export async function configureVideoSender(
     maxBitrate,
     maxFramerate,
     scaleResolutionDownBy = 1,
-    degradationPreference = "maintain-resolution",
+    degradationPreference = "balanced",
   }: {
     maxBitrate: number;
     maxFramerate: number;
