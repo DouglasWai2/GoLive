@@ -47,6 +47,7 @@ export class SignalingService {
     }, AUTH_TIMEOUT_MS);
 
     const messageTimestamps: number[] = [];
+    const messageKinds: string[] = [];
 
     const leaveRoom = () => {
       if (!membership) return;
@@ -123,9 +124,8 @@ export class SignalingService {
       })
       : Promise.resolve(true);
 
-    const handleMessage = async (raw: Buffer | ArrayBuffer | Buffer[]) => {
+    const handleMessage = async (message: ClientMessage | null) => {
       if (!await connectionReady) return;
-      const message = parseMessage(raw);
       if (!message) {
         send(socket, { type: "error", message: "Invalid message." });
         return;
@@ -251,9 +251,18 @@ export class SignalingService {
       const now = Date.now();
       while (messageTimestamps.length > 0 && messageTimestamps[0]! < now - MESSAGE_WINDOW_MS) {
         messageTimestamps.shift();
+        messageKinds.shift();
       }
+      const message = parseMessage(raw);
+      const signal = message?.type === "signal" ? message.data as Record<string, unknown> : null;
       messageTimestamps.push(now);
+      messageKinds.push(message?.type === "signal" && signal
+        ? `${message.channel}:${"candidate" in signal || "candidates" in signal ? "candidate" : "restartRequest" in signal ? "restart" : "sdp"}`
+        : message?.type ?? "invalid");
       if (messageTimestamps.length > MAX_MESSAGES_PER_WINDOW) {
+        const counts: Record<string, number> = {};
+        for (const kind of messageKinds) counts[kind] = (counts[kind] ?? 0) + 1;
+        console.warn("Signaling WebSocket rate limit exceeded", { counts });
         socket.close(1008, "Rate limit exceeded");
         return;
       }
@@ -274,7 +283,7 @@ export class SignalingService {
         queuedMessages -= 1;
         queuedBytes -= rawBytes;
         if (socket.readyState !== socket.OPEN) return;
-        await handleMessage(raw);
+        await handleMessage(message);
       }).catch(() => {
         socket.close(1011, "Signaling unavailable");
       });
@@ -416,6 +425,17 @@ export class SignalingService {
 
       if (message.channel === "voice") {
         if (!target.voiceJoined) return;
+        if (Array.isArray(signal.candidates)) {
+          for (const candidate of signal.candidates) {
+            send(target.socket, {
+              type: "signal",
+              from: client.id,
+              channel: "voice",
+              data: { candidate },
+            });
+          }
+          return;
+        }
         send(target.socket, {
           type: "signal",
           from: client.id,
@@ -675,6 +695,7 @@ function parseMessage(raw: Buffer | ArrayBuffer | Buffer[]): ClientMessage | nul
       const data = parseSignalData(message.data);
       if (!data) return null;
       const channel = message.channel === "voice" ? "voice" : "screen";
+      if (channel === "screen" && "candidates" in data) return null;
       if (channel === "screen" && !isValidStreamId(message.streamId)) return null;
       if (channel === "voice" && message.streamId !== undefined) return null;
       return {
@@ -743,33 +764,16 @@ function parseSignalData(value: unknown): Record<string, unknown> | null {
   }
 
   if (Object.hasOwn(value, "candidate")) {
-    const candidateValue = value.candidate;
-    if (!isRecord(candidateValue) || !hasOnlyKeys(value, ["candidate"])) return null;
-    if (!hasOnlyKeys(candidateValue, ["candidate", "sdpMid", "sdpMLineIndex", "usernameFragment"])) return null;
+    if (!hasOnlyKeys(value, ["candidate"])) return null;
+    const candidate = parseIceCandidate(value.candidate);
+    return candidate ? { candidate } : null;
+  }
 
-    const candidate: Record<string, unknown> = {};
-    if (candidateValue.candidate !== undefined) {
-      if (typeof candidateValue.candidate !== "string" || candidateValue.candidate.length > 4096) return null;
-      candidate.candidate = candidateValue.candidate;
-    }
-    if (candidateValue.sdpMid !== undefined) {
-      if (candidateValue.sdpMid !== null && (typeof candidateValue.sdpMid !== "string" || candidateValue.sdpMid.length > 256)) return null;
-      candidate.sdpMid = candidateValue.sdpMid;
-    }
-    if (candidateValue.sdpMLineIndex !== undefined) {
-      if (
-        candidateValue.sdpMLineIndex !== null
-        && (!Number.isInteger(candidateValue.sdpMLineIndex)
-          || Number(candidateValue.sdpMLineIndex) < 0
-          || Number(candidateValue.sdpMLineIndex) > 255)
-      ) return null;
-      candidate.sdpMLineIndex = candidateValue.sdpMLineIndex;
-    }
-    if (candidateValue.usernameFragment !== undefined) {
-      if (candidateValue.usernameFragment !== null && (typeof candidateValue.usernameFragment !== "string" || candidateValue.usernameFragment.length > 256)) return null;
-      candidate.usernameFragment = candidateValue.usernameFragment;
-    }
-    return { candidate };
+  if (Object.hasOwn(value, "candidates")) {
+    if (!hasOnlyKeys(value, ["candidates"]) || !Array.isArray(value.candidates)
+      || value.candidates.length < 1 || value.candidates.length > 8) return null;
+    const candidates = value.candidates.map(parseIceCandidate);
+    return candidates.every((candidate) => candidate !== null) ? { candidates } : null;
   }
 
   if (
@@ -780,6 +784,34 @@ function parseSignalData(value: unknown): Record<string, unknown> | null {
     return value.sdp === undefined ? { type: value.type } : { type: value.type, sdp: value.sdp };
   }
   return null;
+}
+
+function parseIceCandidate(value: unknown): Record<string, unknown> | null {
+  if (!isRecord(value) || !hasOnlyKeys(value, ["candidate", "sdpMid", "sdpMLineIndex", "usernameFragment"])) return null;
+
+  const candidate: Record<string, unknown> = {};
+  if (value.candidate !== undefined) {
+    if (typeof value.candidate !== "string" || value.candidate.length > 4096) return null;
+    candidate.candidate = value.candidate;
+  }
+  if (value.sdpMid !== undefined) {
+    if (value.sdpMid !== null && (typeof value.sdpMid !== "string" || value.sdpMid.length > 256)) return null;
+    candidate.sdpMid = value.sdpMid;
+  }
+  if (value.sdpMLineIndex !== undefined) {
+    if (
+      value.sdpMLineIndex !== null
+      && (!Number.isInteger(value.sdpMLineIndex)
+        || Number(value.sdpMLineIndex) < 0
+        || Number(value.sdpMLineIndex) > 255)
+    ) return null;
+    candidate.sdpMLineIndex = value.sdpMLineIndex;
+  }
+  if (value.usernameFragment !== undefined) {
+    if (value.usernameFragment !== null && (typeof value.usernameFragment !== "string" || value.usernameFragment.length > 256)) return null;
+    candidate.usernameFragment = value.usernameFragment;
+  }
+  return candidate;
 }
 
 function isValidStreamId(value: unknown): value is string {

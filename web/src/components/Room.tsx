@@ -8,6 +8,7 @@ import { ErrorBanner } from "./room/ErrorBanner";
 import { VideoStage } from "./room/VideoStage";
 import { ControlDock } from "./room/ControlDock";
 import { VoiceAudio } from "./room/VoiceAudio";
+import { useSpeakingPeers } from "../hooks/useSpeakingPeers";
 import { playNotificationSound } from "../utils/notificationSounds";
 
 const DEFAULT_VOICE_PLAYBACK_SETTINGS: VoicePlaybackSettings = { volume: 1, muted: false };
@@ -39,6 +40,7 @@ export function Room({
   const [stoppedWatchingRemote, setStoppedWatchingRemote] = useState(false);
   const [stageSource, setStageSource] = useState<CallStageSource>("remote");
   const [voicePlaybackSettings, setVoicePlaybackSettings] = useState<Record<string, VoicePlaybackSettings>>({});
+  const speakingPeerIds = useSpeakingPeers(room.microphoneStream, room.remoteVoiceStreams);
 
   useEffect(() => {
     const activeSharers = room.peers.filter((peer) => peer.sharing && peer.streamId);
@@ -51,10 +53,6 @@ export function Room({
     if (focusedPeerId && activeSharers.some((peer) => peer.id === focusedPeerId)) return;
     setFocusedPeerId(activeSharers[0].id);
   }, [focusedPeerId, room.peers, stoppedWatchingRemote]);
-
-  useEffect(() => {
-    setStageSource(room.localStream ? "local" : "remote");
-  }, [room.localStream]);
 
   useEffect(() => {
     room.focusPeer(focusedPeerId);
@@ -91,6 +89,7 @@ export function Room({
   const focusPeer = (peerId: string) => {
     setStoppedWatchingRemote(false);
     setFocusedPeerId(peerId);
+    setStageSource("remote");
   };
 
   const stopWatchingRemote = () => {
@@ -128,7 +127,7 @@ export function Room({
 
   return (
     <main className="room-shell">
-      <RoomHeader roomId={roomId} token={token} status={room.status} onLeave={onLeave} />
+      <RoomHeader roomId={roomId} token={token} status={room.status} />
 
       {room.error && (
         <ErrorBanner message={room.error} onDismiss={() => room.setError("")} />
@@ -152,6 +151,7 @@ export function Room({
         localMicMuted={room.voiceState.micMuted}
         deafened={deafened}
         voicePlaybackSettings={voicePlaybackSettings}
+        speakingPeerIds={speakingPeerIds}
         onVoiceVolumeChange={changeVoiceVolume}
         onTogglePeerVoiceMute={togglePeerVoiceMute}
         onLeaveDisconnected={onLeaveDisconnected}
@@ -164,13 +164,13 @@ export function Room({
         status={room.status}
         localStream={room.localStream}
         isStartingShare={room.isStartingShare}
-        activeSettings={shareSettings}
         voiceState={room.voiceState}
         deafened={deafened}
         onStartShare={startShare}
         onStopShare={stopShare}
         onSetMicrophoneMuted={(muted) => void room.setMicrophoneMuted(muted)}
         onToggleDeafen={toggleDeafen}
+        onLeave={onLeave}
       />
     </main>
   );

@@ -5,6 +5,7 @@ import { DEFAULT_SHARE_SETTINGS } from "../src/sharePresets";
 import type { PlatformAdapter } from "../src/adapter";
 import type {
   IceServer,
+  IceCandidateInit,
   MediaStream,
   MediaTrack,
   ShareSettings,
@@ -594,7 +595,7 @@ test("auto-joins voice muted and requests the microphone only on unmute", async 
       };
     },
     isCaptureRejected: () => false,
-    serializeCandidate: () => ({}),
+    serializeCandidate: (candidate) => candidate as IceCandidateInit,
     createPeerConnection: ({ purpose }: {
       iceServers: IceServer[];
       purpose: "screen" | "voice";
@@ -666,6 +667,18 @@ test("auto-joins voice muted and requests the microphone only on unmute", async 
       data: { type: "answer", sdp: "answer" },
     });
     await flushAsyncWork();
+
+    for (let index = 0; index < 113; index += 1) {
+      connections[0]?.onicecandidate?.({ candidate: { candidate: `candidate-${index}` } });
+    }
+    await new Promise((resolve) => setTimeout(resolve, 550));
+    const candidateBatches = socket.sent.filter((message) => message.type === "signal"
+      && message.channel === "voice" && Array.isArray((message.data as { candidates?: unknown[] }).candidates));
+    assert.equal(candidateBatches.length, 15);
+    assert.deepEqual(candidateBatches.flatMap((message) => (message.data as { candidates: IceCandidateInit[] }).candidates),
+      Array.from({ length: 113 }, (_, index) => ({ candidate: `candidate-${index}` })));
+    assert.ok(candidateBatches.every((message) => (message.data as { candidates: unknown[] }).candidates.length <= 8));
+
     const voiceOffersBeforeUnmute = socket.sent.filter((message) =>
       message.type === "signal" && message.channel === "voice",
     ).length;

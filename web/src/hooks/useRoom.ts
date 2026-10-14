@@ -34,6 +34,7 @@ export function useRoom(
     requestingMicrophone: false,
   });
   const [remoteVoiceStreams, setRemoteVoiceStreams] = useState<Record<string, MediaStream>>({});
+  const [microphoneStream, setMicrophoneStream] = useState<MediaStream | null>(null);
 
   const sessionRef = useRef<RoomSession | null>(null);
 
@@ -120,6 +121,9 @@ export function useRoom(
 
           micMuted = state.micMuted;
           setVoiceState(state);
+          if (state.micMuted && !state.requestingMicrophone) {
+            setMicrophoneStream((current) => current?.getAudioTracks().some((track) => track.readyState === "live") ? current : null);
+          }
         },
         onRemoteVoiceTrack: (peerId, track) => {
           setRemoteVoiceStreams((current) => {
@@ -138,7 +142,7 @@ export function useRoom(
         onSessionRejected,
         onSessionReplaced,
       },
-      createSessionDeps(),
+      createSessionDeps(setMicrophoneStream),
     );
 
     sessionRef.current = session;
@@ -170,8 +174,12 @@ export function useRoom(
   const focusPeer = useCallback((peerId: string | null) => {
     sessionRef.current?.focusPeer(peerId);
   }, []);
-  const setMicrophoneMuted = (muted: boolean) =>
-    sessionRef.current?.setMicrophoneMuted(muted);
+  const setMicrophoneMuted = async (muted: boolean) => {
+    await sessionRef.current?.setMicrophoneMuted(muted);
+    if (muted) {
+      setMicrophoneStream((current) => current?.getAudioTracks().some((track) => track.readyState === "live") ? current : null);
+    }
+  };
 
   return {
     status,
@@ -185,6 +193,7 @@ export function useRoom(
     error,
     voiceState,
     remoteVoiceStreams,
+    microphoneStream,
     setError,
     startSharing,
     stopSharing,

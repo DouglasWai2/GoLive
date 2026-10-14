@@ -1,5 +1,6 @@
 import type {
   IceServer,
+  IceCandidateInit,
   MediaStream,
   MediaTrack,
   OutboundVideoStats,
@@ -68,6 +69,8 @@ const RELAY_FAILURE_GRACE_MS = 15_000;
 const TURN_FETCH_RETRY_MS = 30_000;
 const STREAM_UNAVAILABLE_MESSAGE =
   "Unable to start stream right now. Try again later.";
+const VOICE_CANDIDATE_BATCH_SIZE = 8;
+const VOICE_CANDIDATE_BATCH_MS = 500;
 
 /*
  * setTimeout/setInterval resolve to `number` in browsers and to a Timeout
@@ -154,6 +157,11 @@ export class RoomSession {
   private voiceSenders = new Map<string, RTCRtpSender>();
   private voiceTransceivers = new Map<string, CoreRTCRtpTransceiver>();
   private voicePendingCandidates = new Map<string, unknown[]>();
+  private voiceCandidateBatches = new Map<string, {
+    connection: RTCPeerConnection;
+    candidates: IceCandidateInit[];
+    timer: TimerHandle;
+  }>();
   private voicePendingOffers = new Map<string, symbol>();
   private voiceSignalQueues = new Map<string, Promise<void>>();
   private voicePeerGenerations = new Map<string, number>();
@@ -247,6 +255,7 @@ export class RoomSession {
 
     this.clearKeepalive();
     this.clearReconnectTimer();
+    this.clearVoiceCandidateBatches();
 
     for (const timer of this.iceRecoveryTimers.values()) {
       clearTimeout(timer);
@@ -881,7 +890,7 @@ export class RoomSession {
         return;
       }
 
-      console.log("Signaling WebSocket disconnected");
+      console.log("Signaling WebSocket disconnected", { code: event.code, reason: event.reason });
       const wasAuthenticated = this.authenticated;
 
       this.socket = null;
@@ -893,6 +902,7 @@ export class RoomSession {
       this.localStreamId = null;
       this.subscribers.clear();
       this.clearKeepalive();
+      this.clearVoiceCandidateBatches();
 
       this.sharingRequest?.("disconnected");
       this.sharingRequest = null;
@@ -1174,15 +1184,7 @@ export class RoomSession {
 
     connection.onicecandidate = (event) => {
       if (!event.candidate) return;
-
-      this.send({
-        type: "signal",
-        target: peerId,
-        channel: "voice",
-        data: {
-          candidate: this.deps.adapter.serializeCandidate(event.candidate),
-        },
-      });
+      this.queueVoiceCandidate(peerId, connection, this.deps.adapter.serializeCandidate(event.candidate));
     };
 
     connection.onicecandidateerror = (event) => {
@@ -1211,6 +1213,51 @@ export class RoomSession {
     };
 
     return connection;
+  }
+
+  private queueVoiceCandidate(peerId: string, connection: RTCPeerConnection, candidate: IceCandidateInit) {
+    if (this.voicePeerConnections.get(peerId) !== connection) return;
+
+    let batch = this.voiceCandidateBatches.get(peerId);
+    if (batch?.connection !== connection) {
+      this.clearVoiceCandidateBatch(peerId);
+      batch = {
+        connection,
+        candidates: [],
+        timer: setTimeout(() => this.flushVoiceCandidateBatch(peerId), VOICE_CANDIDATE_BATCH_MS),
+      };
+      this.voiceCandidateBatches.set(peerId, batch);
+    }
+
+    batch.candidates.push(candidate);
+    if (batch.candidates.length >= VOICE_CANDIDATE_BATCH_SIZE) {
+      this.flushVoiceCandidateBatch(peerId);
+    }
+  }
+
+  private flushVoiceCandidateBatch(peerId: string) {
+    const batch = this.voiceCandidateBatches.get(peerId);
+    if (!batch) return;
+    this.clearVoiceCandidateBatch(peerId);
+    if (this.voicePeerConnections.get(peerId) !== batch.connection) return;
+
+    this.send({
+      type: "signal",
+      target: peerId,
+      channel: "voice",
+      data: { candidates: batch.candidates },
+    });
+  }
+
+  private clearVoiceCandidateBatch(peerId: string) {
+    const batch = this.voiceCandidateBatches.get(peerId);
+    if (!batch) return;
+    clearTimeout(batch.timer);
+    this.voiceCandidateBatches.delete(peerId);
+  }
+
+  private clearVoiceCandidateBatches() {
+    for (const peerId of this.voiceCandidateBatches.keys()) this.clearVoiceCandidateBatch(peerId);
   }
 
   private async createVoiceOffer(peerId: string, allowNonElected = false) {
@@ -1526,6 +1573,7 @@ export class RoomSession {
   }
 
   private closeVoicePeer(peerId: string) {
+    this.clearVoiceCandidateBatch(peerId);
     this.voicePeerGenerations.set(
       peerId,
       (this.voicePeerGenerations.get(peerId) ?? 0) + 1,

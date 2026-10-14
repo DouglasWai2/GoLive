@@ -9,11 +9,59 @@ export function ScreenIcon({ size = 20 }: IconProps) {
   );
 }
 
+export function ScreenOffIcon({ size = 20 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M8 4h11a2 2 0 0 1 2 2v9M3 7v8a2 2 0 0 0 2 2h12M8 21h8M12 17v4M3 3l18 18" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+export function EyeOffIcon({ size = 20 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M4 4l16 16M9.5 5.5A10.5 10.5 0 0 1 12 5c5.2 0 8.6 4.2 9.5 7a11.2 11.2 0 0 1-2.4 3.7M6.1 6.7A12.3 12.3 0 0 0 2.5 12c.9 2.8 4.3 7 9.5 7 1 0 2-.2 2.9-.5M10 10a3 3 0 0 0 4 4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+export function MinimizeIcon({ size = 20 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M4 10h6V4M20 14h-6v6M10 10 3 3m11 11 7 7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+export function PhoneOffIcon({ size = 20 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M3 13.5c5.2-4.4 12.8-4.4 18 0l-2 3.2a1.5 1.5 0 0 1-1.9.6l-2.1-1a1.5 1.5 0 0 1-.9-1.4v-1.2a14 14 0 0 0-4.2 0v1.2a1.5 1.5 0 0 1-.9 1.4l-2.1 1a1.5 1.5 0 0 1-1.9-.6L3 13.5Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+export function CloseIcon({ size = 20 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="m5 5 14 14M19 5 5 19" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 export function CopyIcon({ size = 18 }: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <rect x="8" y="8" width="11" height="11" rx="2" stroke="currentColor" strokeWidth="1.8" />
       <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" stroke="currentColor" strokeWidth="1.8" />
+    </svg>
+  );
+}
+
+export function CheckIcon({ size = 18 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="m5 12 4.5 4.5L19 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }

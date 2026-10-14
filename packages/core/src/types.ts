@@ -251,7 +251,7 @@ export type RTCPeerConnection = {
  * The WebSocket surface used by the room session.
  */
 export type SocketEvent = { data: unknown };
-export type CloseEvent = { code: number };
+export type CloseEvent = { code: number; reason?: string };
 
 export type WebSocketLike = {
   readonly readyState: number;

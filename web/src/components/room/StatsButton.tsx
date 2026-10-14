@@ -8,9 +8,12 @@ interface StatsButtonProps {
 
 export default function StatsButton({ statsEnabled, toggleStats }: StatsButtonProps) {
   return <button
-    className={`icon-button ${statsEnabled ? "active" : "muted"}`}
+    className={`icon-button stats-button ${statsEnabled ? "active" : "muted"}`}
     onClick={toggleStats}
-    title="Toggle stream stats"
+    type="button"
+    title={statsEnabled ? "Hide stream stats" : "Show stream stats"}
+    aria-label={statsEnabled ? "Hide stream stats" : "Show stream stats"}
+    aria-pressed={statsEnabled}
   >
     <StatsIcon />
   </button>

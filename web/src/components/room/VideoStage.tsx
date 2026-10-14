@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { FullscreenExitIcon, ScreenIcon } from "../icons";
+import { EyeOffIcon, FullscreenExitIcon, ScreenIcon } from "../icons";
 import { VideoTile } from "../VideoTile";
 import { StreamStats } from "./StreamStats";
-import { ShareRail } from "./ShareRail";
-import { ParticipantsPanel } from "./ParticipantsPanel";
+import { ParticipantsPanel, type ParticipantsPanelHandle } from "./ParticipantsPanel";
+import { ParticipantsGrid } from "./ParticipantsGrid";
 import type {
   CallStageSource,
   OutboundVideoStats,
@@ -43,6 +43,7 @@ type VideoStageProps = {
   localMicMuted: boolean;
   deafened: boolean;
   voicePlaybackSettings: Record<string, VoicePlaybackSettings>;
+  speakingPeerIds: Set<string>;
   onVoiceVolumeChange: (peerId: string, volume: number) => void;
   onTogglePeerVoiceMute: (peerId: string) => void;
   onLeaveDisconnected: () => void;
@@ -56,7 +57,7 @@ function isNotAllowedError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "NotAllowedError";
 }
 
-export function VideoStage({ localStream, peers, focusedPeerId, onFocusPeer, onStopWatchingRemote, stageSource, onStageSourceChange, remoteStreams, connectionStates, remoteStats, outboundStats, localQuality, localName, status, localMicMuted, deafened, voicePlaybackSettings, onVoiceVolumeChange, onTogglePeerVoiceMute, onLeaveDisconnected }: VideoStageProps) {
+export function VideoStage({ localStream, peers, focusedPeerId, onFocusPeer, onStopWatchingRemote, stageSource, onStageSourceChange, remoteStreams, connectionStates, remoteStats, outboundStats, localQuality, localName, status, localMicMuted, deafened, voicePlaybackSettings, speakingPeerIds, onVoiceVolumeChange, onTogglePeerVoiceMute, onLeaveDisconnected }: VideoStageProps) {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [fullscreenPeerId, setFullscreenPeerId] = useState<string | null>(null);
   const [showCinemaControls, setShowCinemaControls] = useState(false);
@@ -87,6 +88,7 @@ export function VideoStage({ localStream, peers, focusedPeerId, onFocusPeer, onS
   const cinemaRef = useRef<HTMLDivElement>(null);
   const cinemaVideoRef = useRef<HTMLVideoElement>(null);
   const cinemaControlsTimer = useRef<number | null>(null);
+  const participantsPanelRef = useRef<ParticipantsPanelHandle>(null);
 
   const activeSharers = peers.filter((peer) => peer.sharing && Boolean(peer.streamId));
   const focusedPeer = activeSharers.find((peer) => peer.id === focusedPeerId);
@@ -107,16 +109,15 @@ export function VideoStage({ localStream, peers, focusedPeerId, onFocusPeer, onS
     const stats = outboundStats[peer.id];
     return stats ? [{ peerId: peer.id, peerName: peer.name, stats }] : [];
   });
-  const mainSource: CallStageSource | null = stageSource === "local" && localStream
-    ? "local"
-    : stageSource === "remote" && focusedPeer
-      ? "remote"
-      : localStream
-        ? "local"
-        : focusedStream
-          ? "remote"
-          : null;
-  const previewSource: CallStageSource | null = mainSource === "local" && focusedPeer
+  const mainSource: "local" | "remote" | null = stageSource === "none"
+    ? null
+    : stageSource === "local" && localStream
+      ? "local"
+      : focusedPeer
+        ? "remote"
+        : null;
+  const showParticipantGrid = mainSource === null;
+  const previewSource: "local" | "remote" | null = mainSource === "local" && focusedPeer
     ? "remote"
     : mainSource === "remote" && localStream
       ? "local"
@@ -126,21 +127,13 @@ export function VideoStage({ localStream, peers, focusedPeerId, onFocusPeer, onS
       ? "Reconnecting to the room..."
       : status === "disconnected"
         ? "Connection lost"
-        : focusedPeer
-          ? `Connecting to ${focusedPeer.name}'s screen...`
-          : activeSharers.length > 0
-            ? "You're not watching a screen"
-            : "No screen on air";
+        : `Connecting to ${focusedPeer?.name ?? "the selected"} screen...`;
   const emptyMessage =
     status === "reconnecting"
       ? "Your session will resume automatically when the connection returns."
       : status === "disconnected"
         ? "Leave and rejoin the room to start a new session."
-        : focusedPeer
-          ? "Connecting to the selected screen. You can stop watching at any time."
-          : activeSharers.length > 0
-            ? "Choose a screen share card to start watching."
-            : "Share this room link, then choose a window or display to begin.";
+        : "Connecting to the selected screen. You can stop watching at any time.";
 
   const clearCinemaControlsTimer = () => {
     if (cinemaControlsTimer.current !== null) {
@@ -492,75 +485,69 @@ export function VideoStage({ localStream, peers, focusedPeerId, onFocusPeer, onS
       <div className="stage-heading">
         <div>
           <p className="eyebrow"><span /> Live room</p>
-          <h1>
-            {mainSource === "local"
-              ? "Your screen is on stage"
-              : focusedPeer
-                ? `Focused on ${focusedPeer.name}`
-                : activeSharers.length > 0
-                  ? "Choose a screen to watch"
-                  : "Ready when you are"}
+          <h1 aria-live="polite">
+            {stageSource === "none" && focusedPeer
+              ? `${focusedPeer.name} · preview`
+              : mainSource === "local"
+                ? "Your screen"
+                : focusedPeer
+                  ? focusedPeer.name
+                  : "Call"}
           </h1>
         </div>
-        <div className="stage-actions">
-          <ParticipantsPanel
-            localName={localName}
-            peers={peers}
-            localMicMuted={localMicMuted}
-            deafened={deafened}
-            voicePlaybackSettings={voicePlaybackSettings}
-            onVoiceVolumeChange={onVoiceVolumeChange}
-            onTogglePeerVoiceMute={onTogglePeerVoiceMute}
-          />
-        </div>
+        <ParticipantsPanel
+          ref={participantsPanelRef}
+          localName={localName}
+          localStream={localStream}
+          peers={peers}
+          focusedPeerId={focusedPeerId}
+          stageSource={mainSource}
+          localMicMuted={localMicMuted}
+          deafened={deafened}
+          voicePlaybackSettings={voicePlaybackSettings}
+          screenVolume={volume}
+          screenMuted={muted}
+          screenHasAudio={cinemaHasAudio}
+          speakingPeerIds={speakingPeerIds}
+          onFocusPeer={onFocusPeer}
+          onStageSourceChange={onStageSourceChange}
+          onVoiceVolumeChange={onVoiceVolumeChange}
+          onTogglePeerVoiceMute={onTogglePeerVoiceMute}
+          onScreenVolumeChange={changeVolume}
+          onToggleScreenMute={toggleMute}
+          onStopWatchingRemote={onStopWatchingRemote}
+        />
       </div>
 
-      <ShareRail
-        localStream={localStream}
-        localName={localName}
-        peers={peers}
-        focusedPeerId={focusedPeerId}
-        stageSource={mainSource ?? stageSource}
-        onFocusPeer={onFocusPeer}
-        onStageSourceChange={onStageSourceChange}
-      />
-
-      {localStream && focusedPeer && (
-        <div className="stage-view-controls">
-          <div className="stage-source-toggle" role="group" aria-label="Choose the main screen">
-            <button
-              type="button"
-              className={mainSource === "remote" ? "active" : ""}
-              aria-pressed={mainSource === "remote"}
-              onClick={() => onStageSourceChange("remote")}
-            >
-              Focused screen
-            </button>
-            <button
-              type="button"
-              className={mainSource === "local" ? "active" : ""}
-              aria-pressed={mainSource === "local"}
-              onClick={() => onStageSourceChange("local")}
-            >
-              Your screen
-            </button>
-          </div>
-          <button type="button" className="stop-watching-button" onClick={onStopWatchingRemote}>
-            Stop watching{focusedPeer ? ` ${focusedPeer.name}'s screen` : " screen"}
-          </button>
-        </div>
-      )}
-
-      {focusedPeer && !localStream && (
-        <div className="stage-view-controls">
-          <button type="button" className="stop-watching-button" onClick={onStopWatchingRemote}>
-            Stop watching {focusedPeer.name}'s screen
-          </button>
-        </div>
-      )}
-
-      <div className={`video-grid call-canvas ${mainSource ? "has-video" : ""}`}>
-        <div className="call-stage-main">
+      <div className={`video-grid call-canvas ${previewSource ? "has-preview" : ""}`}>
+        <div className={`call-stage-main ${showParticipantGrid ? "is-people" : ""}`} key={showParticipantGrid ? "people" : mainSource === "remote" ? `remote-${focusedPeerId}` : mainSource ?? "empty"}>
+          {showParticipantGrid && (
+            <ParticipantsGrid
+              localName={localName}
+              localStream={localStream}
+              localMicMuted={localMicMuted}
+              peers={peers}
+              focusedPeerId={focusedPeerId}
+              focusedStream={focusedStream}
+              focusedConnectionState={cinemaConnectionState}
+              hideFocusedVideo={isFullscreen}
+              focusedStats={statsEnabled && focusedStreamId ? remoteStats[focusedStreamId] ?? null : null}
+              volume={volume}
+              muted={muted}
+              statsEnabled={statsEnabled}
+              onVolumeChange={changeVolume}
+              onToggleMute={toggleMute}
+              onToggleStats={toggleStats}
+              onLocalFullscreen={(video, tile) => void toggleLocalFullscreen(video, tile)}
+              onRemoteFullscreen={(video, tile) => void toggleFullscreen(video, tile)}
+              fullscreenPeerId={fullscreenPeerId}
+              speakingPeerIds={speakingPeerIds}
+              status={status}
+              onFocusPeer={onFocusPeer}
+              onFocusLocal={() => onStageSourceChange("local")}
+              onOpenParticipants={() => participantsPanelRef.current?.open()}
+            />
+          )}
           {mainSource === "local" && localStream && (
             <VideoTile
               key="local-stage"
@@ -574,6 +561,7 @@ export function VideoStage({ localStream, peers, focusedPeerId, onFocusPeer, onS
               isFullscreen={fullscreenPeerId === "local"}
               onToggleStats={toggleStats}
               onFullscreen={(video, tile) => void toggleLocalFullscreen(video, tile)}
+              onMinimize={() => onStageSourceChange("none")}
             />
           )}
           {mainSource === "remote" && focusedStream && focusedPeer && (!isFullscreen || focusedPeer.id !== cinemaPeer?.id) && (
@@ -592,28 +580,25 @@ export function VideoStage({ localStream, peers, focusedPeerId, onFocusPeer, onS
               onToggleMute={toggleMute}
               onToggleStats={toggleStats}
               onFullscreen={(video, tile) => void toggleFullscreen(video, tile)}
+              onMinimize={() => onStageSourceChange("none")}
+              onStopWatching={onStopWatchingRemote}
             />
           )}
           {mainSource === "remote" && !focusedStream && (
-            <div className="empty-stage">
-              <div className="screen-outline"><ScreenIcon size={38} /><span className="scan-line" /></div>
-              <h2>{emptyTitle}</h2>
-              <p>{emptyMessage}</p>
-              {status === "disconnected" && <button className="leave-button empty-leave-button" type="button" onClick={onLeaveDisconnected}>Leave room</button>}
-            </div>
-          )}
-          {!mainSource && (
-            <div className="empty-stage">
-              <div className="screen-outline"><ScreenIcon size={38} /><span className="scan-line" /></div>
-              <h2>{emptyTitle}</h2>
-              <p>{emptyMessage}</p>
-              {status === "disconnected" && <button className="leave-button empty-leave-button" type="button" onClick={onLeaveDisconnected}>Leave room</button>}
-            </div>
+            <>
+              <div className="empty-stage">
+                <div className="screen-outline"><ScreenIcon size={38} /><span className="scan-line" /></div>
+                <h2>{emptyTitle}</h2>
+                {emptyMessage && <p>{emptyMessage}</p>}
+                {status === "disconnected" && <button className="leave-button empty-leave-button" type="button" onClick={onLeaveDisconnected}>Leave room</button>}
+              </div>
+              <button type="button" className="empty-stop-watching icon-button" onClick={onStopWatchingRemote} title={`Stop watching ${focusedPeer?.name ?? "screen"}`} aria-label={`Stop watching ${focusedPeer?.name ?? "screen"}`}><EyeOffIcon /></button>
+            </>
           )}
         </div>
 
         {previewSource === "local" && localStream && (
-          <div className="call-stage-preview local-preview">
+          <div className="call-stage-preview local-preview" key="local-preview">
             <VideoTile
               key="local-preview"
               stream={localStream}
@@ -631,7 +616,7 @@ export function VideoStage({ localStream, peers, focusedPeerId, onFocusPeer, onS
           </div>
         )}
         {previewSource === "remote" && focusedPeer && (!isFullscreen || focusedPeer.id !== cinemaPeer?.id) && (
-          <div className={`call-stage-preview ${focusedStream ? "" : "preview-loading"}`}>
+          <div className={`call-stage-preview ${focusedStream ? "" : "preview-loading"}`} key={focusedPeer.id}>
             {focusedStream ? (
               <VideoTile
                 key={focusedPeer.id}
@@ -647,6 +632,7 @@ export function VideoStage({ localStream, peers, focusedPeerId, onFocusPeer, onS
                 onVolumeChange={changeVolume}
                 onToggleMute={toggleMute}
                 onFullscreen={(video, tile) => void toggleFullscreen(video, tile)}
+                onStopWatching={onStopWatchingRemote}
               />
             ) : (
               <div className="preview-wait" role="status">
@@ -654,6 +640,7 @@ export function VideoStage({ localStream, peers, focusedPeerId, onFocusPeer, onS
                 <span>Connecting to {focusedPeer.name}'s screen…</span>
               </div>
             )}
+            {!focusedStream && <button type="button" className="preview-stop-watching icon-button" onClick={onStopWatchingRemote} title={`Stop watching ${focusedPeer.name}'s screen`} aria-label={`Stop watching ${focusedPeer.name}'s screen`}><EyeOffIcon /></button>}
           </div>
         )}
       </div>
@@ -702,8 +689,8 @@ export function VideoStage({ localStream, peers, focusedPeerId, onFocusPeer, onS
             onVolumeChange={changeVolume}
             onToggleMute={toggleMute}
           />
-          <button className="icon-button" onClick={() => void exitFullscreen()} title="Exit fullscreen">
-            <FullscreenExitIcon /> Exit fullscreen
+          <button type="button" className="icon-button" onClick={() => void exitFullscreen()} title="Exit fullscreen" aria-label="Exit fullscreen">
+            <FullscreenExitIcon />
           </button>
         </div>
       </div>

@@ -11,10 +11,9 @@ import { DeviceRooms } from "./components/DeviceRooms";
 import { DeviceProfile } from "./components/DeviceProfile";
 import { primeNotificationAudio } from "./utils/notificationSounds";
 import { Brand } from "./components/Brand";
-import { SwitchRoomDialog } from "./components/SwitchRoomDialog";
 import { VersionInfo } from "./components/VersionInfo";
 import { configuredBaseUrl } from "./services/sessionDeps";
-import { clearDeviceToken, clearSavedRoom, loadDeviceName, loadDeviceToken, loadSavedRoom, saveDeviceName, saveDeviceRoom } from "./utils/session";
+import { clearDeviceToken, clearSavedRoom, loadDeviceName, loadDeviceToken, saveDeviceName, saveDeviceRoom } from "./utils/session";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { useAuth } from "./services/auth";
 import { GoogleAuthControls } from "./components/GoogleAuthControls";
@@ -29,7 +28,6 @@ function RoomApp() {
   const [loading, setLoading] = useState(() => Boolean(roomFromPath() && loadDeviceToken()));
   const [error, setError] = useState("");
   const [replaced, setReplaced] = useState(false);
-  const [switchFromRoom, setSwitchFromRoom] = useState<string | null>(null);
   const [leavingError, setLeavingError] = useState(false);
   const hasJoined = join !== null;
 
@@ -45,31 +43,6 @@ function RoomApp() {
     clearInviteTokenFromUrl();
     setJoin({ name: result.session.name, token: result.token });
     setError("");
-    setSwitchFromRoom(null);
-  };
-
-  const acceptInviteForDevice = async () => {
-    if (!roomId || !inviteToken) return;
-    const deviceToken = loadDeviceToken();
-    if (!deviceToken) {
-      setSwitchFromRoom(null);
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    setError("");
-    try {
-      acceptResult(await verifyInvite(
-        configuredBaseUrl(), roomId, loadDeviceName(), inviteToken, deviceToken, await auth.getAccessToken() ?? undefined,
-      ));
-    } catch (caught) {
-      const message = caught instanceof Error ? caught.message : "Could not accept this invite.";
-      setError(message.includes(": 403") || message.toLowerCase().includes("invite")
-        ? "This invite is invalid or has expired."
-        : "Could not accept this invite. Check your connection and retry.");
-    } finally {
-      setLoading(false);
-    }
   };
 
   useEffect(() => {
@@ -108,11 +81,6 @@ function RoomApp() {
 
         if (caught instanceof DeviceRequestError && caught.status === 404) {
           if (inviteToken) {
-            const savedRoomId = loadSavedRoom();
-            if (savedRoomId && savedRoomId !== roomId) {
-              setSwitchFromRoom(savedRoomId);
-              return;
-            }
             try {
               const invited = await verifyInvite(
                 configuredBaseUrl(), roomId, loadDeviceName(), inviteToken, deviceToken, await auth.getAccessToken() ?? undefined,
@@ -217,15 +185,6 @@ function RoomApp() {
           {leavingError ? "Leaving..." : "Back to my rooms"}
         </button>
       </div>
-    </main>
-  );
-  if (switchFromRoom) return (
-    <main className="gate-shell">
-      <Brand />
-      <SwitchRoomDialog
-        onStay={() => window.location.replace(`/room/${switchFromRoom}`)}
-        onSwitch={() => void acceptInviteForDevice()}
-      />
     </main>
   );
   if (!roomId) return <Landing />;

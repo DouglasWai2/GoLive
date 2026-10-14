@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { CopyIcon } from "../icons";
+import { CheckIcon, CopyIcon } from "../icons";
 import { Brand } from "../Brand";
 import { buildInviteUrl, createInvite } from "@golive/core";
 import { configuredBaseUrl } from "../../services/sessionDeps";
@@ -9,10 +9,9 @@ type RoomHeaderProps = {
   roomId: string;
   token: string;
   status: SocketStatus;
-  onLeave: () => void;
 };
 
-export function RoomHeader({ roomId, token, status, onLeave }: RoomHeaderProps) {
+export function RoomHeader({ roomId, token, status }: RoomHeaderProps) {
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -55,13 +54,11 @@ export function RoomHeader({ roomId, token, status, onLeave }: RoomHeaderProps) 
       </div>
       <div className="header-actions">
         <span className={`socket-state ${status}`}><i />{status}</span>
-        <button className="icon-button" onClick={copyInvite} disabled={creating}>
-          <CopyIcon /> {creating ? "Creating…" : copied ? "Copied" : "Copy invite"}
+        <button type="button" className={`icon-button header-invite ${copied ? "is-copied" : ""}`} onClick={copyInvite} disabled={creating} title={creating ? "Creating invite" : copied ? "Invite copied" : "Copy invite"} aria-label={creating ? "Creating invite" : copied ? "Invite copied" : "Copy invite"}>
+          {copied ? <CheckIcon /> : <CopyIcon />}
         </button>
+        <span className="sr-only" role="status">{copied ? "Invite copied" : ""}</span>
         {error && <span className="invite-error">Could not create invite</span>}
-        <button className="leave-button" onClick={onLeave}>
-          My rooms
-        </button>
       </div>
     </header>
   );

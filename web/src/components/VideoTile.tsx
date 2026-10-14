@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { PeerConnectionState, RemoteVideoStats } from "@golive/core";
-import { FullscreenExitIcon, FullscreenIcon } from "./icons";
+import { EyeOffIcon, FullscreenExitIcon, FullscreenIcon, MinimizeIcon } from "./icons";
 import { StreamStats, type OutboundStatsEntry } from "./room/StreamStats";
 import StatsButton from "./room/StatsButton";
 import { VolumeControl } from "./room/VolumeControl";
@@ -20,11 +20,13 @@ type VideoTileProps = {
   statsEnabled?: boolean;
   fullscreenId?: string;
   isFullscreen?: boolean;
-  variant?: "stage" | "preview";
+  variant?: "stage" | "preview" | "card";
   onVolumeChange?: (volume: number) => void;
   onToggleMute?: () => void;
   onToggleStats?: () => void;
   onFullscreen?: (video: HTMLVideoElement, tile: HTMLElement) => void;
+  onMinimize?: () => void;
+  onStopWatching?: () => void;
 };
 
 const CONTROLS_HIDE_DELAY = 2500;
@@ -64,7 +66,7 @@ async function startPlayback(
   }
 }
 
-export function VideoTile({ stream, name, local = false, state, qualityLabel, stats, outboundStats = [], volume = 1, muted = false, statsEnabled = true, fullscreenId, isFullscreen = false, variant = "stage", onVolumeChange, onToggleMute, onToggleStats, onFullscreen }: VideoTileProps) {
+export function VideoTile({ stream, name, local = false, state, qualityLabel, stats, outboundStats = [], volume = 1, muted = false, statsEnabled = true, fullscreenId, isFullscreen = false, variant = "stage", onVolumeChange, onToggleMute, onToggleStats, onFullscreen, onMinimize, onStopWatching }: VideoTileProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const tileRef = useRef<HTMLElement>(null);
   const controlsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -96,7 +98,7 @@ export function VideoTile({ stream, name, local = false, state, qualityLabel, st
 
   useEffect(() => {
     setControlsVisible(true);
-    if (isFullscreen || !tileRef.current?.matches(":hover")) scheduleControlsHide();
+    if (isFullscreen) scheduleControlsHide();
     return clearControlsTimer;
   }, [isFullscreen]);
 
@@ -245,7 +247,7 @@ export function VideoTile({ stream, name, local = false, state, qualityLabel, st
   return (
     <article
       ref={tileRef}
-      className={`video-tile ${variant === "preview" ? "preview-tile" : ""} ${isFullscreen ? "fullscreen-tile" : ""} ${!controlsVisible ? "controls-hidden" : ""}`}
+      className={`video-tile ${variant === "preview" ? "preview-tile" : ""} ${variant === "card" ? "card-tile" : ""} ${isFullscreen ? "fullscreen-tile" : ""} ${!controlsVisible ? "controls-hidden" : ""}`}
       data-peer-id={fullscreenId}
       onPointerEnter={(event) => {
         if (event.pointerType !== "touch") {
@@ -262,7 +264,7 @@ export function VideoTile({ stream, name, local = false, state, qualityLabel, st
         }
       }}
       onPointerLeave={(event) => {
-        if (event.pointerType !== "touch") scheduleControlsHide();
+        if (isFullscreen && event.pointerType !== "touch") scheduleControlsHide();
       }}
       onPointerDown={(event) => {
         if (isFullscreen && event.pointerType !== "touch") {
@@ -270,16 +272,16 @@ export function VideoTile({ stream, name, local = false, state, qualityLabel, st
           scheduleControlsHide();
           return;
         }
-        if (event.pointerType !== "touch" || (event.target instanceof Element && event.target.closest("button, input"))) return;
+        if (!isFullscreen || event.pointerType !== "touch" || (event.target instanceof Element && event.target.closest("button, input"))) return;
         clearControlsTimer();
         setControlsVisible((visible) => !visible);
       }}
       onFocusCapture={revealControls}
       onClickCapture={(event) => {
-        if (event.target instanceof Element && event.target.closest(".tile-controls")) scheduleControlsHide();
+        if (isFullscreen && event.target instanceof Element && event.target.closest(".tile-controls")) scheduleControlsHide();
       }}
       onBlurCapture={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget) && (isFullscreen || !event.currentTarget.matches(":hover"))) scheduleControlsHide();
+        if (isFullscreen && !event.currentTarget.contains(event.relatedTarget)) scheduleControlsHide();
       }}
     >
       <video ref={videoRef} autoPlay playsInline muted={local || muted || audioBlocked} />
@@ -296,31 +298,33 @@ export function VideoTile({ stream, name, local = false, state, qualityLabel, st
           Tap to hear shared audio
         </button>
       )}
-      <div className="video-meta">
+      {variant !== "card" && <div className="video-meta">
         <span className="live-dot" />
         <strong>{local ? "Your screen" : `${name}'s screen`}</strong>
         {local && qualityLabel && <span className="peer-state">{qualityLabel}</span>}
         {state && <span className="peer-state">{state}</span>}
-      </div>
+      </div>}
       {!local && stats && <StreamStats stats={stats} />}
-      {local && statsEnabled && outboundStats.length > 0 && (
+      {variant !== "card" && local && statsEnabled && outboundStats.length > 0 && (
         <StreamStats outbound={outboundStats} />
       )}
-      {((local && (onToggleStats || onFullscreen)) ||
-        (!local && (onVolumeChange || onToggleStats || onFullscreen))) && (
-        <div className="tile-controls">
+      {(onToggleStats || (!local && onVolumeChange && onToggleMute) || onFullscreen) && (
+        <div className="tile-controls tile-controls-bottom">
           {onToggleStats && <StatsButton statsEnabled={statsEnabled} toggleStats={onToggleStats} />}
-          {onVolumeChange && onToggleMute && (
+          {!local && onVolumeChange && onToggleMute && (
             <VolumeControl
               volume={volume}
               muted={muted}
               disabled={!hasAudio}
+              muteLabel="Mute shared audio"
+              unmuteLabel="Unmute shared audio"
               onVolumeChange={onVolumeChange}
               onToggleMute={onToggleMute}
             />
           )}
           {onFullscreen && (
             <button
+              type="button"
               className="icon-button"
               onClick={() => {
                 if (videoRef.current && tileRef.current) onFullscreen(videoRef.current, tileRef.current);
@@ -329,6 +333,20 @@ export function VideoTile({ stream, name, local = false, state, qualityLabel, st
               aria-label={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
             >
               {isFullscreen ? <FullscreenExitIcon /> : <FullscreenIcon />}
+            </button>
+          )}
+        </div>
+      )}
+      {(onMinimize || onStopWatching) && (
+        <div className="tile-controls tile-controls-top">
+          {onMinimize && (
+            <button type="button" className="icon-button" onClick={onMinimize} title="Minimize stream" aria-label="Minimize stream">
+              <MinimizeIcon />
+            </button>
+          )}
+          {onStopWatching && (
+            <button type="button" className="icon-button stop-watching-icon" onClick={onStopWatching} title={`Stop watching ${name}'s screen`} aria-label={`Stop watching ${name}'s screen`}>
+              <EyeOffIcon />
             </button>
           )}
         </div>

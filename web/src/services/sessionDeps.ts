@@ -7,9 +7,18 @@ export function configuredBaseUrl(): string {
   return configuredUrl ?? window.location.origin;
 }
 
-export function createSessionDeps(): RoomSessionDeps {
+export function createSessionDeps(onMicrophoneStream?: (stream: MediaStream) => void): RoomSessionDeps {
   return {
     baseUrl: configuredBaseUrl(),
-    adapter: webAdapter,
+    adapter: onMicrophoneStream
+      ? {
+          ...webAdapter,
+          getUserMedia: async (constraints) => {
+            const stream = await navigator.mediaDevices.getUserMedia(constraints);
+            onMicrophoneStream(stream);
+            return stream;
+          },
+        }
+      : webAdapter,
   };
 }

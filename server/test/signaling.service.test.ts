@@ -10,6 +10,7 @@ class FakeWebSocket extends EventEmitter {
   readyState = this.OPEN;
   readonly sent: Array<Record<string, unknown>> = [];
   closeCode?: number;
+  closeReason?: string;
 
   send(data: string): void {
     const message = JSON.parse(data) as Record<string, unknown>;
@@ -17,9 +18,10 @@ class FakeWebSocket extends EventEmitter {
     this.emit("sent", message);
   }
 
-  close(code = 1000): void {
+  close(code = 1000, reason?: string): void {
     if (this.readyState !== this.OPEN) return;
     this.closeCode = code;
+    this.closeReason = reason;
     this.readyState = 3;
     this.emit("close", code, Buffer.alloc(0));
   }
@@ -132,6 +134,93 @@ test("closes a signaling socket before its pending message queue can grow withou
     assert.equal(socket.closeCode, 1008);
   } finally {
     socket.close();
+  }
+});
+
+test("keeps the per-socket message rate limit while processing messages", async () => {
+  const rooms = new RoomService();
+  const host = rooms.createRoomSession("rate-room", "Host");
+  assert.ok(host);
+  const service = new SignalingService(rooms, (token) => token === "host-token" ? { ...host, host: true } : null);
+  const socket = new FakeWebSocket();
+  service.handleConnection(socket as unknown as WebSocket, "127.0.0.42");
+
+  try {
+    socket.receive({ type: "auth", token: "host-token" });
+    await waitForMessage(socket, "authenticated");
+    socket.receive({ type: "join", room: "rate-room", name: "Host" });
+    await waitForMessage(socket, "room-state");
+
+    for (let timestamp = 0; timestamp < 118; timestamp += 1) {
+      socket.receive({ type: "ping", timestamp });
+      await waitForMessage(socket, "pong", timestamp);
+    }
+    assert.equal(socket.closeCode, undefined);
+
+    socket.receive({ type: "ping", timestamp: 118 });
+    assert.equal(socket.closeCode, 1008);
+    assert.equal(socket.closeReason, "Rate limit exceeded");
+  } finally {
+    socket.close();
+  }
+});
+
+test("forwards bounded voice candidate batches as individual signals", async () => {
+  const rooms = new RoomService();
+  const host = rooms.createRoomSession("voice-batch-room", "Host");
+  assert.ok(host);
+  const guest = rooms.createSession("voice-batch-room", "Guest", host.roomInstanceId);
+  const service = new SignalingService(rooms, (token) => {
+    if (token === "host-token") return { ...host, host: true };
+    if (token === "guest-token") return { ...guest, host: false };
+    return null;
+  });
+  const hostSocket = new FakeWebSocket();
+  const guestSocket = new FakeWebSocket();
+  service.handleConnection(hostSocket as unknown as WebSocket, "127.0.0.43");
+  service.handleConnection(guestSocket as unknown as WebSocket, "127.0.0.44");
+
+  try {
+    hostSocket.receive({ type: "auth", token: "host-token" });
+    await waitForMessage(hostSocket, "authenticated");
+    hostSocket.receive({ type: "join", room: "voice-batch-room", name: "Host" });
+    await waitForMessage(hostSocket, "room-state");
+    guestSocket.receive({ type: "auth", token: "guest-token" });
+    await waitForMessage(guestSocket, "authenticated");
+    guestSocket.receive({ type: "join", room: "voice-batch-room", name: "Guest" });
+    await waitForMessage(guestSocket, "room-state");
+    hostSocket.receive({ type: "voice", joined: true, micMuted: true });
+    guestSocket.receive({ type: "voice", joined: true, micMuted: true });
+    await waitForMessage(hostSocket, "voice-accepted");
+    await waitForMessage(guestSocket, "voice-accepted");
+
+    const candidates = Array.from({ length: 8 }, (_, index) => ({ candidate: `candidate-${index}` }));
+    hostSocket.receive({ type: "signal", target: guest.sessionId, channel: "voice", data: { candidates } });
+    await waitFor(guestSocket, (message) => message.type === "signal"
+      && (message.data as { candidate?: { candidate?: string } }).candidate?.candidate === "candidate-7");
+    assert.deepEqual(guestSocket.sent.filter((message) => message.type === "signal").map((message) => message.data),
+      candidates.map((candidate) => ({ candidate })));
+
+    hostSocket.receive({ type: "signal", target: guest.sessionId, channel: "voice", data: { candidate: { candidate: "legacy" } } });
+    await waitFor(guestSocket, (message) => message.type === "signal"
+      && (message.data as { candidate?: { candidate?: string } }).candidate?.candidate === "legacy");
+
+    const invalid = waitFor(hostSocket, (message) => message.type === "error" && message.message === "Invalid message.");
+    hostSocket.receive({ type: "signal", target: guest.sessionId, channel: "voice", data: { candidates: [...candidates, candidates[0]] } });
+    await invalid;
+    assert.equal(guestSocket.sent.filter((message) => message.type === "signal").length, 9);
+
+    const invalidCandidate = waitFor(hostSocket, (message) => message.type === "error"
+      && message.message === "Invalid message."
+      && hostSocket.sent.filter((sent) => sent.type === "error").length === 2);
+    hostSocket.receive({ type: "signal", target: guest.sessionId, channel: "voice", data: {
+      candidates: [{ candidate: "candidate-valid" }, { candidate: "candidate-invalid", sdpMid: "x".repeat(257) }],
+    } });
+    await invalidCandidate;
+    assert.equal(guestSocket.sent.filter((message) => message.type === "signal").length, 9);
+  } finally {
+    hostSocket.close();
+    guestSocket.close();
   }
 });
 
