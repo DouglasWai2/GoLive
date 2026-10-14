@@ -62,6 +62,10 @@ const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 15_000;
 const SOCKET_PING_INTERVAL_MS = 30_000;
 const SOCKET_PONG_TIMEOUT_MS = 15_000;
+// Screen sharing uses one peer connection per viewer; reduce per-connection
+// getStats() work as fan-out grows while keeping diagnostic updates responsive.
+const PEER_STATS_POLL_INTERVAL_MS = 2_000;
+const FOCUSED_STATS_POLL_INTERVAL_MS = 1_000;
 const ICE_DISCONNECTED_GRACE_MS = 5000;
 const ICE_RESTART_COOLDOWN_MS = 10_000;
 const OFFER_ANSWER_TIMEOUT_MS = 10_000;
@@ -1736,7 +1740,7 @@ export class RoomSession {
 
     const timer = setInterval(() => {
       this.pollPeerStats(peerId, connection);
-    }, 1000);
+    }, PEER_STATS_POLL_INTERVAL_MS);
 
     this.statsTimers.set(peerId, timer);
 
@@ -1938,7 +1942,7 @@ export class RoomSession {
 
     this.focusedStatsTimer = setInterval(() => {
       this.pollFocusedStats(streamId, connection);
-    }, 1000);
+    }, FOCUSED_STATS_POLL_INTERVAL_MS);
     return connection;
   }
 

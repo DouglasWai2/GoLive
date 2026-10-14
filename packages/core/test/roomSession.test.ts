@@ -72,6 +72,7 @@ class FakePeerConnection {
   transceiverCount = 0;
   readonly transceivers: Array<{ sender: RTCRtpSender; direction: string }> = [];
   readonly addedTracks: Array<{ track: MediaTrack; stream: MediaStream }> = [];
+  statsCallCount = 0;
 
   addTrack(track: MediaTrack, stream: MediaStream): void {
     this.addedTracks.push({ track, stream });
@@ -107,6 +108,7 @@ class FakePeerConnection {
     return [];
   }
   async getStats() {
+    this.statsCallCount += 1;
     return {
       forEach: () => {},
       get: () => undefined,
@@ -196,6 +198,113 @@ test("joins without TURN and keeps every room WebSocket alive", () => {
     session.stop();
     globalThis.WebSocket = originalWebSocket;
     globalThis.fetch = originalFetch;
+    FakeSocket.instance = null;
+  }
+});
+
+test("limits per-viewer stats polling overhead while sharing to multiple viewers", async () => {
+  const originalWebSocket = globalThis.WebSocket;
+  const originalSetInterval = globalThis.setInterval;
+  const originalClearInterval = globalThis.clearInterval;
+  const timers: Array<{ callback: () => void; delayMs: number }> = [];
+  const connections: FakePeerConnection[] = [];
+  const track = new FakeMediaTrack();
+  const stream: MediaStream = {
+    id: "polling-benchmark-stream",
+    getTracks: () => [track],
+    getVideoTracks: () => [track],
+    getAudioTracks: () => [],
+  };
+
+  globalThis.WebSocket = FakeSocket as unknown as typeof WebSocket;
+  globalThis.setInterval = ((callback: () => void, delayMs = 0) => {
+    timers.push({ callback, delayMs });
+    return timers.length as unknown as ReturnType<typeof setInterval>;
+  }) as typeof setInterval;
+  globalThis.clearInterval = (() => {}) as typeof clearInterval;
+
+  const session = new RoomSession(
+    {
+      onStatus: () => {},
+      onPeers: () => {},
+      onLocalStream: () => {},
+      onIsStartingShare: () => {},
+      onRemoteStream: () => {},
+      onConnectionState: () => {},
+      onRemoteStats: () => {},
+      onOutboundStats: () => {},
+      onError: () => {},
+    },
+    {
+      baseUrl: "https://signal.example.com",
+      adapter: {
+        getDisplayMedia: async () => stream,
+        createPeerConnection: () => {
+          const connection = new FakePeerConnection();
+          connections.push(connection);
+          return connection as unknown as RTCPeerConnection;
+        },
+      } as PlatformAdapter,
+    },
+  );
+
+  try {
+    session.start("room-id", "Sharer", "room-token");
+    const socket = FakeSocket.instance;
+    assert.ok(socket);
+    socket.open();
+    socket.receive({ type: "authenticated" });
+    socket.receive({ type: "room-state", selfId: "sharer", peers: [] });
+
+    const share = session.startSharing(DEFAULT_SHARE_SETTINGS);
+    await flushAsyncWork();
+    socket.receive({
+      type: "sharing-accepted",
+      sharing: true,
+      streamId: "polling-benchmark-stream-id",
+    });
+    await share;
+
+    for (const peerId of ["viewer-1", "viewer-2", "viewer-3"]) {
+      socket.receive({
+        type: "stream-subscriber",
+        peerId,
+        streamId: "polling-benchmark-stream-id",
+        subscribed: true,
+      });
+    }
+    await flushAsyncWork();
+    await flushAsyncWork();
+
+    assert.equal(connections.length, 3);
+    const peerStatsTimers = timers.filter((timer) => timer.delayMs < 10_000);
+    assert.equal(peerStatsTimers.length, 3);
+    assert.deepEqual(peerStatsTimers.map((timer) => timer.delayMs), [2_000, 2_000, 2_000]);
+
+    // Deterministic 10-second virtual run: the per-viewer timer drives one
+    // getStats() call per active connection per tick.
+    for (let elapsedMs = 1_000; elapsedMs <= 10_000; elapsedMs += 1_000) {
+      for (const timer of peerStatsTimers) {
+        if (elapsedMs % timer.delayMs === 0) timer.callback();
+      }
+      await flushAsyncWork();
+    }
+
+    const callsAfterChange = connections.reduce(
+      (total, connection) => total + connection.statsCallCount,
+      0,
+    );
+    // The pre-change run measured 10 samples/peer (30 total) over 10 seconds.
+    const baselineCallsAtOneSecondCadence = connections.length * 10;
+
+    assert.deepEqual(connections.map((connection) => connection.statsCallCount), [5, 5, 5]);
+    assert.equal(callsAfterChange, 15);
+    assert.equal(callsAfterChange, baselineCallsAtOneSecondCadence / 2);
+  } finally {
+    session.stop();
+    globalThis.WebSocket = originalWebSocket;
+    globalThis.setInterval = originalSetInterval;
+    globalThis.clearInterval = originalClearInterval;
     FakeSocket.instance = null;
   }
 });
