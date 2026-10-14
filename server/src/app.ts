@@ -38,6 +38,7 @@ export async function buildApp(options: { verifyNeonAuth?: NeonAuthVerifier } = 
   });
   await app.register(cors, {
     origin: env.origin,
+    methods: ["GET", "HEAD", "POST", "PATCH", "DELETE"],
   });
 
   await app.register(helmet);
