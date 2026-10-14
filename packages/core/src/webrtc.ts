@@ -435,10 +435,12 @@ export async function configureVideoSender(
     maxBitrate,
     maxFramerate,
     scaleResolutionDownBy = 1,
+    degradationPreference = "maintain-resolution",
   }: {
     maxBitrate: number;
     maxFramerate: number;
     scaleResolutionDownBy?: number;
+    degradationPreference?: "maintain-framerate" | "maintain-resolution" | "balanced";
   },
 ) {
   const parameters = sender.getParameters();
@@ -454,13 +456,13 @@ export async function configureVideoSender(
     encoding.scaleResolutionDownBy = scaleResolutionDownBy;
   }
 
-  parameters.degradationPreference = "maintain-framerate";
+  parameters.degradationPreference = degradationPreference;
 
   try {
     await sender.setParameters(parameters);
   } catch (caught) {
     console.warn(
-      "Sender does not support maintain-framerate; applying encoding caps only",
+      `Sender does not support ${degradationPreference}; applying encoding caps only`,
       caught,
     );
 

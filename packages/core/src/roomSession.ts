@@ -2123,6 +2123,7 @@ export class RoomSession {
       maxBitrate: settings.maxBitrate,
       maxFramerate: settings.frameRate,
       scaleResolutionDownBy: this.scaleResolutionDownBy,
+      degradationPreference: "maintain-resolution",
     });
   }
 
