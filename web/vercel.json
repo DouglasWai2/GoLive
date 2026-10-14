@@ -13,6 +13,14 @@
   ],
   "rewrites": [
     {
+      "source": "/rooms",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/profile",
+      "destination": "/index.html"
+    },
+    {
       "source": "/room/:path*",
       "destination": "/index.html"
     },

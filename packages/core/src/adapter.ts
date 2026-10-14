@@ -28,10 +28,10 @@ export type VideoCodecCapability = {
 };
 
 const videoCodecPriority: Record<string, number> = {
-  H264: 0,
+  VP8: 0,
   AV1: 1,
   AV1X: 1,
-  VP8: 2,
+  H264: 2,
 };
 
 export function orderVideoCodecs<T extends VideoCodecCapability>(
