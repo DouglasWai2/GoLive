@@ -137,7 +137,7 @@ function RoomApp() {
 
   const rejectSession = async () => {
     const deviceToken = loadDeviceToken();
-    if (!deviceToken) { setJoin(null); window.location.assign("/rooms"); return; }
+    if (!deviceToken) { setJoin(null); window.location.assign("/"); return; }
     try {
       const result = await restoreRoom(
         configuredBaseUrl(), deviceToken, roomId ?? undefined, await auth.getAccessToken() ?? undefined,
@@ -147,7 +147,7 @@ function RoomApp() {
     } catch (caught) {
       if (caught instanceof DeviceRequestError && caught.status === 404) {
         clearSavedRoom();
-        window.location.replace("/rooms");
+        window.location.replace("/");
       } else if (caught instanceof DeviceRequestError && caught.status === 401) {
         clearDeviceToken();
         window.location.replace("/");
@@ -159,14 +159,14 @@ function RoomApp() {
 
   const leave = () => {
     clearSavedRoom();
-    window.location.assign("/rooms");
+    window.location.assign("/");
   };
 
   const leaveWithoutConnection = () => {
     if (leavingError) return;
     setLeavingError(true);
     clearSavedRoom();
-    window.location.assign("/rooms");
+    window.location.assign("/");
   };
 
   if (loading) return (
