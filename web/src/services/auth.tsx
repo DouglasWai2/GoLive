@@ -4,7 +4,10 @@ import { BetterAuthVanillaAdapter } from "@neondatabase/auth/vanilla/adapters";
 import { fetchNeonAuthToken, NeonAuthTokenError } from "@golive/core";
 
 const neonAuthUrl = import.meta.env.VITE_NEON_AUTH_URL as string | undefined;
-const authClient = neonAuthUrl
+const googleAuthEnabled = import.meta.env.VITE_GOOGLE_AUTH_ENABLED === undefined
+  ? import.meta.env.DEV
+  : import.meta.env.VITE_GOOGLE_AUTH_ENABLED === "true";
+const authClient = googleAuthEnabled && neonAuthUrl
   ? createAuthClient(neonAuthUrl, {
       adapter: BetterAuthVanillaAdapter({ fetchOptions: { credentials: "include" } }),
     })

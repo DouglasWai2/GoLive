@@ -51,9 +51,11 @@ test("does not silently treat invalid account credentials as a guest room create
   const original = {
     DATABASE_URL: process.env.DATABASE_URL,
     JWT_SECRET: process.env.JWT_SECRET,
+    GOOGLE_AUTH_ENABLED: process.env.GOOGLE_AUTH_ENABLED,
   };
   delete process.env.DATABASE_URL;
   process.env.JWT_SECRET = "test-jwt-secret-with-enough-entropy";
+  process.env.GOOGLE_AUTH_ENABLED = "true";
 
   try {
     const { buildApp } = await import("../src/app.js");
@@ -91,5 +93,7 @@ test("does not silently treat invalid account credentials as a guest room create
     else process.env.DATABASE_URL = original.DATABASE_URL;
     if (original.JWT_SECRET === undefined) delete process.env.JWT_SECRET;
     else process.env.JWT_SECRET = original.JWT_SECRET;
+    if (original.GOOGLE_AUTH_ENABLED === undefined) delete process.env.GOOGLE_AUTH_ENABLED;
+    else process.env.GOOGLE_AUTH_ENABLED = original.GOOGLE_AUTH_ENABLED;
   }
 });

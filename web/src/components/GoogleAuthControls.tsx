@@ -9,7 +9,7 @@ export function GoogleAuthControls() {
       {auth.user ? (
         <>
           <span className="google-auth-user" title={auth.user.email}>{auth.user.name || auth.user.email}</span>
-          <button className="google-auth-button" type="button" onClick={() => void auth.signOut()} disabled={auth.busy}>
+          <button className="google-auth-button google-auth-sign-out" type="button" onClick={() => void auth.signOut()} disabled={auth.busy}>
             {auth.busy ? "Signing out…" : "Sign out"}
           </button>
         </>

@@ -75,8 +75,8 @@ export function DeviceProfile() {
       <nav className="account-nav">
         <Brand ariaLabel="GoLive home" />
         <div className="account-nav-links">
-          {deviceToken && <a href="/rooms">My rooms</a>}
-          <a href="/profile" aria-current="page">Profile</a>
+          {auth.user && <a className="account-nav-button" href="/rooms">My rooms</a>}
+          <a className="account-nav-button" href="/profile" aria-current="page">Profile</a>
           <GoogleAuthControls />
         </div>
       </nav>

@@ -114,7 +114,9 @@ function RoomApp() {
               ? "This room requires a valid invite link."
               : message.includes(": 409")
                 ? message.includes("Guests can keep access")
-                  ? "Remove access to your current room from My rooms before creating another, or sign in with Google."
+                  ? auth.configured
+                    ? "Remove access to your current room from My rooms before creating another, or sign in with Google."
+                    : "Remove access to your current room before creating another."
                   : message.includes("five active rooms")
                     ? "You already have five active rooms. End one in My rooms before creating another."
                     : "This device has reached its room limit. Remove access to a room in My rooms before creating another."

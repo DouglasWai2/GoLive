@@ -194,7 +194,9 @@ export default function App() {
         Alert.alert(
           caught.message.includes("Guests can keep access") ? "Guest room limit" : "Room limit reached",
           caught.message.includes("Guests can keep access")
-            ? "Remove access to your current room before creating another, or sign in with Google."
+            ? nativeAuthConfigured
+              ? "Remove access to your current room before creating another, or sign in with Google."
+              : "Remove access to your current room before creating another."
             : "You already have five active rooms. End one before creating another.",
         );
         void openRooms();

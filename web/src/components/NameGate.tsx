@@ -4,7 +4,6 @@ import { joinRoom, verifyInvite } from "@golive/core";
 import { configuredBaseUrl } from "../services/sessionDeps";
 import { loadDeviceName, loadDeviceToken, saveDeviceName, saveDeviceRoom } from "../utils/session";
 import { useAuth } from "../services/auth";
-import { GoogleAuthControls } from "./GoogleAuthControls";
 
 type NameGateProps = {
   roomId: string;
@@ -49,7 +48,9 @@ export function NameGate({ roomId, inviteToken = null, onJoin }: NameGateProps) 
         ? "This room requires a valid invite link."
         : message.includes(": 409")
           ? message.includes("Guests can keep access")
-            ? "Remove access to your current room from My rooms before creating another, or sign in with Google."
+            ? auth.configured
+              ? "Remove access to your current room from My rooms before creating another, or sign in with Google."
+              : "Remove access to your current room before creating another."
             : message.includes("five active rooms")
               ? "You already have five active rooms. End one in My rooms before creating another."
               : "This device has reached its room limit. Remove access to a room in My rooms before creating another."
@@ -75,7 +76,6 @@ export function NameGate({ roomId, inviteToken = null, onJoin }: NameGateProps) 
           placeholder="Your name"
         />
         {error && <p className="gate-error" role="alert">{error} {error.includes("My rooms") && <a href="/rooms">Open My rooms</a>}</p>}
-        <GoogleAuthControls />
         <button
           className="primary-button"
           type="submit"

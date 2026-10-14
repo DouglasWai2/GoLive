@@ -93,6 +93,11 @@ export const env = {
     return process.env.NEON_AUTH_BASE_URL;
   },
 
+  get googleAuthEnabled(): boolean {
+    const configured = process.env.GOOGLE_AUTH_ENABLED?.trim().toLowerCase();
+    return configured === undefined ? process.env.NODE_ENV !== "production" : configured === "true";
+  },
+
   get neonAuthJwksUrl(): string | undefined {
     return process.env.NEON_AUTH_JWKS_URL;
   },

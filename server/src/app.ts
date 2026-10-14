@@ -63,7 +63,9 @@ export async function buildApp(options: { verifyNeonAuth?: NeonAuthVerifier } = 
   registerRoutes(
     app,
     catalog,
-    options.verifyNeonAuth ?? createNeonAuthVerifier(env.neonAuthBaseUrl, env.neonAuthJwksUrl),
+    env.googleAuthEnabled
+      ? options.verifyNeonAuth ?? createNeonAuthVerifier(env.neonAuthBaseUrl, env.neonAuthJwksUrl)
+      : async () => null,
   );
 
   return app;

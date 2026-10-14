@@ -404,17 +404,21 @@ button.active:hover {
 .voice-playback-action { position: fixed; z-index: 30; bottom: 115px; }
 
 .landing-account-links, .account-nav-links { display: flex; align-items: center; gap: 22px; }
-.landing-account-links a, .account-nav-links a { color: #b5b5ad; font-size: 12px; text-decoration: none; }
-.landing-account-links a:hover, .account-nav-links a:hover, .account-nav-links a[aria-current="page"] { color: var(--acid); }
+.account-nav-button { min-height: 44px; padding: 0 15px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid #4b4b43; border-radius: 5px; background: #1b1b18; color: var(--paper); font-size: 12px; font-weight: 650; text-decoration: none; transition: border-color .18s, background .18s, color .18s; }
+.account-nav-button:hover { border-color: var(--acid); background: rgba(201,255,66,.08); color: var(--acid); }
+.account-nav-button[aria-current="page"] { border-color: var(--acid); background: var(--acid); color: #15160f; }
+.account-nav-button[aria-current="page"]:hover { background: #d6ff72; color: #15160f; }
+.account-nav-button:focus-visible { outline: 2px solid var(--acid); outline-offset: 3px; }
 .google-auth-controls { display: inline-flex; align-items: center; gap: 10px; }
 .google-auth-user { max-width: 180px; overflow: hidden; color: #b5b5ad; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .google-auth-button { min-height: 36px; padding: 0 12px; border: 1px solid #44443e; border-radius: 4px; background: transparent; color: var(--paper); font-size: 11px; font-weight: 650; white-space: nowrap; }
 .google-auth-button:hover:not(:disabled) { border-color: var(--acid); color: var(--acid); }
+.google-auth-button.google-auth-sign-out { padding: 0 8px; border-color: transparent; color: #77776f; font-size: 10px; font-weight: 500; }
+.google-auth-button.google-auth-sign-out:hover:not(:disabled) { border-color: transparent; color: #b5b5ad; text-decoration: underline; }
 .google-auth-button:disabled { cursor: wait; opacity: .5; }
 .google-auth-error { max-width: 240px; color: #ff9f94; font-size: 10px; }
 .account-shell { min-height: 100vh; padding: 0 5vw 70px; background: var(--ink); }
 .account-nav { height: 86px; max-width: 1440px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); }
-.account-nav-links a { min-height: 42px; display: inline-flex; align-items: center; }
 .account-content { width: min(100%, 1000px); margin: 0 auto; padding-top: 75px; }
 .account-content > .eyebrow { margin-bottom: 17px; }
 .account-content h1 { margin: 0; font-size: clamp(40px, 6vw, 68px); line-height: .98; letter-spacing: -.065em; }
@@ -590,12 +594,13 @@ button.active:hover {
 
 @media (max-width: 560px) {
   .nav-note, .socket-state, .you-chip { display: none; }
-  .landing-account-links { gap: 13px; }
-  .landing-account-links a { font-size: 10px; }
+  .landing-account-links, .account-nav-links { gap: 8px; }
+  .account-nav-button { min-height: 38px; padding: 0 8px; font-size: 9px; }
+  .google-auth-controls { gap: 4px; }
+  .google-auth-user { display: none; }
+  .google-auth-button.google-auth-sign-out { min-height: 36px; padding: 0 5px; font-size: 9px; }
   .account-shell { padding-left: 18px; padding-right: 18px; }
   .account-nav { height: 72px; }
-  .account-nav-links { gap: 14px; }
-  .account-nav-links a { font-size: 10px; }
   .account-content { padding-top: 46px; }
   .account-title-row { align-items: flex-start; flex-direction: column; }
   .account-title-row .primary-button { min-height: 43px; }

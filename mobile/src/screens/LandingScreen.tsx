@@ -90,7 +90,7 @@ export function LandingScreen({
             <Text style={styles.titleMuted}>Their browser.</Text>
             <Text style={styles.intro}>
               Start a room and share your screen with a link. No video servers in
-              the middle. Sign in with Google to create up to five active rooms.
+              the middle.{authConfigured ? " Sign in with Google to create up to five active rooms." : ""}
             </Text>
             <Pressable
               style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed]}

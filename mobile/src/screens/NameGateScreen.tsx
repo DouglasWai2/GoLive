@@ -16,7 +16,7 @@ import { Brand } from "../components/Brand";
 import { BackIcon } from "../components/icons";
 import { SIGNALING_URL } from "../config";
 import { loadDeviceToken, saveDeviceToken } from "../session";
-import { getNativeAuthAccessToken } from "../auth";
+import { getNativeAuthAccessToken, nativeAuthConfigured } from "../auth";
 import { NeonAuthTokenError } from "@golive/core";
 import { colors, radii, raisedSurface, technicalText } from "../theme";
 
@@ -83,7 +83,9 @@ export function NameGateScreen({
         setError("This room requires an invite link to join.");
       } else if (caught instanceof Error && caught.message.endsWith(": 409")) {
         setError(caught.message.includes("Guests can keep access")
-          ? "Remove access to your current room before creating another, or sign in with Google."
+          ? nativeAuthConfigured
+            ? "Remove access to your current room before creating another, or sign in with Google."
+            : "Remove access to your current room before creating another."
           : "You already have five active rooms. End one before creating another.");
       } else {
         setError("Could not enter the room. Try again in a moment.");

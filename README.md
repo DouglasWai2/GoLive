@@ -319,7 +319,8 @@ files (server, web, and mobile) as templates.
 | `DATABASE_URL` | — | PostgreSQL connection string, e.g. `postgres://golive:golive@localhost:5432/golive`. Required at server startup. Use durable storage in production. |
 | `MAX_ROOMS_PER_DEVICE` | `100` | Maximum saved room grants per device profile. |
 | `MAX_MEMBERS_PER_ROOM` | `1000` | Maximum persisted device memberships per room. |
-| `NEON_AUTH_BASE_URL` | — | Managed Neon Auth URL for this branch. Enables account authentication for room creation. |
+| `NEON_AUTH_BASE_URL` | — | Managed Neon Auth URL for this branch, used when Google account features are enabled. |
+| `GOOGLE_AUTH_ENABLED` | on in development, off when `NODE_ENV=production` | Set `false` to reject Google account tokens and keep guest room access; set `true` to enable account features. |
 | `NEON_AUTH_JWKS_URL` | derived | Optional JWKS URL override; defaults to `NEON_AUTH_BASE_URL/.well-known/jwks.json`. |
 | `CLOUDFLARE_TURN_KEY_ID` | — | Cloudflare TURN key ID used by the server. |
 | `CLOUDFLARE_TURN_API_TOKEN` | — | Cloudflare API token used to generate temporary TURN credentials. |
@@ -337,6 +338,7 @@ files (server, web, and mobile) as templates.
 | --- | --- | --- |
 | `VITE_SIGNALING_URL` | web app origin | Full signaling endpoint for WebSocket and TURN credential requests. Accepts `http`/`https`/`ws`/`wss`. |
 | `VITE_NEON_AUTH_URL` | — | Managed Neon Auth URL for this branch. Leave unset to keep the web app guest-only. |
+| `VITE_GOOGLE_AUTH_ENABLED` | on in Vite dev, off in production builds | Set `false` to hide Google sign-in and skip account session restoration; set `true` to enable it. |
 
 ### Admin dashboard
 
@@ -393,6 +395,7 @@ them automatically, while other deployments must apply them explicitly.
 | `EXPO_PUBLIC_SIGNALING_URL` | `http://10.0.2.2:3000` | Full signaling endpoint for WebSocket and TURN credential requests (the Android emulator alias for the host's `localhost`). Set it to the host's LAN IP for a physical device. |
 | `EXPO_PUBLIC_INVITE_URL` | `EXPO_PUBLIC_SIGNALING_URL` | Web origin used for shareable invite links. Set it to the web app's reachable URL; the default points to the signaling server, not the web app. |
 | `EXPO_PUBLIC_NEON_AUTH_URL` | — | Managed Neon Auth URL for this branch. Leave unset to keep mobile in guest mode. |
+| `EXPO_PUBLIC_GOOGLE_AUTH_ENABLED` | on in development, off in release builds | Set `false` to hide Google sign-in and skip account restoration; set `true` to enable it in a release build. |
 | `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` | — | Google OAuth Web Client ID; configure this same ID as the Google provider's Client ID in Neon Auth. |
 | `EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID` | — | Optional native iOS OAuth Client ID. |
 | `GOOGLE_IOS_URL_SCHEME` | derived | Optional override for the reversed client-ID URL scheme used by the Google Sign-In config plugin on iOS. |
@@ -407,6 +410,15 @@ scheme and omit the trailing slash). Google's OAuth callback URI is
 in that branch's Neon Auth settings to make Google the only sign-in method. The
 app has no separate sign-up form: a user's first successful Google sign-in
 creates their GoLive identity automatically.
+
+Google sign-in is disabled by default in production web/mobile builds and on the
+server when `NODE_ENV=production`, even if the Neon Auth URLs are configured.
+To explicitly keep production in guest-only mode, set
+`VITE_GOOGLE_AUTH_ENABLED=false` for the web build,
+`EXPO_PUBLIC_GOOGLE_AUTH_ENABLED=false` for the mobile release build, and
+`GOOGLE_AUTH_ENABLED=false` on the server. To turn account features on later,
+set all corresponding flags to `true` and rebuild/redeploy the clients and
+restart the server. The flags do not delete existing accounts or room grants.
 
 For local development, set `VITE_NEON_AUTH_URL` in `web/.env`, the two
 `NEON_AUTH_*` values in `server/.env`, and `EXPO_PUBLIC_NEON_AUTH_URL` plus

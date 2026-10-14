@@ -29,8 +29,12 @@ export function Landing() {
         <Brand ariaLabel="GoLive home" />
         <div className="landing-account-links">
           <span className="nav-note">Browser to browser. Nothing recorded.</span>
-          {hasDeviceProfile && auth.user && <a href="/rooms">My rooms</a>}
-          {hasDeviceProfile && <a href="/profile">Profile</a>}
+          {auth.user ? (
+            <>
+              <a className="account-nav-button" href="/rooms">My rooms</a>
+              <a className="account-nav-button" href="/profile">Profile</a>
+            </>
+          ) : hasDeviceProfile ? <a className="account-nav-button" href="/profile">Profile</a> : null}
           <GoogleAuthControls />
         </div>
       </nav>
@@ -41,7 +45,7 @@ export function Landing() {
           <h1>Your screen.<br /><em>Their browser.</em></h1>
           <p className="hero-intro">
             Start a room and share your screen with a link. No installs or video
-            servers in the middle. Sign in with Google to create up to five active rooms.
+            servers in the middle.{auth.configured ? " Sign in with Google to create up to five active rooms." : ""}
           </p>
           <button className="primary-button large" onClick={createRoom}>
             <ScreenIcon size={21} />

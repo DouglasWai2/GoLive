@@ -89,8 +89,8 @@ export function DeviceRooms() {
       <nav className="account-nav">
         <Brand ariaLabel="GoLive home" />
         <div className="account-nav-links">
-          <a href="/rooms" aria-current="page">My rooms</a>
-          {deviceToken && <a href="/profile">Profile</a>}
+          {auth.user && <a className="account-nav-button" href="/rooms" aria-current="page">My rooms</a>}
+          {auth.user && <a className="account-nav-button" href="/profile">Profile</a>}
           <GoogleAuthControls />
         </div>
       </nav>

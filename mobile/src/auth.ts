@@ -7,14 +7,17 @@ import { fetchNeonAuthToken } from "@golive/core";
 const neonAuthUrl = process.env.EXPO_PUBLIC_NEON_AUTH_URL;
 const googleWebClientId = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID;
 const googleIosClientId = process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID;
+const googleAuthEnabled = process.env.EXPO_PUBLIC_GOOGLE_AUTH_ENABLED === undefined
+  ? __DEV__
+  : process.env.EXPO_PUBLIC_GOOGLE_AUTH_ENABLED === "true";
 
-const authClient = neonAuthUrl
+const authClient = googleAuthEnabled && neonAuthUrl
   ? createAuthClient(neonAuthUrl, {
       adapter: BetterAuthVanillaAdapter({ fetchOptions: { credentials: "include" } }),
     })
   : null;
 
-if (googleWebClientId) {
+if (googleAuthEnabled && googleWebClientId) {
   GoogleSignin.configure({
     webClientId: googleWebClientId,
     ...(googleIosClientId ? { iosClientId: googleIosClientId } : {}),

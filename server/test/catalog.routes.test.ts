@@ -38,11 +38,13 @@ test("authenticated device profiles own multiple rooms while invite guests retai
     TRUST_PROXY: process.env.TRUST_PROXY,
     ADMIN_SECRET: process.env.ADMIN_SECRET,
     JWT_SECRET: process.env.JWT_SECRET,
+    GOOGLE_AUTH_ENABLED: process.env.GOOGLE_AUTH_ENABLED,
   };
   process.env.DATABASE_URL = process.env.TEST_DATABASE_URL;
   process.env.TRUST_PROXY = "1";
   process.env.ADMIN_SECRET = "test-admin-secret";
   process.env.JWT_SECRET = "test-jwt-secret-with-enough-entropy";
+  process.env.GOOGLE_AUTH_ENABLED = "true";
   const firstId = id();
   const secondId = id();
   const invitedId = id();
