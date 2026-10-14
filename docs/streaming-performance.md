@@ -13,13 +13,20 @@ resultados abaixo são um registro a preencher, não números presumidos.
   cadência; falhas de `applyConstraints()` são ignoradas.
 - No navegador, `webAdapter` usa `getDisplayMedia()` com as restrições de vídeo
   e aplica preferências de codec às capacidades reportadas pelo browser.
-- No Android, `mobile/src/adapter.ts` usa MediaProjection para capturar a tela
-  inteira. O caminho nativo define `DEFAULT_FPS = 30`; as restrições width/height
-  e FPS do core não configuram esse capturador. O vendor aceita
-  `android.resolutionScale` entre 0 e 1, mas o adapter atual não o encaminha. O
-  core calcula `scaleResolutionDownBy` a partir do tamanho capturado e o aplica
-  ao encoder de cada peer; isso pode reduzir pixels enviados sem reduzir o
-  trabalho de captura da tela inteira.
+- No Android, `mobile/src/adapter.ts` usa MediaProjection e o caminho nativo
+  continua com `DEFAULT_FPS = 30`; as restrições width/height e FPS do core não
+  alteram esse teto do capturador. **Baseline pré-`bb017c7`/`7ee162c`:** o
+  adapter não passava `android.resolutionScale`, então a captura começava no
+  tamanho inteiro do display; `scaleResolutionDownBy` só reduzia a imagem em
+  cada sender depois da captura. **Candidata `7ee162c`:**
+  `mobile/src/utils/screenCapture.ts` converte `Dimensions.get("screen")` em
+  pixels físicos com `PixelRatio`, calcula uma escala limitada pelo máximo de
+  saída escolhido para as duas orientações e, somente no Android, a passa como
+  `android.resolutionScale` antes de criar a superfície de captura. O cálculo
+  usa o maior limite entre orientação corrente e dimensões trocadas porque o
+  capturador reutiliza a escala após rotação; o sender ainda aplica os limites
+  de saída. Isso reduz a rasterização de origem necessária por geometria, sem
+  alegar ganho medido de CPU ou FPS. Entrada inválida volta à escala 1.
 - Há um `RTCPeerConnection` de envio por viewer. O track local é reutilizado,
   mas cada conexão negocia seu próprio sender e controle de congestionamento;
   não se deve presumir compartilhamento de frames codificados/encoder entre
@@ -48,20 +55,25 @@ resultados abaixo são um registro a preencher, não números presumidos.
 
 ### Opções comparadas
 
-| Opção                                                            | Custo/benefício provável                                                                                                                                                                                                                         | Suporte e risco                                                                                                                                                                                                                                                                                                                          | Prioridade                                                                                    |
-| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| **Testar H.264 hardware primeiro no Android**                    | Pode reduzir CPU do encoder e aliviar variação de FPS, sobretudo com três peers; medir resolução, bitrate e legibilidade junto com CPU.                                                                                                          | Browser e Android anunciam capacidades e negociam H.264/VP8, mas não há garantia portátil de encoder hardware. Android possui factory H.264 hardware + codecs software; aquecimento, número de sessões e qualidade variam por SoC. Não trocar a prioridade global sem A/B: a ordem pode mudar compatibilidade e qualidade no browser.    | Alta: ablação isolada, primeiro 1 e depois 3 viewers.                                         |
-| **Reduzir resolução de captura Android via `resolutionScale`**   | Atua antes da codificação: escala 0,75 significa teoricamente 56% dos pixels da escala 1; 0,5 significa 25%. Pode reduzir custo de captura/composição e do encoder, diferentemente apenas de escalar cada sender.                                | O suporte está no `react-native-webrtc` vendorizado; o adapter atual não o usa. Menos pixels reduzem nitidez de texto e detalhe. Medir FPS e legibilidade em cada aparelho; não assumir redução proporcional de CPU.                                                                                                                     | Alta: comparar 1,0 / 0,75 / 0,5 em Android, FPS de captura 30.                                |
-| **Orçamento agregado de bitrate**                                | Fazer o teto total acompanhar o número de viewers (ex.: orçamento de 6 Mbps dividido em 2 Mbps por sender para 3 viewers) reduz disputa pelo uplink. `setParameters()` existe nas duas plataformas; o congestion control ainda ajusta cada rota. | Hoje a configuração é um teto por sender, sem controlador global. Um adaptador dinâmico baseado em `availableOutgoingBitrate` precisa de agregação, limites mínimos e histerese; amostras por rota podem oscilar e baixar a qualidade de todos.                                                                                          | Alta após medir rede; testar caps fixos antes de implementar controle adaptativo.             |
-| **Simulcast/SVC**                                                | Pode dar resoluções/camadas diferentes por viewer e responder a redes heterogêneas.                                                                                                                                                              | Uma camada/cópia por encoding pode aumentar CPU, bitrate total e sessões do encoder; não elimina o fan-out P2P nem garante encode único entre PeerConnections. O wrapper RN inclui RIDs e parâmetros básicos, mas não declara/serializa `scalabilityMode`; SVC no Android não está demonstrado. Suporte browser depende de codec/versão. | Baixa até haver necessidade de viewers com qualidades distintas; protótipo em branch e medir. |
-| **Alterar FPS/cadência de captura ou preferência de degradação** | 15/30 fps pode reduzir trabalho; `maintain-framerate` já prioriza FPS sob degradação, possivelmente à custa de resolução.                                                                                                                        | Android captura a 30 fps fixos neste caminho: pedir encoder a 60 não cria frames de origem. Browser e SO também podem entregar menos que o limite. Tela estática naturalmente gera menos frames, portanto medir com movimento conhecido. `maxFramerate` é teto e não frame pacing garantido.                                             | Média: testar 15/30 no Android; 30/60 no browser, mantendo demais variáveis constantes.       |
-| **SFU/encaminhamento de mídia**                                  | Para fan-out maior, recebe um uplink do sharer e encaminha mídia aos viewers, removendo uploads e negociação de encoder do sharer por viewer.                                                                                                    | Mudança arquitetural de alto custo: infraestrutura/egress, latência, operação, segurança e renegociação de voz/tela. TURN não é SFU: retransmite cada par e não faz uma única publicação compartilhada.                                                                                                                                  | Investigar se 3+ viewers for requisito frequente; não é ajuste local de codec.                |
+| Opção                                                            | Custo/benefício provável                                                                                                                                                                                                                                        | Suporte e risco                                                                                                                                                                                                                                                                                                                          | Prioridade                                                                                    |
+| ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| **Testar H.264 hardware primeiro no Android**                    | Pode reduzir CPU do encoder e aliviar variação de FPS, sobretudo com três peers; medir resolução, bitrate e legibilidade junto com CPU.                                                                                                                         | Browser e Android anunciam capacidades e negociam H.264/VP8, mas não há garantia portátil de encoder hardware. Android possui factory H.264 hardware + codecs software; aquecimento, número de sessões e qualidade variam por SoC. Não trocar a prioridade global sem A/B: a ordem pode mudar compatibilidade e qualidade no browser.    | Alta: ablação isolada, primeiro 1 e depois 3 viewers.                                         |
+| **Escala Android antes da captura (`7ee162c`)**                  | Calcula a escala pré-captura a partir do tamanho físico e dos limites selecionados para preservar a rasterização de saída em portrait/landscape; sender continua aplicando seu limite. Potencial redução de pixels de origem, sem ganho real de CPU/FPS medido. | O adapter encaminha `android.resolutionScale`; MediaProjection mantém captura nativa a 30 fps. O cálculo considera rotação e cai para escala 1 com dimensões inválidas. Validar legibilidade e tamanho final em dispositivo; a prova atual é geométrica/sintética, não de desempenho.                                                    | Alta: comparação A/B da versão pré e pós `7ee162c`, 1 e 3 viewers, mesmas opções.             |
+| **Orçamento agregado de bitrate**                                | Fazer o teto total acompanhar o número de viewers (ex.: orçamento de 6 Mbps dividido em 2 Mbps por sender para 3 viewers) reduz disputa pelo uplink. `setParameters()` existe nas duas plataformas; o congestion control ainda ajusta cada rota.                | Hoje a configuração é um teto por sender, sem controlador global. Um adaptador dinâmico baseado em `availableOutgoingBitrate` precisa de agregação, limites mínimos e histerese; amostras por rota podem oscilar e baixar a qualidade de todos.                                                                                          | Alta após medir rede; testar caps fixos antes de implementar controle adaptativo.             |
+| **Simulcast/SVC**                                                | Pode dar resoluções/camadas diferentes por viewer e responder a redes heterogêneas.                                                                                                                                                                             | Uma camada/cópia por encoding pode aumentar CPU, bitrate total e sessões do encoder; não elimina o fan-out P2P nem garante encode único entre PeerConnections. O wrapper RN inclui RIDs e parâmetros básicos, mas não declara/serializa `scalabilityMode`; SVC no Android não está demonstrado. Suporte browser depende de codec/versão. | Baixa até haver necessidade de viewers com qualidades distintas; protótipo em branch e medir. |
+| **Alterar FPS/cadência de captura ou preferência de degradação** | 15 fps como teto pode reduzir trabalho de encode; `maintain-framerate` já prioriza FPS sob degradação, possivelmente à custa de resolução.                                                                                                                      | Android continua capturando a 30 fps fixos: pedir ao sender máximo 15/60 não altera a cadência de origem. Browser e SO também podem entregar menos que o limite. Tela estática naturalmente gera menos frames, portanto medir com movimento conhecido. `maxFramerate` é teto, não frame pacing garantido.                                | Média: comparar limites do sender separados do FPS capturado; 30/60 no browser.               |
+| **SFU/encaminhamento de mídia**                                  | Para fan-out maior, recebe um uplink do sharer e encaminha mídia aos viewers, removendo uploads e negociação de encoder do sharer por viewer.                                                                                                                   | Mudança arquitetural de alto custo: infraestrutura/egress, latência, operação, segurança e renegociação de voz/tela. TURN não é SFU: retransmite cada par e não faz uma única publicação compartilhada.                                                                                                                                  | Investigar se 3+ viewers for requisito frequente; não é ajuste local de codec.                |
 
-**Nota sobre o achado mensurado já disponível:** o teste determinístico em
-`packages/core/test/roomSession.test.ts` contou `getStats()` para 3 PeerConnections
-durante 10 s: baseline de 1 s = 30 chamadas; cadência atual de 2 s = 15 chamadas
-(50% menos coletas). O teste usa relógio/PeerConnections falsos e só mede chamadas
-de stats: não mede encoder, FPS, CPU, bitrate ou qualidade em dispositivos.
+### Evidência sintética existente (não é benchmark de mídia)
+
+| Teste/commit                                                | Baseline → candidata                                                                                                                                                             | O que mede e o que não mede                                                                                                                        |
+| ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Android `7ee162c`, teste geométrico `screenCapture.test.ts` | Fonte 2400×1080: 2.592.000 → 737.280 pixels calculados na raster de entrada por frame (−71,6%, arredondado para 72%) para cap 1280×720; o raster final calculado continua igual. | Aritmética de escala e preservação de raster, incluindo orientação; não mede frames capturados/encoded/decoded, CPU ou ganho real no aparelho.     |
+| Web `9e432ec`, benchmark de `updatePlaybackState`           | 100.000 notificações repetidas: 100.000 → 0 novas identidades de estado retornadas pelo helper JS.                                                                               | Contagem sintética de updates do helper e tempo do loop; não mede commits/re-renders React, FPS de mídia, decode, renderização ou CPU de produção. |
+| Core `b5a2cca`, teste de polling                            | 3 conexões em 10 s: 30 → 15 chamadas `getStats()` (−50%).                                                                                                                        | Contagem com relógio e PeerConnections falsos; não mede mídia, CPU ou rede.                                                                        |
+
+Não foi executado benchmark de vídeo em hardware nesta tarefa. Esses números
+sintéticos são mantidos separados de FPS real, CPU, bitrate ou qualidade.
 
 ## Protocolo de benchmark em dois dispositivos
 
@@ -79,7 +91,11 @@ separados é necessário.
    versões de browser e React Native WebRTC, modo de energia/estado térmico,
    codec negociado e tamanho do track. Mantenha a mesma rede/AP, banda Wi-Fi,
    posição, VPN (desligada), conteúdo, sala e configuração entre baseline e
-   candidato. Faça um `iperf3` e ping antes/depois, não durante a amostra, e
+   candidato. Para o A/B de captura Android, fixe baseline na versão anterior
+   a `bb017c7`/`7ee162c` (MediaProjection full-size, escala apenas no sender) e
+   candidata em `7ee162c` (escala calculada pré-captura); mantenha os mesmos
+   limites selecionados, dispositivo, orientação inicial e sender cap. Faça um
+   `iperf3` e ping antes/depois, não durante a amostra, e
    registre upload disponível, RTT, jitter e perda. Registre rota `P2P`, `STUN`
    ou `TURN` no painel; TURN muda o caminho de mídia.
 2. Use uma tela com animação contínua e determinística (alvo 30 ou 60 atualizações
@@ -95,13 +111,17 @@ separados é necessário.
    uma, aguarde 30 s e colete 5 min; confirme três senders ativos e três rotas
    no sharer.
 4. Faça ao menos três amostras válidas de 5 min para cada variante e número de
-   viewers, alternando a ordem baseline/candidato e mantendo tempo de
-   resfriamento igual. Para cada candidato, altere **uma variável** e repita 1
-   e 3 viewers. Ordem recomendada: codec Android VP8 atual vs H.264 preferido;
-   depois captura Android `resolutionScale` 1,0 vs 0,75 (opcional 0,5); depois
-   cap de bitrate por sender; por último 15/30 fps ou 30/60 fps conforme a
-   plataforma. Não combine codec, resolução e bitrate na mesma comparação;
-   reinicie share/PeerConnections entre as variantes.
+   viewers, alternando a ordem baseline/candidata e mantendo tempo de
+   resfriamento igual. Para o A/B Android, compare diretamente as versões
+   acima, sem tentar fixar manualmente o valor calculado de
+   `resolutionScale`; registre escala recebida, dimensões do track e dimensões
+   encoded. Uma verificação separada pode girar o display durante a captura para
+   testar a segurança da orientação, mas não misture essa rotação com a amostra
+   estável de FPS. Outros candidatos devem mudar **uma variável**: codec Android
+   VP8 atual vs H.264 preferido; depois cap de bitrate por sender; por último
+   `maxFramerate` 15/30 no Android (origem continua 30) ou 30/60 no browser. Não
+   combine codec, resolução e bitrate na mesma comparação; reinicie
+   share/PeerConnections entre variantes.
 5. Colete `chrome://webrtc-internals` nos browsers e os stats/Android Studio
    Profiler ou Perfetto no publisher Android. O painel GoLive amostra stats a
    cada 2 s no sharer e oferece FPS, bitrate, codec, qualidade limitada,
