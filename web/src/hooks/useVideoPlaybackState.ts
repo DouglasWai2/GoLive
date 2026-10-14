@@ -8,6 +8,23 @@ type PlaybackState = {
   phase: VideoPlaybackPhase;
 };
 
+export function updatePlaybackState(
+  current: PlaybackState,
+  stream: MediaStream | null,
+  active: boolean,
+  phase: VideoPlaybackPhase,
+): PlaybackState {
+  if (
+    current.stream === stream
+    && current.active === active
+    && current.phase === phase
+  ) {
+    return current;
+  }
+
+  return { stream, active, phase };
+}
+
 export function useVideoPlaybackState(
   videoRef: RefObject<HTMLVideoElement | null>,
   stream: MediaStream | null,
@@ -23,7 +40,7 @@ export function useVideoPlaybackState(
     const video = videoRef.current;
 
     if (!active || !stream || !video) {
-      setPlayback({ stream: null, active: false, phase: "playing" });
+      setPlayback((current) => updatePlaybackState(current, null, false, "playing"));
       return;
     }
 
@@ -32,7 +49,9 @@ export function useVideoPlaybackState(
     const supportsFrameCallback = typeof video.requestVideoFrameCallback === "function";
     const isCurrent = () => listening && video.srcObject === stream;
     const setPhase = (phase: VideoPlaybackPhase) => {
-      if (listening) setPlayback({ stream, active: true, phase });
+      if (listening) {
+        setPlayback((current) => updatePlaybackState(current, stream, true, phase));
+      }
     };
     const hasCurrentFrame = () => (
       isCurrent()

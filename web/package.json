@@ -8,6 +8,7 @@
     "dev-https": "GOLIVE_HTTPS_CERT=.certs/lan.pem GOLIVE_HTTPS_KEY=.certs/lan-key.pem vite --config vite.config.ts --host 0.0.0.0",
     "build": "tsc -b && vite build --config vite.config.ts",
     "typecheck": "tsc -b --pretty false",
+    "test": "tsx --test test/*.test.ts",
     "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {
