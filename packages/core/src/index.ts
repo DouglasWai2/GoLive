@@ -77,12 +77,13 @@ export type {
   FrameRateOption,
   BitrateOption,
 } from "./sharePresets";
-export { orderVideoCodecs } from "./adapter";
+export { orderVideoCodecs, detectHardwareAcceleration } from "./adapter";
 export type {
   DisplayMediaConstraints,
   UserMediaConstraints,
   PlatformAdapter,
   VideoCodecCapability,
+  HardwareAccelerationSupport,
 } from "./adapter";
 export { RoomSession } from "./roomSession";
 export type { RoomSessionDeps, RoomSessionCallbacks } from "./roomSession";

@@ -1,13 +1,22 @@
 import type {
+  HardwareAccelerationSupport,
   IceCandidateInit,
   PlatformAdapter,
   RTCPeerConnection as CorePeerConnection,
 } from "@golive/core";
-import { orderVideoCodecs } from "@golive/core";
+import { detectHardwareAcceleration, orderVideoCodecs } from "@golive/core";
 
 /*
  * Browser adapter: navigator.mediaDevices + native WebRTC globals.
  */
+let hwAccelCache: HardwareAccelerationSupport | null = null;
+
+async function getHardwareAcceleration(): Promise<HardwareAccelerationSupport> {
+  if (hwAccelCache) return hwAccelCache;
+  hwAccelCache = await detectHardwareAcceleration();
+  return hwAccelCache;
+}
+
 export const webAdapter: PlatformAdapter = {
   getDisplayMedia: async (constraints) => {
     const stream = await navigator.mediaDevices.getDisplayMedia({
@@ -41,7 +50,7 @@ export const webAdapter: PlatformAdapter = {
   createPeerConnection: ({ iceServers }) =>
     new RTCPeerConnection({ iceServers }) as unknown as CorePeerConnection,
 
-  configureVideoCodecs: (connection) => {
+  configureVideoCodecs: async (connection) => {
     if (
       typeof RTCRtpSender === "undefined"
       || typeof RTCRtpSender.getCapabilities !== "function"
@@ -56,7 +65,8 @@ export const webAdapter: PlatformAdapter = {
       return;
     }
 
-    const codecs = orderVideoCodecs(capabilities.codecs);
+    const hwAccel = await getHardwareAcceleration();
+    const codecs = orderVideoCodecs(capabilities.codecs, hwAccel);
     const peerConnection = connection as unknown as RTCPeerConnection;
 
     for (const transceiver of peerConnection.getTransceivers()) {
