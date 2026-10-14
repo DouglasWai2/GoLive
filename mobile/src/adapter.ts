@@ -1,3 +1,4 @@
+import { Dimensions, PixelRatio, Platform } from "react-native";
 import {
   mediaDevices,
   MediaStream as RNMediaStream,
@@ -11,6 +12,7 @@ import type {
   PlatformAdapter,
   RTCPeerConnection as CorePeerConnection,
 } from "@golive/core";
+import { getScreenCaptureResolutionScale } from "./utils/screenCapture";
 
 type NativeCandidate = {
   candidate?: string;
@@ -32,18 +34,34 @@ type UserMediaConstraints = {
  * Android adapter: react-native-webrtc.
  *
  * getDisplayMedia() captures the full screen and optional device playback audio
- * via one MediaProjection session.
- * Android capture ignores resolution/fps constraints (the whole display is
- * captured), so the web constraint caps only apply to the remote senders.
+ * via one MediaProjection session. Its Android resolutionScale option limits
+ * source pixels to the requested output bounds before capture; frame rate stays
+ * at the native capturer's fixed 30 fps and the sender applies the chosen cap.
  *
  * getUserMedia() is used for room voice microphone capture with echo cancellation,
  * noise suppression, and auto gain control.
  */
 export const nativeAdapter: PlatformAdapter = {
   getDisplayMedia: async (constraints) => {
+    const { width, height } = Dimensions.get("screen");
+    const displayWidthPx = PixelRatio.getPixelSizeForLayoutSize(width);
+    const displayHeightPx = PixelRatio.getPixelSizeForLayoutSize(height);
+    const androidCaptureOptions = {
+      createConfigForDefaultDisplay: true,
+      ...(Platform.OS === "android"
+        ? {
+            resolutionScale: getScreenCaptureResolutionScale(
+              displayWidthPx,
+              displayHeightPx,
+              constraints.video.width.max,
+              constraints.video.height.max,
+            ),
+          }
+        : {}),
+    };
     const stream = mediaDevices.getDisplayMedia({
       audio: constraints.audio,
-      android: { createConfigForDefaultDisplay: true },
+      android: androidCaptureOptions,
     }) as unknown as Promise<MediaStream>;
 
     const resolved = await stream;

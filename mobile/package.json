@@ -15,6 +15,7 @@
     "prebuild:android:release": "npm run generate:sounds",
     "build:android:release": "node ./build-android-release.js",
     "generate:sounds": "node ./generate-notification-sounds.js",
+    "test": "tsx --test test/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
