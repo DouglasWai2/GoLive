@@ -145,6 +145,8 @@ button { cursor: pointer; }
 .name-card .primary-button { width: 100%; }
 .name-card > small { display: block; text-align: center; color: #6f6f68; margin-top: 20px; }
 .gate-error { color: #ff6b5e; font-size: 13px; margin: -6px 0 14px; }
+.gate-error a { color: var(--acid); }
+.gate-error a:focus-visible { outline: 2px solid var(--acid); outline-offset: 2px; }
 .replaced-note { color: #9c9c93; font-size: 14px; line-height: 1.5; margin: -22px 0 28px; }
 .gate-leave-button { display: block; width: 100%; min-height: 44px; margin-top: 9px; border: 0; background: transparent; color: #ffb0a7; font-size: 13px; }
 .gate-leave-button:hover:not(:disabled) { color: #ffcfc9; }

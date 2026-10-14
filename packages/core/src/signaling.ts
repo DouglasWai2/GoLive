@@ -204,6 +204,23 @@ export async function listDeviceRooms(baseUrl: string, deviceToken: string, auth
   return Array.isArray(data.rooms) ? data.rooms : [];
 }
 
+export async function listAccountRooms(baseUrl: string, authToken: string): Promise<DeviceRoom[]> {
+  const response = await fetch(signalingHttpUrl(baseUrl, "/account/rooms"), {
+    headers: { Authorization: `Bearer ${authToken}` },
+  });
+  if (!response.ok) throw new DeviceRequestError(response.status, await errorFrom(response));
+  const data = (await response.json()) as { rooms?: DeviceRoom[] };
+  return Array.isArray(data.rooms) ? data.rooms : [];
+}
+
+export async function endAccountRoom(baseUrl: string, authToken: string, roomId: string): Promise<void> {
+  const response = await fetch(signalingHttpUrl(baseUrl, `/account/rooms/${encodeURIComponent(roomId)}`), {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${authToken}` },
+  });
+  if (!response.ok) throw new DeviceRequestError(response.status, await errorFrom(response));
+}
+
 export async function restoreRoom(
   baseUrl: string,
   deviceToken: string,

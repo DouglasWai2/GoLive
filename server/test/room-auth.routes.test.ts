@@ -94,6 +94,29 @@ test("enforces account room quotas and keeps guest profiles to one room grant", 
     });
     assert.equal(sixth.statusCode, 409, sixth.body);
 
+    const accountOnlyRooms = await inject({ method: "GET", url: "/account/rooms", headers: { authorization: "Bearer account-one" } });
+    assert.equal(accountOnlyRooms.statusCode, 200, accountOnlyRooms.body);
+    assert.equal(accountOnlyRooms.headers["cache-control"], "no-store");
+    assert.deepEqual(new Set(accountOnlyRooms.json<{ rooms: Array<{ id: string }> }>().rooms.map((room) => room.id)),
+      new Set([...accountRooms.map((room) => room.id), successfulConcurrentCreate.value.roomId]));
+    assert.equal((await inject({ method: "GET", url: "/account/rooms" })).statusCode, 401);
+    assert.deepEqual((await inject({ method: "GET", url: "/account/rooms", headers: { authorization: "Bearer account-two" } })).json().rooms, []);
+
+    const otherDevice = await inject({
+      method: "POST", url: "/room", headers: { authorization: "Bearer account-one" },
+      payload: { roomId: accountRooms[1]!.id, name: "Another device" },
+    });
+    assert.equal(otherDevice.statusCode, 200, otherDevice.body);
+    const otherDeviceSession = otherDevice.json<{ deviceToken: string; session: { userId: string } }>();
+    profileIds.push(otherDeviceSession.session.userId);
+    assert.notEqual(otherDeviceSession.deviceToken, ownerDeviceToken);
+    const otherDeviceRooms = await inject({ method: "GET", url: "/device/rooms", headers: {
+      authorization: "Bearer account-one", "x-device-token": otherDeviceSession.deviceToken,
+    } });
+    assert.deepEqual(otherDeviceRooms.json<{ rooms: Array<{ id: string }> }>().rooms.map((room) => room.id), [accountRooms[1]!.id]);
+    assert.equal((await inject({ method: "POST", url: "/room", headers: { authorization: "Bearer account-two" },
+      payload: { roomId: accountRooms[1]!.id, name: "Not the owner" } })).statusCode, 403);
+
     const authenticatedHeaders = {
       authorization: "Bearer account-one",
       "x-device-token": accountRooms[0]!.token,
@@ -235,6 +258,9 @@ test("enforces account room quotas and keeps guest profiles to one room grant", 
       payload: { roomId: afterRoomReleasedId, name: "Account owner", deviceToken: accountRooms[0]!.token },
     });
     assert.equal(afterRoomReleased.statusCode, 200, afterRoomReleased.body);
+    const reopenEmptyAtQuota = await inject({ method: "POST", url: "/room", headers: { authorization: "Bearer account-one" },
+      payload: { roomId: authRoomToRemove, name: "Account owner" } });
+    assert.equal(reopenEmptyAtQuota.statusCode, 409);
 
     const guestOwnedRoomId = id();
     guestRoomIds.push(guestOwnedRoomId);
@@ -272,6 +298,23 @@ test("enforces account room quotas and keeps guest profiles to one room grant", 
       payload: { roomId: id(), name: "Account owner", deviceToken: guestOwnedProfile.deviceToken },
     });
     assert.equal(overQuotaAfterLinking.statusCode, 409);
+
+    const cannotEndOthersRoom = await inject({ method: "DELETE", url: `/account/rooms/${accountRooms[1]!.id}`,
+      headers: { authorization: "Bearer account-two" } });
+    assert.equal(cannotEndOthersRoom.statusCode, 404);
+    const ended = await inject({ method: "DELETE", url: `/account/rooms/${accountRooms[1]!.id}`,
+      headers: { authorization: "Bearer account-one" } });
+    assert.equal(ended.statusCode, 204);
+    assert.equal((await inject({ method: "GET", url: "/account/rooms", headers: { authorization: "Bearer account-one" } })).json().rooms.length, 4);
+    assert.equal((await inject({ method: "POST", url: `/device/rooms/${accountRooms[1]!.id}/session`, headers: {
+      authorization: "Bearer account-one", "x-device-token": otherDeviceSession.deviceToken,
+    } })).statusCode, 404);
+    const replacementId = id();
+    authRoomIds.push(replacementId);
+    const replacement = await inject({ method: "POST", url: "/room", headers: { authorization: "Bearer account-one" },
+      payload: { roomId: replacementId, name: "New owner device" } });
+    assert.equal(replacement.statusCode, 200, replacement.body);
+    profileIds.push(replacement.json<{ session: { userId: string } }>().session.userId);
   } finally {
     if (app) await app.close();
     if (authRoomIds.length) await pool.query("DELETE FROM rooms WHERE id = ANY($1::varchar[])", [authRoomIds]);

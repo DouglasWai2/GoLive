@@ -36,6 +36,8 @@ export {
   createInvite,
   verifyInvite,
   listDeviceRooms,
+  listAccountRooms,
+  endAccountRoom,
   removeDeviceRoom,
   getDeviceProfile,
   updateDeviceProfile,

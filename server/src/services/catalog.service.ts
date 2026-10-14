@@ -207,6 +207,27 @@ export class CatalogService {
     });
   }
 
+  async listOwnedRooms(authUserId: string): Promise<DeviceRoom[]> {
+    const result = await this.pool.query<RoomRow>(
+      `SELECT id, name, created_at, updated_at FROM rooms
+       WHERE owner_auth_user_id = $1 AND empty_since IS NULL
+       ORDER BY created_at DESC, id LIMIT $2`,
+      [authUserId, MAX_CATALOG_PAGE_SIZE],
+    );
+    return result.rows.map((row) => ({ ...room(row), owner: true }));
+  }
+
+  async endOwnedRoom(authUserId: string, roomId: string): Promise<boolean> {
+    return transaction(this.pool, async (client) => {
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`golive:room-owner:${authUserId}`]);
+      const result = await client.query(
+        "DELETE FROM rooms WHERE id = $1 AND owner_auth_user_id = $2 RETURNING id",
+        [roomId, authUserId],
+      );
+      return Boolean(result.rowCount);
+    });
+  }
+
   async getDeviceMembership(deviceToken: string, roomId: string, authUserId?: string): Promise<DeviceMembership | null> {
     return transaction(this.pool, async (client) => {
       const user = await this.resolveDevice(client, deviceToken, false, authUserId);
@@ -290,7 +311,17 @@ export class CatalogService {
       let user = deviceToken ? await this.resolveDevice(client, deviceToken, true, authUserId) : null;
       if (deviceToken && !user) throw new CatalogError(401, "Invalid device credential");
 
-      if (authUserId) {
+      const ownedRoom = authUserId
+        ? await client.query<{ owner_auth_user_id: string | null; empty_since: Date | null }>(
+          "SELECT owner_auth_user_id, empty_since FROM rooms WHERE id = $1", [roomId],
+        )
+        : null;
+      const existingRoom = ownedRoom?.rows[0];
+      if (existingRoom && existingRoom.owner_auth_user_id !== authUserId) {
+        throw new CatalogError(403, "This room requires an invite to join.");
+      }
+
+      if (authUserId && (!existingRoom || existingRoom.empty_since !== null)) {
         const active = await client.query<{ count: string }>(
           "SELECT count(*)::text AS count FROM rooms WHERE owner_auth_user_id = $1 AND empty_since IS NULL",
           [authUserId],
@@ -303,12 +334,17 @@ export class CatalogService {
       const trimmedName = name?.trim();
       if (!user && !trimmedName) throw new CatalogError(400, "Name is required");
       if (user) {
-        const count = await client.query<{ count: string }>(
-          "SELECT count(*)::text AS count FROM room_memberships WHERE user_id = $1",
-          [user.id],
-        );
-        if (Number(count.rows[0]?.count ?? 0) >= env.maxRoomsPerDevice) {
-          throw new CatalogError(409, "Device room limit reached");
+        const alreadyMember = existingRoom ? await client.query(
+          "SELECT 1 FROM room_memberships WHERE user_id = $1 AND room_id = $2", [user.id, roomId],
+        ) : null;
+        if (!alreadyMember?.rowCount) {
+          const count = await client.query<{ count: string }>(
+            "SELECT count(*)::text AS count FROM room_memberships WHERE user_id = $1",
+            [user.id],
+          );
+          if (Number(count.rows[0]?.count ?? 0) >= env.maxRoomsPerDevice) {
+            throw new CatalogError(409, "Device room limit reached");
+          }
         }
       }
       let replacedRoomIds: string[] = [];
@@ -336,12 +372,14 @@ export class CatalogService {
           for (const replacedRoomId of replacedRoomIds) await this.markEmptyRoom(client, replacedRoomId);
         }
       }
-      const created = await client.query(
-        `INSERT INTO rooms (id, name, owner_auth_user_id)
-         VALUES ($1, $2, $3) ON CONFLICT (id) DO NOTHING RETURNING id`,
-        [roomId, `Room ${roomId}`, authUserId ?? null],
-      );
-      if (!created.rowCount) throw new CatalogError(403, "This room requires an invite to join.");
+      if (!existingRoom) {
+        const created = await client.query(
+          `INSERT INTO rooms (id, name, owner_auth_user_id)
+           VALUES ($1, $2, $3) ON CONFLICT (id) DO NOTHING RETURNING id`,
+          [roomId, `Room ${roomId}`, authUserId ?? null],
+        );
+        if (!created.rowCount) throw new CatalogError(403, "This room requires an invite to join.");
+      }
       let issuedToken = deviceToken;
       if (!user) {
         const id = randomUUID();
@@ -353,7 +391,11 @@ export class CatalogService {
         );
         user = { id, name: trimmedName!, auth_user_id: authUserId ?? null, guest_room_id: authUserId ? null : roomId };
       }
-      await client.query("INSERT INTO room_memberships (user_id, room_id, owner) VALUES ($1, $2, true)", [user.id, roomId]);
+      await client.query(
+        `INSERT INTO room_memberships (user_id, room_id, owner) VALUES ($1, $2, true)
+         ON CONFLICT (user_id, room_id) DO UPDATE SET owner = true`,
+        [user.id, roomId],
+      );
       await client.query("UPDATE rooms SET empty_since = NULL WHERE id = $1", [roomId]);
       if (!authUserId) {
         await client.query("UPDATE guest_profiles SET guest_room_id = $2 WHERE id = $1", [user.id, roomId]);

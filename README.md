@@ -419,29 +419,34 @@ certificate fingerprint registered in the Google Cloud project. Rebuild the
 native app after changing its Google Sign-In configuration.
 
 Authenticated accounts can own at most five rooms that still have device access
-grants. Removing the final grant marks a room empty and frees its slot. Guests
-can create rooms and accept invites, but each guest device profile is limited to
+grants. Ending an account-owned room from web `/rooms` removes it and its access
+grants for everyone, freeing its slot. Guests can create rooms and accept
+invites, but each guest device profile is limited to
 one room grant at a time. Linking a device profile to Google does not transfer
 the guest room into the Google account's owned-room quota.
 
 ### TURN
 
-Rooms are invite-only after creation. `POST /room` accepts a new `roomId` and,
+Rooms are invite-only after creation, except that an authenticated owner can
+re-enter their own room from another device. `POST /room` accepts a `roomId` and,
 for a new device, a `name`; it creates the room and owner membership and returns
 an eight-hour room session JWT plus a private `deviceToken`. Existing devices use
 the name saved on their profile, which can be edited in `/profile` on web or the
 mobile Profile screen. Profile name changes are shared across rooms and sent to
-participants in already-open rooms. An existing room ID cannot be created or
-claimed without an invite, even if nobody is online.
+participants in already-open rooms. Other accounts and guests cannot claim an
+existing room ID without an invite, even if nobody is online.
 
 The browser stores the device credential in local storage; mobile stores it in
 AsyncStorage. `GET /device/rooms` returns rooms associated with that device and
-visible to the current guest or authenticated identity.
+visible to the current guest or authenticated identity. Authenticated web
+`GET /account/rooms` lists active account-owned rooms independently of local
+device storage; `DELETE /account/rooms/:roomId` ends an owned room for everyone.
 `POST /device/rooms/:roomId/session` renews a session only for an authorized
 room. The web `/rooms` page and mobile My rooms screen require Google sign-in;
-they list the current device's available grants and let it re-enter or explicitly
-remove access. Guests return to the landing page instead. Leaving a live room
-keeps its grant; `DELETE /device/rooms/:roomId` revokes one room. Creating a new
+the web page shows account-owned rooms plus invited rooms saved on this device,
+while mobile lists the current device's available grants. Guests return to the
+landing page instead. Leaving a live room keeps its grant;
+`DELETE /device/rooms/:roomId` revokes one device's access to a room. Creating a new
 room as a guest replaces that profile's previous room grant and disconnects its
 old session. Accepting a different room's invite does the same for guests, while
 authenticated profiles can retain multiple account-owned and invited rooms.
@@ -616,6 +621,7 @@ does not arrive.
 - Room capacity is 10 participants; simultaneous shares cannot exceed that cap.
 - STUN is always available. TURN uses Cloudflare first and ExpressTURN after the
   configured Cloudflare egress threshold (see [Environment variables](#environment-variables)).
-- Device credentials, display names, and room grants are device-specific; Google
-  sign-in provides account-level room ownership and quota, not cross-device room
-  library syncing. There is no recording, chat, or participant history.
+- Device credentials, display names, and invite grants are device-specific; Google
+  sign-in provides account-level room ownership, quota, and re-entry on a new
+  device, but does not sync invite grants or display names across devices.
+  There is no recording, chat, or participant history.

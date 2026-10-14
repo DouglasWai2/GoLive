@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { DeviceRequestError, listDeviceRooms, removeDeviceRoom, type DeviceRoom } from "@golive/core";
+import { DeviceRequestError, endAccountRoom, listAccountRooms, listDeviceRooms, removeDeviceRoom, type DeviceRoom } from "@golive/core";
 import { Brand } from "./Brand";
 import { configuredBaseUrl } from "../services/sessionDeps";
 import { createRoomId, goToRoom } from "../utils/room";
@@ -11,26 +11,37 @@ export function DeviceRooms() {
   const auth = useAuth();
   const [deviceToken, setDeviceToken] = useState(loadDeviceToken);
   const [rooms, setRooms] = useState<DeviceRoom[]>([]);
-  const [loading, setLoading] = useState(Boolean(deviceToken));
+  const [ownedRoomCount, setOwnedRoomCount] = useState(0);
+  const [loading, setLoading] = useState(true);
   const [removing, setRemoving] = useState<string | null>(null);
   const [error, setError] = useState("");
 
   const refresh = async (signal?: AbortSignal) => {
-    if (!deviceToken) return;
+    setLoading(true);
     setError("");
     try {
-      const nextRooms = await listDeviceRooms(configuredBaseUrl(), deviceToken, await auth.getAccessToken() ?? undefined);
-      if (!signal?.aborted) setRooms(nextRooms);
+      const authToken = await auth.getAccessToken();
+      if (!authToken) throw new Error("Account session unavailable");
+      const ownedRooms = await listAccountRooms(configuredBaseUrl(), authToken);
+      let deviceRooms: DeviceRoom[] = [];
+      if (deviceToken) {
+        try {
+          deviceRooms = await listDeviceRooms(configuredBaseUrl(), deviceToken, authToken);
+        } catch (caught) {
+          if (!(caught instanceof DeviceRequestError && caught.status === 401)) throw caught;
+          if (signal?.aborted) return;
+          clearDeviceToken();
+          setDeviceToken(null);
+        }
+      }
+      if (!signal?.aborted) {
+        setOwnedRoomCount(ownedRooms.length);
+        const ownedIds = new Set(ownedRooms.map((room) => room.id));
+        setRooms([...ownedRooms, ...deviceRooms.filter((room) => !ownedIds.has(room.id))]);
+      }
     } catch (caught) {
       if (signal?.aborted) return;
-      if (caught instanceof DeviceRequestError && caught.status === 401) {
-        clearDeviceToken();
-        setDeviceToken(null);
-        setRooms([]);
-        setError("This device profile is no longer available. Accept an invite to reconnect.");
-      } else {
-        setError("Could not load your rooms. Check your connection and retry.");
-      }
+      setError("Could not load your account rooms. Check your connection and retry.");
     } finally {
       if (!signal?.aborted) setLoading(false);
     }
@@ -43,22 +54,30 @@ export function DeviceRooms() {
   }, [deviceToken, auth.getAccessToken]);
 
   const remove = async (room: DeviceRoom) => {
-    if (!deviceToken || removing) return;
-    if (!window.confirm(`Remove access to ${room.name}? You will need a new invite to return.`)) return;
+    if (removing || (!room.owner && !deviceToken)) return;
+    if (!window.confirm(room.owner
+      ? `End ${room.name} for everyone? All participants will lose access.`
+      : `Remove access to ${room.name}? You will need a new invite to return.`)) return;
     setRemoving(room.id);
     setError("");
     try {
-      await removeDeviceRoom(configuredBaseUrl(), deviceToken, room.id, await auth.getAccessToken() ?? undefined);
+      const authToken = await auth.getAccessToken();
+      if (!authToken) throw new Error("Account session unavailable");
+      if (room.owner) {
+        await endAccountRoom(configuredBaseUrl(), authToken, room.id);
+        setOwnedRoomCount((count) => Math.max(0, count - 1));
+      } else {
+        await removeDeviceRoom(configuredBaseUrl(), deviceToken!, room.id, authToken);
+      }
       if (loadSavedRoom() === room.id) clearSavedRoom();
       setRooms((current) => current.filter((candidate) => candidate.id !== room.id));
     } catch (caught) {
-      if (caught instanceof DeviceRequestError && caught.status === 401) {
+      if (!room.owner && caught instanceof DeviceRequestError && caught.status === 401) {
         clearDeviceToken();
         setDeviceToken(null);
-        setRooms([]);
-        setError("This device profile is no longer available. Accept an invite to reconnect.");
+        setError("This device profile is no longer available. Your account rooms are still available.");
       } else {
-        setError("Could not remove this room. Please retry.");
+        setError(room.owner ? "Could not end this room. Please retry." : "Could not remove this room. Please retry.");
       }
     } finally {
       setRemoving(null);
@@ -80,24 +99,18 @@ export function DeviceRooms() {
         <div className="account-title-row">
           <div>
             <h1>My rooms</h1>
-            <p className="account-description">Rooms you have access to on this device.</p>
+            <p className="account-description">Rooms owned by your Google account and invites saved on this device.</p>
           </div>
-          {deviceToken && <button className="primary-button" type="button" onClick={() => goToRoom(createRoomId())}>Create a room <span>→</span></button>}
+          {!loading && ownedRoomCount < 5 && <button className="primary-button" type="button" onClick={() => goToRoom(createRoomId())}>Create a room <span>→</span></button>}
         </div>
 
         {loading ? <p className="account-status" role="status">Loading your rooms…</p> : null}
+        {!loading && ownedRoomCount >= 5 && <p className="account-status">You have five active rooms. End one to create another.</p>}
         {error ? <div className="account-error" role="alert"><span>{error}</span><button type="button" onClick={() => void refresh()}>Retry</button></div> : null}
-        {!deviceToken ? (
+        {!loading && !error && rooms.length === 0 ? (
           <div className="account-empty-state">
-            <h2>No device profile yet</h2>
-            <p>Accept a room invite or create your first room to start a private list on this device.</p>
-            <a className="primary-button" href="/">Go to GoLive <span>→</span></a>
-          </div>
-        ) : null}
-        {!loading && deviceToken && !error && rooms.length === 0 ? (
-          <div className="account-empty-state">
-            <h2>Your list is ready</h2>
-            <p>Rooms you join with this device will appear here so you can return anytime.</p>
+            <h2>No rooms yet</h2>
+            <p>Create a room with your Google account or accept an invite to get started.</p>
             <button className="primary-button" type="button" onClick={() => goToRoom(createRoomId())}>Create a room <span>→</span></button>
           </div>
         ) : null}
@@ -113,7 +126,7 @@ export function DeviceRooms() {
                 <div className="device-room-actions">
                   <button className="primary-button" type="button" onClick={() => goToRoom(room.id)}>Enter <span>→</span></button>
                   <button className="room-remove-button" type="button" disabled={removing !== null} onClick={() => void remove(room)}>
-                    {removing === room.id ? "Removing…" : "Remove access"}
+                    {removing === room.id ? (room.owner ? "Ending…" : "Removing…") : (room.owner ? "End room" : "Remove access")}
                   </button>
                 </div>
               </li>

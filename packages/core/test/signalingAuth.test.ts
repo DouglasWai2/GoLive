@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { joinRoom, listDeviceRooms, verifyInvite } from "../src/signaling";
+import { endAccountRoom, joinRoom, listAccountRooms, listDeviceRooms, verifyInvite } from "../src/signaling";
 
 test("room and device requests carry Neon and device credentials separately", async () => {
   const originalFetch = globalThis.fetch;
@@ -43,6 +43,31 @@ test("guest room requests do not send an account token", async () => {
   try {
     await joinRoom("https://api.example.com", "guest_room_1", "Guest", undefined);
     assert.equal(authorization, null);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("account room requests use only the account credential", async () => {
+  const originalFetch = globalThis.fetch;
+  const requests: Array<{ path: string; method?: string; headers: Headers }> = [];
+  globalThis.fetch = async (input, init) => {
+    requests.push({ path: new URL(String(input)).pathname, method: init?.method, headers: new Headers(init?.headers) });
+    return init?.method === "DELETE"
+      ? new Response(null, { status: 204 })
+      : Response.json({ rooms: [{ id: "owned_room_1", owner: true }] });
+  };
+
+  try {
+    const rooms = await listAccountRooms("https://api.example.com", "neon-jwt");
+    assert.equal(rooms[0]?.id, "owned_room_1");
+    await endAccountRoom("https://api.example.com", "neon-jwt", "owned_room_1");
+    assert.deepEqual(requests.map((request) => [request.path, request.method]),
+      [["/account/rooms", undefined], ["/account/rooms/owned_room_1", "DELETE"]]);
+    for (const request of requests) {
+      assert.equal(request.headers.get("authorization"), "Bearer neon-jwt");
+      assert.equal(request.headers.get("x-device-token"), null);
+    }
   } finally {
     globalThis.fetch = originalFetch;
   }

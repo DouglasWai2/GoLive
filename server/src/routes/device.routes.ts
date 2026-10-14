@@ -37,6 +37,22 @@ export function registerDeviceRoutes(
     }
     return true;
   };
+  const requireAccount = async (
+    authorization: string | undefined,
+    reply: { code: (status: number) => { send: (body: unknown) => unknown } },
+  ): Promise<string | null> => {
+    const token = bearer(authorization);
+    if (!token) {
+      reply.code(401).send({ error: "Account authorization required" });
+      return null;
+    }
+    const identity = await verifyNeonAuth(token);
+    if (!identity) {
+      reply.code(401).send({ error: "Invalid or expired Neon Auth token" });
+      return null;
+    }
+    return identity.id;
+  };
   const requireCredential = async (
     request: { headers: { authorization?: string; "x-device-token"?: string } },
     reply: { code: (status: number) => { send: (body: unknown) => unknown } },
@@ -86,6 +102,26 @@ export function registerDeviceRoutes(
       if (error instanceof CatalogError) return reply.code(error.status).send({ error: error.message });
       throw error;
     }
+  });
+
+  app.get("/account/rooms", options, async (request, reply) => {
+    if (!requireCatalog(reply)) return;
+    const authUserId = await requireAccount(request.headers.authorization, reply);
+    if (!authUserId) return;
+    return reply.header("Cache-Control", "no-store").send({ rooms: await catalog!.listOwnedRooms(authUserId) });
+  });
+
+  app.delete("/account/rooms/:roomId", {
+    ...options,
+    schema: { params: { type: "object", additionalProperties: false, required: ["roomId"], properties: { roomId: { type: "string", minLength: 8, maxLength: 64, pattern: ROOM_ID_PATTERN } } } },
+  }, async (request, reply) => {
+    if (!requireCatalog(reply)) return;
+    const authUserId = await requireAccount(request.headers.authorization, reply);
+    if (!authUserId) return;
+    const { roomId } = request.params as { roomId: string };
+    if (!await catalog!.endOwnedRoom(authUserId, roomId)) return reply.code(404).send({ error: "Room not found" });
+    rooms.invalidateRoom(roomId);
+    return reply.header("Cache-Control", "no-store").code(204).send();
   });
 
   app.post("/device/rooms/:roomId/session", {

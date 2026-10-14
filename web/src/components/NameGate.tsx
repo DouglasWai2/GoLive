@@ -50,7 +50,9 @@ export function NameGate({ roomId, inviteToken = null, onJoin }: NameGateProps) 
         : message.includes(": 409")
           ? message.includes("Guests can keep access")
             ? "Remove access to your current room from My rooms before creating another, or sign in with Google."
-            : "You already have five active rooms. End one before creating another."
+            : message.includes("five active rooms")
+              ? "You already have five active rooms. End one in My rooms before creating another."
+              : "This device has reached its room limit. Remove access to a room in My rooms before creating another."
           : message);
     } finally {
       setJoining(false);
@@ -72,7 +74,7 @@ export function NameGate({ roomId, inviteToken = null, onJoin }: NameGateProps) 
           onChange={(event) => setName(event.target.value)}
           placeholder="Your name"
         />
-        {error && <p className="gate-error">{error}</p>}
+        {error && <p className="gate-error" role="alert">{error} {error.includes("My rooms") && <a href="/rooms">Open My rooms</a>}</p>}
         <GoogleAuthControls />
         <button
           className="primary-button"
