@@ -22,6 +22,7 @@ type FullscreenViewProps = {
   statsEnabled: boolean;
   volume: number;
   muted: boolean;
+  local?: boolean;
   onVolumeChange: (volume: number) => void;
   onToggleMute: () => void;
   onToggleStats: () => void;
@@ -37,6 +38,7 @@ export function FullscreenView({
   statsEnabled,
   volume,
   muted,
+  local = false,
   onVolumeChange,
   onToggleMute,
   onToggleStats,
@@ -62,21 +64,35 @@ export function FullscreenView({
   useEffect(() => {
     if (!visible) return;
 
+    let active = true;
+    let previousOrientationLock: ScreenOrientation.OrientationLock | null = null;
     StatusBar.setHidden(true, "fade");
-    ScreenOrientation.unlockAsync().catch(() => {});
     revealControls();
+    void (async () => {
+      try {
+        previousOrientationLock = await ScreenOrientation.getOrientationLockAsync();
+        // Rotating an active Android screen capture can blank its local preview.
+        // Keep the current orientation for the presenter's own screen.
+        if (active && !local) await ScreenOrientation.unlockAsync();
+      } catch {
+        // Fullscreen should remain usable when orientation APIs are unavailable.
+      }
+    })();
 
     return () => {
+      active = false;
       clearTimer();
       StatusBar.setHidden(false, "fade");
       StatusBar.setBarStyle("light-content", true);
-      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
+      if (previousOrientationLock !== null) {
+        ScreenOrientation.lockAsync(previousOrientationLock).catch(() => {});
+      }
     };
-  }, [visible]);
+  }, [visible, local]);
 
   const rnStream = stream as unknown as RNMediaStream | null;
   const hasAudio = Boolean(rnStream?.getAudioTracks().length);
-  const { phase: playbackPhase, onDimensionsChange } = useVideoPlaybackState(stream, visible);
+  const { phase: playbackPhase, onDimensionsChange } = useVideoPlaybackState(stream, visible && !local);
 
   return (
     <Modal visible={visible} animationType="fade" onRequestClose={onClose} supportedOrientations={["portrait", "landscape"]}>
@@ -90,12 +106,14 @@ export function FullscreenView({
             onDimensionsChange={onDimensionsChange}
           />
         ) : null}
-        {rnStream ? <VideoLoadingOverlay phase={playbackPhase} connectionState={connectionState} /> : null}
+        {rnStream && !local ? <VideoLoadingOverlay phase={playbackPhase} connectionState={connectionState} /> : null}
 
         <Pressable
           style={styles.revealTap}
           onPress={() => controlsVisible ? setControlsVisible(false) : revealControls()}
+          accessibilityRole="button"
           accessibilityLabel={controlsVisible ? "Hide fullscreen controls" : "Show fullscreen controls"}
+          accessibilityHint="Double tap the screen to show or hide controls."
         />
 
         <View
@@ -106,10 +124,10 @@ export function FullscreenView({
         >
           <View pointerEvents="none" style={[styles.meta, { left: Math.max(insets.left, 18), top: Math.max(insets.top, 18) }]}>
             <View style={styles.liveDot} />
-            <Text style={styles.name} numberOfLines={1}>{name}'s screen</Text>
+            <Text style={styles.name} numberOfLines={1}>{local ? "Your screen" : `${name}'s screen`}</Text>
           </View>
 
-          {statsEnabled && stats ? <StreamStats stats={stats} fullscreen /> : null}
+          {!local && statsEnabled && stats ? <StreamStats stats={stats} fullscreen /> : null}
 
           <View
             style={[styles.controls, { right: Math.max(insets.right, 18), bottom: Math.max(insets.bottom, 18) }]}
@@ -117,14 +135,16 @@ export function FullscreenView({
             onTouchEnd={revealControls}
             onTouchCancel={revealControls}
           >
-            <StatsButton statsEnabled={statsEnabled} onToggle={onToggleStats} />
-            <VolumeControl
-              volume={volume}
-              muted={muted}
-              disabled={!hasAudio}
-              onVolumeChange={onVolumeChange}
-              onToggleMute={onToggleMute}
-            />
+            {!local ? <StatsButton statsEnabled={statsEnabled} onToggle={onToggleStats} /> : null}
+            {!local ? (
+              <VolumeControl
+                volume={volume}
+                muted={muted}
+                disabled={!hasAudio}
+                onVolumeChange={onVolumeChange}
+                onToggleMute={onToggleMute}
+              />
+            ) : null}
             <Pressable style={({ pressed }) => [styles.closeButton, pressed && styles.pressed]} onPress={onClose} accessibilityRole="button" accessibilityLabel="Exit fullscreen">
               <FullscreenExitIcon color="#b5b5ad" />
             </Pressable>

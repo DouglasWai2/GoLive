@@ -23,6 +23,24 @@ export function ScreenIcon({ size = 20, color = "currentColor" }: IconProps) {
   );
 }
 
+export function ScreenOffIcon({ size = 20, color = "currentColor" }: IconProps) {
+  return (
+    <Svg {...common(size, color)}>
+      <Path d="M4 5.5 20 19M8 21h8M12 17v4" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+      <Path d="M3 12V6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-1" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      <Path d="M3 16v-1" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+    </Svg>
+  );
+}
+
+export function StopIcon({ size = 18, color = "currentColor" }: IconProps) {
+  return (
+    <Svg {...common(size, color)}>
+      <Rect x="6" y="6" width="12" height="12" rx="1.5" fill={color} />
+    </Svg>
+  );
+}
+
 export function ShareIcon({ size = 18, color = "currentColor" }: IconProps) {
   return (
     <Svg {...common(size, color)}>

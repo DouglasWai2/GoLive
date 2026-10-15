@@ -1,20 +1,12 @@
 import { useEffect, useState } from "react";
-import {
-  Pressable,
-  ScrollView,
-  Share,
-  StyleSheet,
-  Text,
-  View,
-  useWindowDimensions,
-} from "react-native";
+import { Pressable, Share, StyleSheet, Text, View, useWindowDimensions } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { buildInviteUrl, createInvite, formatBitrate, formatResolution } from "@golive/core";
 import type { ShareSettings } from "@golive/core";
 import { useRoom } from "../hooks/useRoom";
 import { Brand } from "../components/Brand";
-import { CloseIcon, MicrophoneIcon, MicrophoneMutedIcon, ScreenIcon, ShareIcon, UsersIcon, VolumeIcon, VolumeMutedIcon } from "../components/icons";
+import { CloseIcon, ScreenIcon, ShareIcon, UsersIcon } from "../components/icons";
 import { VideoTile } from "../components/VideoTile";
 import { ShareSheet } from "../components/ShareSheet";
 import { ControlDock } from "../components/ControlDock";
@@ -23,6 +15,7 @@ import { VoiceAudio } from "../components/VoiceAudio";
 import { INVITE_BASE_URL, SIGNALING_URL } from "../config";
 import { colors, radii, technicalText } from "../theme";
 import { ParticipantsList } from "../components/ParticipantsList";
+import { ParticipantsGrid } from "../components/ParticipantsGrid";
 
 const STATS_STORAGE_KEY = "golive.stats.enabled";
 const VOLUME_STORAGE_KEY = "golive.volume";
@@ -56,11 +49,14 @@ export function RoomScreen({
   const [muted, setMuted] = useState(false);
   const [audioPreferencesReady, setAudioPreferencesReady] = useState(false);
   const [statsEnabled, setStatsEnabled] = useState(true);
-  const [fullscreenPeerId, setFullscreenPeerId] = useState<string | null>(null);
+  const [fullscreenTarget, setFullscreenTarget] = useState<
+    { type: "local" } | { type: "remote"; peerId: string } | null
+  >(null);
   const [focusedPeerId, setFocusedPeerId] = useState<string | null>(null);
+  const [stoppedWatchingRemote, setStoppedWatchingRemote] = useState(false);
+  const [stageSource, setStageSource] = useState<"local" | "remote" | "none">("remote");
   const [deafened, setDeafened] = useState(false);
   const { width } = useWindowDimensions();
-  const wide = width >= 720;
   const compactHeader = width < 390;
 
   const {
@@ -78,7 +74,7 @@ export function RoomScreen({
     setError,
     startSharing,
     stopSharing,
-    focusPeer,
+    focusPeer: setFocusedRemotePeer,
     setMicrophoneMuted,
     playNotificationSound,
   } = useRoom(roomId, name, token, onSessionRejected, onSessionReplaced);
@@ -110,20 +106,32 @@ export function RoomScreen({
 
   useEffect(() => {
     const activeSharers = peers.filter((peer) => peer.sharing && peer.streamId);
-    if (focusedPeerId && activeSharers.some((peer) => peer.id === focusedPeerId)) return;
-    setFocusedPeerId(activeSharers[0]?.id ?? null);
-  }, [focusedPeerId, peers]);
-
-  useEffect(() => {
-    focusPeer(focusedPeerId);
-  }, [focusPeer, focusedPeerId]);
-
-  useEffect(() => {
-    const fullscreenPeer = peers.find((peer) => peer.id === fullscreenPeerId);
-    if (fullscreenPeerId && (!fullscreenPeer?.streamId || !remoteStreams[fullscreenPeer.streamId])) {
-      setFullscreenPeerId(null);
+    if (activeSharers.length === 0) {
+      setFocusedPeerId(null);
+      setStoppedWatchingRemote(false);
+      return;
     }
-  }, [fullscreenPeerId, peers, remoteStreams]);
+    if (stoppedWatchingRemote) return;
+    if (focusedPeerId && activeSharers.some((peer) => peer.id === focusedPeerId)) return;
+    setFocusedPeerId(activeSharers[0].id);
+  }, [focusedPeerId, peers, stoppedWatchingRemote]);
+
+  useEffect(() => {
+    setFocusedRemotePeer(focusedPeerId);
+  }, [focusedPeerId, setFocusedRemotePeer]);
+
+  useEffect(() => {
+    if (!fullscreenTarget) return;
+    if (fullscreenTarget.type === "local") {
+      if (!localStream) setFullscreenTarget(null);
+      return;
+    }
+
+    const fullscreenPeer = peers.find((peer) => peer.id === fullscreenTarget.peerId);
+    if (!fullscreenPeer?.streamId || !remoteStreams[fullscreenPeer.streamId]) {
+      setFullscreenTarget(null);
+    }
+  }, [fullscreenTarget, localStream, peers, remoteStreams]);
 
   useEffect(() => {
     const streamVolume = audioPreferencesReady && !muted ? volume : 0;
@@ -162,13 +170,30 @@ export function RoomScreen({
   };
 
   const activeSharers = peers.filter((peer) => peer.sharing && Boolean(peer.streamId));
-  const focusedPeer = activeSharers.find((peer) => peer.id === focusedPeerId)
-    ?? activeSharers.find((peer) => Boolean(peer.streamId && remoteStreams[peer.streamId]))
-    ?? activeSharers[0];
+  const focusedPeer = activeSharers.find((peer) => peer.id === focusedPeerId);
   const focusedStreamId = focusedPeer?.streamId ?? null;
   const focusedStream = focusedStreamId ? remoteStreams[focusedStreamId] ?? null : null;
-  const fullscreenPeer = peers.find((peer) => peer.id === fullscreenPeerId);
+  const mainSource: "local" | "remote" | null = stageSource === "none"
+    ? null
+    : stageSource === "local" && localStream
+      ? "local"
+      : focusedPeer
+        ? "remote"
+        : null;
+  const previewSource: "local" | "remote" | null = mainSource === "local" && focusedPeer
+    ? "remote"
+    : mainSource === "remote" && localStream
+      ? "local"
+      : null;
+  const fullscreenPeer = fullscreenTarget?.type === "remote"
+    ? peers.find((peer) => peer.id === fullscreenTarget.peerId)
+    : undefined;
   const fullscreenStreamId = fullscreenPeer?.streamId ?? null;
+  const fullscreenStream = fullscreenTarget?.type === "local"
+    ? localStream
+    : fullscreenStreamId
+      ? remoteStreams[fullscreenStreamId] ?? null
+      : null;
   const localOutboundStats = peers.flatMap((peer) => {
     const stats = outboundStats[peer.id];
     return stats ? [{ peerId: peer.id, peerName: peer.name, stats }] : [];
@@ -205,11 +230,39 @@ export function RoomScreen({
     }
   };
 
-  const stageTitle = localStream
+  const stageTitle = mainSource === "local"
     ? "You are presenting"
-    : focusedPeer
-      ? `Focused on ${focusedPeer.name}`
-      : "Ready when you are";
+    : mainSource === "remote" && focusedPeer
+      ? `Watching ${focusedPeer.name}`
+      : activeSharers.length > 0
+        ? "Choose a screen"
+        : localStream
+          ? "Your screen is ready"
+          : "No screen on air";
+
+  const focusRemotePeer = (peerId: string) => {
+    setStoppedWatchingRemote(false);
+    setFocusedPeerId(peerId);
+    setStageSource("remote");
+    setFullscreenTarget(null);
+    setParticipantsVisible(false);
+  };
+
+  const focusLocalScreen = () => {
+    setStageSource("local");
+    setFullscreenTarget(null);
+  };
+
+  const minimizeStage = () => {
+    setStageSource("none");
+    setFullscreenTarget(null);
+  };
+
+  const stopWatchingRemote = () => {
+    setStoppedWatchingRemote(true);
+    setFocusedPeerId(null);
+    setFullscreenTarget((current) => current?.type === "remote" ? null : current);
+  };
 
   return (
     <SafeAreaView style={styles.safeArea} edges={["top", "bottom", "left", "right"]}>
@@ -227,8 +280,13 @@ export function RoomScreen({
               <ShareIcon color={colors.paper} />
               {!compactHeader ? <Text style={styles.iconButtonText}>{isInviting ? "Creating..." : "Invite"}</Text> : null}
             </Pressable>
-            <Pressable style={({ pressed }) => [styles.leaveButton, pressed && styles.pressed]} onPress={onLeave} accessibilityRole="button">
-              <Text style={styles.leaveText}>My rooms</Text>
+            <Pressable
+              style={({ pressed }) => [styles.leaveButton, pressed && styles.pressed]}
+              onPress={onLeave}
+              accessibilityRole="button"
+              accessibilityLabel="Return to my rooms"
+            >
+              <Text style={styles.leaveText}>{compactHeader ? "Leave" : "My rooms"}</Text>
             </Pressable>
           </View>
         </View>
@@ -258,144 +316,207 @@ export function RoomScreen({
       {error ? (
         <View style={styles.errorBanner} accessibilityRole="alert">
           <Text style={styles.errorText}>{error}</Text>
-          <Pressable style={styles.errorClose} onPress={() => setError("")} accessibilityLabel="Dismiss error">
+          <Pressable
+            style={({ pressed }) => [styles.errorClose, pressed && styles.pressed]}
+            onPress={() => setError("")}
+            accessibilityRole="button"
+            accessibilityLabel="Dismiss error"
+          >
             <CloseIcon size={17} color={colors.redText} />
           </Pressable>
         </View>
       ) : null}
 
-      <ScrollView
-        style={styles.content}
-        contentContainerStyle={styles.stage}
-        showsVerticalScrollIndicator={false}
-      >
+      <View style={[styles.content, styles.stage]}>
         <View style={styles.stageHeading}>
           <View style={styles.stageHeadingCopy}>
             <View style={styles.eyebrow}>
               <View style={styles.acidDot} />
-              <Text style={styles.eyebrowText}>Live room</Text>
+              <Text style={styles.eyebrowText}>{mainSource === "remote" ? "On stage" : mainSource === "local" ? "Your stage" : "Live room"}</Text>
             </View>
-            <Text style={styles.stageTitle}>{stageTitle}</Text>
+            <Text style={styles.stageTitle} numberOfLines={1}>{stageTitle}</Text>
           </View>
-          <View>
+          <View style={styles.participantsControl}>
             <Pressable
               style={({ pressed }) => [styles.peopleCount, pressed && styles.pressed]}
               onPress={() => setParticipantsVisible((visible) => !visible)}
+              accessibilityRole="button"
+              accessibilityState={{ expanded: participantsVisible }}
+              accessibilityLabel={`${peers.length + 1} people in room. ${participantsVisible ? "Close" : "Show"} participants`}
             >
               <UsersIcon color={colors.muted} />
-              <Text style={styles.peopleText}><Text style={styles.peopleStrong}>{peers.length + 1}</Text> in room</Text>
+              {!compactHeader ? (
+                <Text style={styles.peopleText}><Text style={styles.peopleStrong}>{peers.length + 1}</Text> people</Text>
+              ) : <Text style={styles.peopleStrong}>{peers.length + 1}</Text>}
             </Pressable>
-            {participantsVisible && <ParticipantsList name={name} participants={peers} voiceState={{ voiceJoined: voiceState.joined, micMuted: voiceState.micMuted }} />}
+            <ParticipantsList
+              name={name}
+              participants={peers}
+              voiceState={{ voiceJoined: voiceState.joined, micMuted: voiceState.micMuted }}
+              visible={participantsVisible}
+              onClose={() => setParticipantsVisible(false)}
+              focusedPeerId={focusedPeerId}
+              onWatchPeer={focusRemotePeer}
+            />
           </View>
         </View>
 
-        {activeSharers.length > 0 ? (
-          <ScrollView
-            horizontal
-            style={styles.streamSelector}
-            contentContainerStyle={styles.streamSelectorContent}
-            showsHorizontalScrollIndicator={false}
-            accessibilityLabel="Live screens"
+        {status !== "connected" ? (
+          <View
+            style={[styles.connectionNotice, status === "disconnected" && styles.connectionNoticeDisconnected]}
+            accessibilityLiveRegion="polite"
           >
-            {activeSharers.map((peer) => (
+            <Text style={[styles.connectionNoticeText, status === "disconnected" && styles.connectionNoticeError]}>
+              {status === "disconnected"
+                ? "Connection lost · leave and rejoin the room"
+                : "Reconnecting to the room…"}
+            </Text>
+            {status === "disconnected" ? (
               <Pressable
-                key={peer.id}
-                style={({ pressed }) => [
-                  styles.streamChoice,
-                  peer.id === focusedPeer?.id && styles.streamChoiceSelected,
-                  pressed && styles.pressed,
-                ]}
-                onPress={() => setFocusedPeerId(peer.id)}
+                style={({ pressed }) => [styles.emptyLeaveButton, pressed && styles.pressed]}
+                onPress={onLeaveDisconnected}
                 accessibilityRole="button"
-                accessibilityState={{ selected: peer.id === focusedPeer?.id }}
-                accessibilityLabel={`${peer.name}'s screen${peer.id === focusedPeer?.id ? ", focused" : ", select to watch"}`}
               >
-                <View style={styles.streamLiveDot} />
-                <View style={styles.streamChoiceCopy}>
-                  <Text style={styles.streamChoiceName} numberOfLines={1}>{peer.name}</Text>
-                  <Text style={styles.streamChoiceStatus}>
-                    {peer.id === focusedPeer?.id ? "Focused" : "Select to watch"}
-                  </Text>
-                </View>
+                <Text style={styles.leaveText}>My rooms</Text>
               </Pressable>
-            ))}
-          </ScrollView>
+            ) : null}
+          </View>
         ) : null}
 
-        <View style={[styles.videoGrid, (localStream || focusedStream) && styles.videoGridActive]}>
-          {!focusedStream && !localStream ? (
-            <View style={styles.empty}>
-              <View style={styles.screenOutline}>
-                <ScreenIcon size={38} color="#77776f" />
-                <View style={styles.scanLine} />
+        <View style={styles.callStage}>
+          {mainSource === null ? (
+            <ParticipantsGrid
+              localName={name}
+              localStream={localStream}
+              localMicMuted={voiceState.micMuted}
+              peers={peers}
+              focusedPeerId={focusedPeerId}
+              focusedStream={focusedStream}
+              onFocusPeer={focusRemotePeer}
+              onFocusLocal={focusLocalScreen}
+              onOpenParticipants={() => setParticipantsVisible(true)}
+            />
+          ) : null}
+
+          {mainSource === "remote" && focusedPeer ? (
+            focusedStream ? (
+              <VideoTile
+                stream={focusedStream}
+                name={focusedPeer.name}
+                state={focusedStreamId ? connectionStates[focusedStreamId] ?? null : null}
+                stats={focusedStreamId ? remoteStats[focusedStreamId] ?? null : null}
+                statsEnabled={statsEnabled}
+                variant="stage"
+                volume={volume}
+                muted={!audioPreferencesReady || muted}
+                onVolumeChange={changeVolume}
+                onToggleMute={toggleMute}
+                onToggleStats={toggleStats}
+                onFullscreen={() => setFullscreenTarget({ type: "remote", peerId: focusedPeer.id })}
+                onMinimize={minimizeStage}
+                onStopWatching={stopWatchingRemote}
+              />
+            ) : (
+              <View style={styles.connectingStage}>
+                <View style={styles.screenOutline}>
+                  <ScreenIcon size={34} color="#77776f" />
+                  <View style={styles.scanLine} />
+                </View>
+                <Text style={styles.emptyTitle}>Connecting to {focusedPeer.name}'s screen…</Text>
+                <Text style={styles.emptyBody}>Only this screen is being received. You can switch or stop watching at any time.</Text>
+                <View style={styles.waitingActions}>
+                  <Pressable
+                    style={({ pressed }) => [styles.stageAction, pressed && styles.pressed]}
+                    onPress={minimizeStage}
+                    accessibilityRole="button"
+                    accessibilityLabel="Minimize screen to the participant grid"
+                  >
+                    <Text style={styles.stageActionText}>Participant grid</Text>
+                  </Pressable>
+                  <Pressable
+                    style={({ pressed }) => [styles.stopWatchingAction, pressed && styles.pressed]}
+                    onPress={stopWatchingRemote}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Stop watching ${focusedPeer.name}'s screen`}
+                  >
+                    <CloseIcon size={16} color={colors.redText} />
+                    <Text style={styles.stopWatchingText}>Stop watching</Text>
+                  </Pressable>
+                </View>
               </View>
-              <Text style={styles.emptyTitle}>
-                {status === "reconnecting"
-                  ? "Reconnecting to the room..."
-                  : status === "disconnected"
-                    ? "Connection lost"
-                    : focusedPeer
-                      ? `Connecting to ${focusedPeer.name}'s screen...`
-                      : activeSharers.length > 0
-                        ? "Choose a screen to focus"
-                      : status === "connected"
-                        ? "No screen on air"
-                        : "Connecting to the room..."}
-              </Text>
-              <Text style={styles.emptyBody}>
-                {status === "reconnecting"
-                  ? "Your session will resume automatically when the connection returns."
-                  : status === "disconnected"
-                    ? "Leave and rejoin the room to start a new session."
-                    : focusedPeer
-                      ? "Checking available peer and relay paths."
-                      : activeSharers.length > 0
-                        ? "Select one live screen to receive its video and audio."
-                      : "Invite someone, then choose a window or display to begin."}
-              </Text>
-              {status === "disconnected" ? (
-                <Pressable style={({ pressed }) => [styles.emptyLeaveButton, pressed && styles.pressed]} onPress={onLeaveDisconnected} accessibilityRole="button">
-                  <Text style={styles.leaveText}>My rooms</Text>
-                </Pressable>
-              ) : null}
+            )
+          ) : null}
+
+          {mainSource === "local" && localStream ? (
+            <View style={styles.localStage}>
+              <VideoTile
+                stream={localStream}
+                name={name}
+                local
+                qualityLabel={localQuality}
+                outboundStats={localOutboundStats}
+                statsEnabled={statsEnabled}
+                variant="stage"
+                onToggleStats={toggleStats}
+                onFullscreen={() => setFullscreenTarget({ type: "local" })}
+              />
+              <Pressable
+                style={({ pressed }) => [styles.localMinimize, pressed && styles.pressed]}
+                onPress={minimizeStage}
+                accessibilityRole="button"
+                accessibilityLabel="Minimize your screen to the participant grid"
+              >
+                <UsersIcon size={17} color={colors.paper} />
+              </Pressable>
             </View>
           ) : null}
 
-          <View style={[styles.tileGrid, wide && styles.tileGridWide]}>
-            {focusedPeer && focusedStream && (
-              <View style={[styles.tileWrap, wide && styles.tileWrapWide]}>
+          {previewSource === "local" && localStream ? (
+            <View style={[styles.preview, { width: Math.min(width * 0.34, 200) }]}>
+              <VideoTile
+                stream={localStream}
+                name={name}
+                local
+                statsEnabled={statsEnabled}
+                variant="preview"
+                onSelect={focusLocalScreen}
+                onFullscreen={() => setFullscreenTarget({ type: "local" })}
+              />
+            </View>
+          ) : null}
+
+          {previewSource === "remote" && focusedPeer ? (
+            <View style={[styles.preview, { width: Math.min(width * 0.34, 200) }]}>
+              {focusedStream ? (
                 <VideoTile
                   stream={focusedStream}
                   name={focusedPeer.name}
                   state={focusedStreamId ? connectionStates[focusedStreamId] ?? null : null}
                   stats={focusedStreamId ? remoteStats[focusedStreamId] ?? null : null}
                   statsEnabled={statsEnabled}
-                  volume={volume}
-                  muted={!audioPreferencesReady || muted}
-                  onVolumeChange={changeVolume}
-                  onToggleMute={toggleMute}
-                  onToggleStats={toggleStats}
-                  onFullscreen={() => setFullscreenPeerId(focusedPeer.id)}
+                  variant="preview"
+                  onSelect={() => focusRemotePeer(focusedPeer.id)}
+                  onFullscreen={() => setFullscreenTarget({ type: "remote", peerId: focusedPeer.id })}
+                  onStopWatching={stopWatchingRemote}
                 />
-              </View>
-            )}
-
-            {localStream ? (
-              <View style={[styles.tileWrap, wide && styles.tileWrapWide]}>
-                <VideoTile
-                  stream={localStream}
-                  name={name}
-                  local
-                  qualityLabel={localQuality}
-                  outboundStats={localOutboundStats}
-                  statsEnabled={statsEnabled}
-                  onToggleStats={toggleStats}
-                />
-              </View>
-            ) : null}
-          </View>
+              ) : (
+                <View style={styles.previewWaiting} accessibilityLiveRegion="polite">
+                  <ScreenIcon size={16} color={colors.muted} />
+                  <Text style={styles.previewWaitingText} numberOfLines={2}>Connecting to {focusedPeer.name}'s screen…</Text>
+                  <Pressable
+                    style={({ pressed }) => [styles.previewStop, pressed && styles.pressed]}
+                    onPress={stopWatchingRemote}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Stop watching ${focusedPeer.name}'s screen`}
+                  >
+                    <CloseIcon size={15} color={colors.redText} />
+                  </Pressable>
+                </View>
+              )}
+            </View>
+          ) : null}
         </View>
-      </ScrollView>
+      </View>
 
       <VoiceAudio
         tracks={remoteVoiceTracks}
@@ -425,18 +546,23 @@ export function RoomScreen({
       />
 
       <FullscreenView
-        visible={fullscreenPeerId !== null}
-        stream={fullscreenStreamId ? remoteStreams[fullscreenStreamId] ?? null : null}
-        connectionState={fullscreenStreamId ? connectionStates[fullscreenStreamId] ?? null : null}
-        name={fullscreenPeer?.name ?? fullscreenPeerId?.slice(0, 4) ?? ""}
-        stats={fullscreenStreamId ? remoteStats[fullscreenStreamId] ?? null : null}
+        visible={fullscreenTarget !== null}
+        local={fullscreenTarget?.type === "local"}
+        stream={fullscreenStream}
+        connectionState={fullscreenTarget?.type === "remote" && fullscreenStreamId
+          ? connectionStates[fullscreenStreamId] ?? null
+          : null}
+        name={fullscreenTarget?.type === "local" ? name : fullscreenPeer?.name ?? ""}
+        stats={fullscreenTarget?.type === "remote" && fullscreenStreamId
+          ? remoteStats[fullscreenStreamId] ?? null
+          : null}
         statsEnabled={statsEnabled}
         volume={volume}
         muted={!audioPreferencesReady || muted}
         onVolumeChange={changeVolume}
         onToggleMute={toggleMute}
         onToggleStats={toggleStats}
-        onClose={() => setFullscreenPeerId(null)}
+        onClose={() => setFullscreenTarget(null)}
       />
     </SafeAreaView>
   );
@@ -445,59 +571,62 @@ export function RoomScreen({
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: colors.room },
   header: { borderBottomWidth: 1, borderBottomColor: colors.line, paddingHorizontal: 16 },
-  headerTop: { minHeight: 60, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  headerTop: { minHeight: 48, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   headerActions: { flexDirection: "row", alignItems: "center", gap: 8 },
   iconButton: { minHeight: 40, minWidth: 44, paddingHorizontal: 11, borderWidth: 1, borderColor: "#373732", borderRadius: radii.control, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7 },
   iconButtonText: { color: "#b5b5ad", fontSize: 11, fontWeight: "600" },
-  leaveButton: { minHeight: 40, paddingHorizontal: 12, borderWidth: 1, borderColor: "rgba(255,93,74,0.35)", borderRadius: radii.control, alignItems: "center", justifyContent: "center" },
+  leaveButton: { minHeight: 40, paddingHorizontal: 10, borderWidth: 1, borderColor: "rgba(255,93,74,0.35)", borderRadius: radii.control, alignItems: "center", justifyContent: "center" },
   leaveText: { color: colors.redText, fontSize: 11, fontWeight: "600" },
-  headerMeta: { minHeight: 39, borderTopWidth: 1, borderTopColor: "#23231f", flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  roomIdentity: { minWidth: 0, flexDirection: "row", alignItems: "center", gap: 9, flexShrink: 1 },
-  roomLabel: { ...technicalText, color: colors.dim, fontSize: 8 },
+  headerMeta: { minHeight: 30, borderTopWidth: 1, borderTopColor: "#23231f", flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  roomIdentity: { minWidth: 0, flexDirection: "row", alignItems: "center", gap: 7, flexShrink: 1 },
+  roomLabel: { ...technicalText, color: colors.dim, fontSize: 7 },
   roomId: { color: "#bbb9af", fontFamily: "monospace", fontSize: 10, flexShrink: 1 },
-  metaRight: { flexDirection: "row", alignItems: "center", gap: 14, marginLeft: 12 },
-  socketState: { flexDirection: "row", alignItems: "center", gap: 7 },
+  metaRight: { flexDirection: "row", alignItems: "center", gap: 10, marginLeft: 8 },
+  socketState: { flexDirection: "row", alignItems: "center", gap: 6 },
   statusDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#77776f" },
   statusConnected: { backgroundColor: colors.acid, shadowColor: colors.acid, shadowOpacity: 0.5, shadowRadius: 5 },
   statusReconnecting: { backgroundColor: "#ffb13b" },
   statusDisconnected: { backgroundColor: colors.red },
-  statusText: { ...technicalText, color: "#77776f", fontSize: 8 },
-  peopleCompact: { flexDirection: "row", alignItems: "center", gap: 5 },
-  peopleCompactText: { color: colors.paper, fontSize: 10, fontWeight: "700" },
+  statusText: { ...technicalText, color: "#77776f", fontSize: 7 },
+  peopleCompact: { flexDirection: "row", alignItems: "center", gap: 4 },
+  peopleCompactText: { color: colors.paper, fontSize: 9, fontWeight: "700" },
   errorBanner: { marginHorizontal: 16, marginTop: 12, paddingLeft: 13, minHeight: 44, borderWidth: 1, borderColor: "rgba(255,93,74,0.35)", backgroundColor: "rgba(255,93,74,0.08)", flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   errorText: { color: colors.redText, fontSize: 12, flex: 1 },
   errorClose: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
-  content: { flex: 1 },
-  stage: { paddingHorizontal: 16, paddingTop: 28, paddingBottom: 102 },
-  stageHeading: { flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between", gap: 12, marginBottom: 19 },
+  content: { flex: 1, minHeight: 0, paddingBottom: 92 },
+  stage: { flex: 1, minHeight: 0, paddingHorizontal: 12, paddingTop: 10 },
+  stageHeading: { minHeight: 52, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 8 },
   stageHeadingCopy: { flex: 1 },
-  eyebrow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 },
+  eyebrow: { flexDirection: "row", alignItems: "center", gap: 7, marginBottom: 3 },
   acidDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.acid },
-  eyebrowText: { ...technicalText, color: colors.muted, fontSize: 9 },
-  stageTitle: { color: colors.paper, fontSize: 27, lineHeight: 31, fontWeight: "800", letterSpacing: -1.25 },
-  peopleCount: { flexDirection: "row", alignItems: "center", gap: 7, borderWidth: 1, borderStyle: "solid", borderColor: "#32322d", padding: 5 },
+  eyebrowText: { ...technicalText, color: colors.muted, fontSize: 8 },
+  stageTitle: { color: colors.paper, fontSize: 18, lineHeight: 22, fontWeight: "800", letterSpacing: -0.5 },
+  participantsControl: { position: "relative", zIndex: 5 },
+  peopleCount: { minHeight: 40, paddingHorizontal: 9, flexDirection: "row", alignItems: "center", gap: 6, borderWidth: 1, borderColor: "#32322d", borderRadius: radii.control },
   peopleText: { color: "#85857d", fontSize: 10 },
-  peopleStrong: { color: colors.paper, fontWeight: "800" },
-  streamSelector: { flexGrow: 0, marginBottom: 9 },
-  streamSelectorContent: { gap: 8, paddingRight: 2 },
-  streamChoice: { width: 174, minHeight: 54, paddingHorizontal: 10, borderWidth: 1, borderColor: "#373732", backgroundColor: "#171715", flexDirection: "row", alignItems: "center", gap: 9 },
-  streamChoiceSelected: { borderColor: "rgba(201,255,66,0.7)", backgroundColor: "rgba(201,255,66,0.08)" },
-  streamLiveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.red },
-  streamChoiceCopy: { flex: 1, minWidth: 0 },
-  streamChoiceName: { color: colors.paper, fontSize: 11, fontWeight: "700" },
-  streamChoiceStatus: { ...technicalText, color: colors.muted, fontSize: 8, marginTop: 3 },
-  videoGrid: { borderWidth: 1, borderColor: "#32322d", backgroundColor: colors.surface, padding: 7, alignItems: "stretch", justifyContent: "center" },
-  videoGridActive: { justifyContent: "flex-start" },
-  tileGrid: { gap: 8 },
-  tileGridWide: { flexDirection: "row", flexWrap: "wrap" },
-  tileWrap: { width: "100%", minHeight: 220 },
-  tileWrapWide: { width: "49%" },
-  empty: { minHeight: 312, alignItems: "center", justifyContent: "center", paddingHorizontal: 20 },
-  screenOutline: { width: 104, height: 74, borderWidth: 1, borderColor: "#4a4a44", alignItems: "center", justifyContent: "center", marginBottom: 28, overflow: "hidden" },
+  peopleStrong: { color: colors.paper, fontSize: 11, fontWeight: "800" },
+  connectionNotice: { minHeight: 38, paddingHorizontal: 14, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: "#3b3b36", backgroundColor: "#1a1a17", flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
+  connectionNoticeDisconnected: { borderBottomColor: "rgba(255,93,74,0.35)" },
+  connectionNoticeText: { flex: 1, color: "#e5bf6b", fontSize: 10 },
+  connectionNoticeError: { color: colors.redText },
+  callStage: { flex: 1, minHeight: 220, position: "relative", overflow: "hidden", borderWidth: 1, borderColor: "#32322d", backgroundColor: colors.surface, padding: 7 },
+  localStage: { flex: 1, minHeight: 0, position: "relative" },
+  localMinimize: { position: "absolute", zIndex: 5, top: 12, right: 12, width: 44, height: 44, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: "#3d3d36", borderRadius: radii.control, backgroundColor: "rgba(16,16,14,0.9)" },
+  connectingStage: { flex: 1, minHeight: 0, alignItems: "center", justifyContent: "center", paddingHorizontal: 18 },
+  screenOutline: { width: 92, height: 64, borderWidth: 1, borderColor: "#4a4a44", alignItems: "center", justifyContent: "center", marginBottom: 20, overflow: "hidden" },
   scanLine: { position: "absolute", left: 0, right: 0, top: "50%", height: 1, backgroundColor: colors.acid, opacity: 0.45 },
-  emptyTitle: { color: colors.paper, fontSize: 19, fontWeight: "700", marginBottom: 9, textAlign: "center" },
-  emptyBody: { color: "#7e7e76", fontSize: 12, lineHeight: 19, textAlign: "center", maxWidth: 340 },
-  emptyLeaveButton: { minHeight: 44, marginTop: 22, paddingHorizontal: 18, borderWidth: 1, borderColor: "rgba(255,93,74,0.35)", borderRadius: radii.control, alignItems: "center", justifyContent: "center" },
+  emptyTitle: { color: colors.paper, fontSize: 16, fontWeight: "700", marginBottom: 8, textAlign: "center" },
+  emptyBody: { color: "#7e7e76", fontSize: 11, lineHeight: 17, textAlign: "center", maxWidth: 340 },
+  waitingActions: { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: 8, marginTop: 16 },
+  stageAction: { minHeight: 44, paddingHorizontal: 13, borderWidth: 1, borderColor: "#41413b", borderRadius: radii.control, alignItems: "center", justifyContent: "center" },
+  stageActionText: { color: colors.paper, fontSize: 10, fontWeight: "600" },
+  stopWatchingAction: { minHeight: 44, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingHorizontal: 12, borderWidth: 1, borderColor: "rgba(255,93,74,0.35)", borderRadius: radii.control },
+  stopWatchingText: { color: colors.redText, fontSize: 10, fontWeight: "600" },
+  preview: { position: "absolute", zIndex: 4, right: 12, bottom: 76, aspectRatio: 16 / 10, maxHeight: "42%", overflow: "hidden", borderWidth: 1, borderColor: "#56564e", borderRadius: radii.control, backgroundColor: colors.black },
+  previewWaiting: { flex: 1, minHeight: 0, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, padding: 9, backgroundColor: "#11110f" },
+  previewWaitingText: { flex: 1, color: colors.paper, fontSize: 9, textAlign: "center" },
+  previewStop: { width: 36, height: 36, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: "rgba(255,93,74,0.35)", borderRadius: radii.control },
+  emptyLeaveButton: { minHeight: 40, paddingHorizontal: 12, borderWidth: 1, borderColor: "rgba(255,93,74,0.35)", borderRadius: radii.control, alignItems: "center", justifyContent: "center" },
   pressed: { opacity: 0.7 },
   disabled: { opacity: 0.45 },
 });
