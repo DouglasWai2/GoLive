@@ -73,6 +73,7 @@ export function VideoTile({ stream, name, local = false, state, qualityLabel, st
   const [audioBlocked, setAudioBlocked] = useState(false);
   const [playbackBlocked, setPlaybackBlocked] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
+  const showStats = variant === "stage" || isFullscreen;
   const hasAudio = stream.getAudioTracks().length > 0;
   const playbackPhase = useVideoPlaybackState(videoRef, stream, !local);
 
@@ -304,13 +305,13 @@ export function VideoTile({ stream, name, local = false, state, qualityLabel, st
         {local && qualityLabel && <span className="peer-state">{qualityLabel}</span>}
         {state && <span className="peer-state">{state}</span>}
       </div>}
-      {!local && stats && <StreamStats stats={stats} />}
-      {variant !== "card" && local && statsEnabled && outboundStats.length > 0 && (
+      {showStats && !local && stats && <StreamStats stats={stats} />}
+      {showStats && local && statsEnabled && outboundStats.length > 0 && (
         <StreamStats outbound={outboundStats} />
       )}
-      {(onToggleStats || (!local && onVolumeChange && onToggleMute) || onFullscreen) && (
+      {((showStats && onToggleStats) || (!local && onVolumeChange && onToggleMute) || onFullscreen) && (
         <div className="tile-controls tile-controls-bottom">
-          {onToggleStats && <StatsButton statsEnabled={statsEnabled} toggleStats={onToggleStats} />}
+          {showStats && onToggleStats && <StatsButton statsEnabled={statsEnabled} toggleStats={onToggleStats} />}
           {!local && onVolumeChange && onToggleMute && (
             <VolumeControl
               volume={volume}
