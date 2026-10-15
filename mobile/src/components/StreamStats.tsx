@@ -32,7 +32,6 @@ export function StreamStats(props: StreamStatsProps) {
         <ScrollView nestedScrollEnabled showsVerticalScrollIndicator={false} contentContainerStyle={styles.outboundContent}>
           {props.outbound.map(({ peerId, peerName, stats }) => (
             <View style={styles.row} key={peerId}>
-            <Stat label="Sending to" value={peerName} />
             <Stat
               label="Resolution"
               value={

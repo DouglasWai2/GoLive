@@ -4,7 +4,7 @@ dist/
 .env.local
 *.log
 .DS_Store
-
+.agents
 .expo
 
 /vendor/react-native-webrtc/android/.gradle/

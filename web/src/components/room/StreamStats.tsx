@@ -38,7 +38,6 @@ export function StreamStats(props: StreamStatsProps) {
       <div className="stream-stats outbound-stream-stats">
         {props.outbound.map(({ peerId, peerName, stats }) => (
           <div className="outbound-stream-stats-row" key={peerId}>
-            <Stat label="Sending to">{peerName}</Stat>
             <Stat label="Resolution">
               {stats.width !== null && stats.height !== null
                 ? `${stats.width}×${stats.height}`

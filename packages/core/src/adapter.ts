@@ -88,12 +88,12 @@ export async function detectHardwareAcceleration(): Promise<HardwareAcceleration
 }
 
 const videoCodecPriority: Record<string, number> = {
-  H264: 0,
-  VP9: 1,
-  VP8: 2,
-  AV1: 3,
-  AV1X: 3,
-  HEVC: 4,
+  AV1: 0,
+  AV1X: 0,
+  H264: 1,
+  HEVC: 2,
+  VP8: 3,
+  VP9: 4,
 };
 
 /**
