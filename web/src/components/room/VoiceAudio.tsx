@@ -6,6 +6,7 @@ const DEFAULT_VOICE_SETTINGS: VoicePlaybackSettings = { volume: 1, muted: false 
 type VoiceAudioProps = {
   streams: Record<string, MediaStream>;
   deafened: boolean;
+  globalVolume: number;
   settings: Record<string, VoicePlaybackSettings>;
 };
 
@@ -13,11 +14,12 @@ type RemoteVoiceProps = {
   peerId: string;
   stream: MediaStream;
   deafened: boolean;
+  globalVolume: number;
   settings: VoicePlaybackSettings;
   onBlocked: (peerId: string, blocked: boolean) => void;
 };
 
-function RemoteVoice({ peerId, stream, deafened, settings, onBlocked }: RemoteVoiceProps) {
+function RemoteVoice({ peerId, stream, deafened, globalVolume, settings, onBlocked }: RemoteVoiceProps) {
   const audioRef = useRef<HTMLAudioElement>(null);
 
   useEffect(() => {
@@ -36,14 +38,14 @@ function RemoteVoice({ peerId, stream, deafened, settings, onBlocked }: RemoteVo
     const audio = audioRef.current;
     if (!audio) return;
 
-    audio.volume = settings.volume;
+    audio.volume = settings.volume * globalVolume;
     audio.muted = deafened || settings.muted;
     audio.dataset.individuallyMuted = String(settings.muted);
 
     if (deafened || settings.muted) {
       onBlocked(peerId, false);
     }
-  }, [deafened, onBlocked, peerId, settings.muted, settings.volume]);
+  }, [deafened, globalVolume, onBlocked, peerId, settings.muted, settings.volume]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -64,7 +66,7 @@ function RemoteVoice({ peerId, stream, deafened, settings, onBlocked }: RemoteVo
   return <audio ref={audioRef} autoPlay playsInline data-voice-peer={peerId} />;
 }
 
-export function VoiceAudio({ streams, deafened, settings }: VoiceAudioProps) {
+export function VoiceAudio({ streams, deafened, globalVolume, settings }: VoiceAudioProps) {
   const [blockedPeers, setBlockedPeers] = useState<Set<string>>(new Set());
 
   const setBlocked = useCallback((peerId: string, blocked: boolean) => {
@@ -112,6 +114,7 @@ export function VoiceAudio({ streams, deafened, settings }: VoiceAudioProps) {
           peerId={peerId}
           stream={stream}
           deafened={deafened}
+          globalVolume={globalVolume}
           settings={settings[peerId] ?? DEFAULT_VOICE_SETTINGS}
           onBlocked={setBlocked}
         />

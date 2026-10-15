@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRoom } from "../hooks/useRoom";
 import type { ShareSettings } from "@golive/core";
 import { formatBitrate, formatResolution } from "@golive/core";
@@ -7,6 +7,7 @@ import { RoomHeader } from "./room/RoomHeader";
 import { ErrorBanner } from "./room/ErrorBanner";
 import { VideoStage } from "./room/VideoStage";
 import { ControlDock } from "./room/ControlDock";
+import type { ParticipantsPanelHandle } from "./room/ParticipantsPanel";
 import { VoiceAudio } from "./room/VoiceAudio";
 import { useSpeakingPeers } from "../hooks/useSpeakingPeers";
 import { playNotificationSound } from "../utils/notificationSounds";
@@ -34,8 +35,11 @@ export function Room({
 }: RoomProps) {
   const room = useRoom(roomId, name, token, onSessionRejected, onSessionReplaced);
   const [displayName, setDisplayName] = useState(name);
+  const [participantsOpen, setParticipantsOpen] = useState(false);
+  const participantsPanelRef = useRef<ParticipantsPanelHandle>(null);
   const [shareSettings, setShareSettings] = useState<ShareSettings | null>(null);
   const [deafened, setDeafened] = useState(false);
+  const [globalVoiceVolume, setGlobalVoiceVolume] = useState(1);
   const [focusedPeerId, setFocusedPeerId] = useState<string | null>(null);
   const [stoppedWatchingRemote, setStoppedWatchingRemote] = useState(false);
   const [stageSource, setStageSource] = useState<CallStageSource>("remote");
@@ -134,7 +138,10 @@ export function Room({
       )}
 
       <VideoStage
+        participantsPanelRef={participantsPanelRef}
+        onParticipantsOpenChange={setParticipantsOpen}
         localStream={room.localStream}
+        localViewerCount={room.localViewerCount}
         peers={room.peers}
         focusedPeerId={focusedPeerId}
         onFocusPeer={focusPeer}
@@ -157,15 +164,20 @@ export function Room({
         onLeaveDisconnected={onLeaveDisconnected}
       />
 
-      <VoiceAudio streams={room.remoteVoiceStreams} deafened={deafened} settings={voicePlaybackSettings} />
+      <VoiceAudio streams={room.remoteVoiceStreams} deafened={deafened} globalVolume={globalVoiceVolume} settings={voicePlaybackSettings} />
 
       <ControlDock
         name={displayName}
+        participantsCount={room.peers.length + 1}
+        participantsOpen={participantsOpen}
+        onOpenParticipants={(returnFocusTo) => participantsPanelRef.current?.open(returnFocusTo)}
         status={room.status}
         localStream={room.localStream}
         isStartingShare={room.isStartingShare}
         voiceState={room.voiceState}
         deafened={deafened}
+        globalVoiceVolume={globalVoiceVolume}
+        onGlobalVoiceVolumeChange={setGlobalVoiceVolume}
         onStartShare={startShare}
         onStopShare={stopShare}
         onSetMicrophoneMuted={(muted) => void room.setMicrophoneMuted(muted)}

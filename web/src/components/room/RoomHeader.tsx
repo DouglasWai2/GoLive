@@ -20,6 +20,7 @@ export function RoomHeader({ roomId, token, status }: RoomHeaderProps) {
     if (creating) return;
 
     setCreating(true);
+    setCopied(false);
     setError(false);
 
     try {
@@ -54,10 +55,10 @@ export function RoomHeader({ roomId, token, status }: RoomHeaderProps) {
       </div>
       <div className="header-actions">
         <span className={`socket-state ${status}`}><i />{status}</span>
-        <button type="button" className={`icon-button header-invite ${copied ? "is-copied" : ""}`} onClick={copyInvite} disabled={creating} title={creating ? "Creating invite" : copied ? "Invite copied" : "Copy invite"} aria-label={creating ? "Creating invite" : copied ? "Invite copied" : "Copy invite"}>
-          {copied ? <CheckIcon /> : <CopyIcon />}
+        <button type="button" className={`icon-button header-invite ${copied && !creating ? "is-copied" : ""}`} onClick={copyInvite} disabled={creating} aria-busy={creating} title={creating ? "Creating invite" : copied ? "Invite copied" : "Copy invite"} aria-label={creating ? "Creating invite" : copied ? "Invite copied" : "Copy invite"}>
+          {creating ? <span className="room-restore-spinner invite-spinner" aria-hidden="true" /> : copied ? <CheckIcon /> : <CopyIcon />}
         </button>
-        <span className="sr-only" role="status">{copied ? "Invite copied" : ""}</span>
+        <span className="sr-only" role="status" aria-live="polite">{creating ? "Creating invite…" : copied ? "Invite copied" : error ? "Could not create invite" : ""}</span>
         {error && <span className="invite-error">Could not create invite</span>}
       </div>
     </header>

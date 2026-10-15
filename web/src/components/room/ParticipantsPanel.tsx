@@ -1,6 +1,6 @@
-import { forwardRef, useImperativeHandle, useRef, useState } from "react";
+import { forwardRef, useImperativeHandle, useRef } from "react";
 import type { CallStageSource, Peer, VoicePlaybackSettings } from "../../types";
-import { CloseIcon, EyeOffIcon, ScreenIcon, ScreenOffIcon, UsersIcon, VolumeIcon, VolumeMutedIcon } from "../icons";
+import { CloseIcon, ScreenIcon, ScreenOffIcon, VolumeIcon, VolumeMutedIcon } from "../icons";
 import { VolumeControl } from "./VolumeControl";
 import { LOCAL_SPEAKER_ID } from "../../hooks/useSpeakingPeers";
 
@@ -24,9 +24,10 @@ type ParticipantsPanelProps = {
   onScreenVolumeChange: (volume: number) => void;
   onToggleScreenMute: () => void;
   onStopWatchingRemote: () => void;
+  onOpenChange: (open: boolean) => void;
 };
 
-export type ParticipantsPanelHandle = { open: () => void };
+export type ParticipantsPanelHandle = { open: (returnFocusTo?: HTMLElement) => void };
 
 const DEFAULT_VOICE_SETTINGS: VoicePlaybackSettings = { volume: 1, muted: false };
 
@@ -50,19 +51,19 @@ export const ParticipantsPanel = forwardRef<ParticipantsPanelHandle, Participant
   onScreenVolumeChange,
   onToggleScreenMute,
   onStopWatchingRemote,
+  onOpenChange,
 }: ParticipantsPanelProps, ref) {
   const dialogRef = useRef<HTMLDialogElement>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
-  const [open, setOpen] = useState(false);
   const sharingCount = peers.filter((peer) => peer.sharing && peer.streamId).length + Number(Boolean(localStream));
 
   const close = () => dialogRef.current?.close();
-  const openDialog = () => {
-    if (dialogRef.current?.open) return;
-    returnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : triggerRef.current;
-    dialogRef.current?.showModal();
-    setOpen(true);
+  const openDialog = (returnFocusTo?: HTMLElement) => {
+    const dialog = dialogRef.current;
+    if (!dialog || dialog.open) return;
+    returnFocusRef.current = returnFocusTo ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
+    dialog.showModal();
+    onOpenChange(true);
   };
   useImperativeHandle(ref, () => ({ open: openDialog }));
   const selectRemote = (peerId: string) => {
@@ -76,26 +77,15 @@ export const ParticipantsPanel = forwardRef<ParticipantsPanelHandle, Participant
 
   return (
     <>
-      <button
-        ref={triggerRef}
-        type="button"
-        className="people-count"
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        aria-label={`People in the call: ${peers.length + 1}`}
-        title="People in the call"
-        onClick={openDialog}
-      >
-        <UsersIcon /> <strong>{peers.length + 1}</strong>
-      </button>
       <dialog
         ref={dialogRef}
+        id="participants-dialog"
         className="participants-dialog"
         aria-labelledby="participants-title"
         onClose={() => {
-          setOpen(false);
+          onOpenChange(false);
           if (returnFocusRef.current?.isConnected) returnFocusRef.current.focus();
-          else triggerRef.current?.focus();
+          returnFocusRef.current = null;
         }}
       >
         <div className="participants-dialog-heading">
@@ -177,7 +167,7 @@ export const ParticipantsPanel = forwardRef<ParticipantsPanelHandle, Participant
                   </div>
                 )}
                 {isWatched && !isOnStage && (
-                  <button type="button" className="participant-stop-watching" onClick={() => { onStopWatchingRemote(); close(); }} title={`Stop watching ${peer.name}'s screen`} aria-label={`Stop watching ${peer.name}'s screen`}><EyeOffIcon size={18} /> Stop watching</button>
+                  <button type="button" className="participant-stop-watching" onClick={() => { onStopWatchingRemote(); close(); }} title={`Stop watching ${peer.name}'s screen`} aria-label={`Stop watching ${peer.name}'s screen`}><CloseIcon size={18} /> Stop watching</button>
                 )}
               </li>
             );

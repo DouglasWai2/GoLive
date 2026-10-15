@@ -14,8 +14,8 @@ export function createSessionDeps(onMicrophoneStream?: (stream: MediaStream) => 
       ? {
           ...webAdapter,
           getUserMedia: async (constraints) => {
-            const stream = await navigator.mediaDevices.getUserMedia(constraints);
-            onMicrophoneStream(stream);
+            const stream = await webAdapter.getUserMedia!(constraints);
+            onMicrophoneStream(stream as unknown as MediaStream);
             return stream;
           },
         }

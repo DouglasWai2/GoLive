@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { PeerConnectionState, RemoteVideoStats } from "@golive/core";
-import { EyeOffIcon, FullscreenExitIcon, FullscreenIcon, MinimizeIcon } from "./icons";
+import { CloseIcon, FullscreenExitIcon, FullscreenIcon, MinimizeIcon, UsersIcon } from "./icons";
 import { StreamStats, type OutboundStatsEntry } from "./room/StreamStats";
 import StatsButton from "./room/StatsButton";
 import { VolumeControl } from "./room/VolumeControl";
@@ -11,6 +11,7 @@ type VideoTileProps = {
   stream: MediaStream;
   name: string;
   local?: boolean;
+  viewerCount?: number;
   state?: PeerConnectionState;
   qualityLabel?: string | null;
   stats?: RemoteVideoStats | null;
@@ -66,7 +67,7 @@ async function startPlayback(
   }
 }
 
-export function VideoTile({ stream, name, local = false, state, qualityLabel, stats, outboundStats = [], volume = 1, muted = false, statsEnabled = true, fullscreenId, isFullscreen = false, variant = "stage", onVolumeChange, onToggleMute, onToggleStats, onFullscreen, onMinimize, onStopWatching }: VideoTileProps) {
+export function VideoTile({ stream, name, local = false, viewerCount, state, qualityLabel, stats, outboundStats = [], volume = 1, muted = false, statsEnabled = true, fullscreenId, isFullscreen = false, variant = "stage", onVolumeChange, onToggleMute, onToggleStats, onFullscreen, onMinimize, onStopWatching }: VideoTileProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const tileRef = useRef<HTMLElement>(null);
   const controlsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -74,6 +75,7 @@ export function VideoTile({ stream, name, local = false, state, qualityLabel, st
   const [playbackBlocked, setPlaybackBlocked] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
   const showStats = variant === "stage" || isFullscreen;
+  const showViewerCount = local && viewerCount !== undefined;
   const hasAudio = stream.getAudioTracks().length > 0;
   const playbackPhase = useVideoPlaybackState(videoRef, stream, !local);
 
@@ -268,6 +270,7 @@ export function VideoTile({ stream, name, local = false, state, qualityLabel, st
         if (isFullscreen && event.pointerType !== "touch") scheduleControlsHide();
       }}
       onPointerDown={(event) => {
+        if (event.pointerType === "touch" && event.target instanceof Element && event.target.closest(".call-stage-preview")) return;
         if (isFullscreen && event.pointerType !== "touch") {
           revealControls();
           scheduleControlsHide();
@@ -338,8 +341,8 @@ export function VideoTile({ stream, name, local = false, state, qualityLabel, st
           )}
         </div>
       )}
-      {(onMinimize || onStopWatching) && (
-        <div className="tile-controls tile-controls-top">
+      {(onMinimize || onStopWatching || showViewerCount) && (
+        <div className={`tile-controls tile-controls-top ${showViewerCount ? "has-viewer-count" : ""}`}>
           {onMinimize && (
             <button type="button" className="icon-button" onClick={onMinimize} title="Minimize stream" aria-label="Minimize stream">
               <MinimizeIcon />
@@ -347,8 +350,15 @@ export function VideoTile({ stream, name, local = false, state, qualityLabel, st
           )}
           {onStopWatching && (
             <button type="button" className="icon-button stop-watching-icon" onClick={onStopWatching} title={`Stop watching ${name}'s screen`} aria-label={`Stop watching ${name}'s screen`}>
-              <EyeOffIcon />
+              <CloseIcon />
             </button>
+          )}
+          {showViewerCount && (
+            <span className="stream-viewer-count" role="status" aria-atomic="true" title={`${viewerCount} ${viewerCount === 1 ? "viewer" : "viewers"}`}>
+              <UsersIcon size={14} />
+              <strong aria-hidden="true">{viewerCount}</strong>
+              <span className="sr-only">{viewerCount} {viewerCount === 1 ? "viewer is" : "viewers are"} watching your screen</span>
+            </span>
           )}
         </div>
       )}

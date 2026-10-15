@@ -43,6 +43,7 @@ export type RoomSessionCallbacks = {
   onPeerLeft?: (peer: Peer) => void;
   onPeerSharingChanged?: (peer: Peer) => void;
   onLocalStream: (stream: MediaStream | null) => void;
+  onLocalViewerCount?: (count: number) => void;
   onIsStartingShare: (isStarting: boolean) => void;
   onRemoteStream: (peerId: string, stream: MediaStream | null) => void;
   onConnectionState: (peerId: string, state: PeerConnectionState | null) => void;
@@ -251,7 +252,7 @@ export class RoomSession {
     this.focusedStreamId = null;
     this.focusedSubscriptionRefresh = null;
     this.localStreamId = null;
-    this.subscribers.clear();
+    this.clearSubscribers();
 
     this.signalQueues.clear();
     this.voiceSignalQueues.clear();
@@ -817,7 +818,7 @@ export class RoomSession {
 
     this.localStream = null;
     this.localStreamId = null;
-    this.subscribers.clear();
+    this.clearSubscribers();
     this.callbacks.onLocalStream(null);
 
     this.shareSettings = null;
@@ -913,7 +914,7 @@ export class RoomSession {
       this.selfId = "";
       this.sharingAnnounced = false;
       this.localStreamId = null;
-      this.subscribers.clear();
+      this.clearSubscribers();
       this.clearKeepalive();
       this.clearVoiceCandidateBatches();
 
@@ -1125,6 +1126,16 @@ export class RoomSession {
       micMuted: this.micMuted,
       requestingMicrophone: this.requestingMicrophone,
     });
+  }
+
+  private emitLocalViewerCount() {
+    this.callbacks.onLocalViewerCount?.(this.subscribers.size);
+  }
+
+  private clearSubscribers() {
+    if (this.subscribers.size === 0) return;
+    this.subscribers.clear();
+    this.emitLocalViewerCount();
   }
 
   private announceVoiceState() {
@@ -2792,10 +2803,12 @@ export class RoomSession {
       if (message.streamId !== this.localStreamId) return;
 
       if (message.subscribed) {
+        const isNewSubscriber = !this.subscribers.has(message.peerId);
         this.subscribers.add(message.peerId);
+        if (isNewSubscriber) this.emitLocalViewerCount();
         if (this.sharingAnnounced && this.localStream) void this.createOffer(message.peerId);
       } else {
-        this.subscribers.delete(message.peerId);
+        if (this.subscribers.delete(message.peerId)) this.emitLocalViewerCount();
         this.closePeer(message.peerId);
       }
       return;

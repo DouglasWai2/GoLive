@@ -5,8 +5,10 @@ import { LOCAL_SPEAKER_ID } from "../../hooks/useSpeakingPeers";
 import { VideoTile } from "../VideoTile";
 
 type ParticipantsGridProps = {
+  displayMode: "grid" | "stage" | "preview" | "hidden";
   localName: string;
   localStream: MediaStream | null;
+  localViewerCount: number;
   localMicMuted: boolean;
   peers: Peer[];
   focusedPeerId: string | null;
@@ -27,10 +29,12 @@ type ParticipantsGridProps = {
   status: SocketStatus;
   onFocusPeer: (peerId: string) => void;
   onFocusLocal: () => void;
-  onOpenParticipants: () => void;
+  onOpenParticipants: (returnFocusTo: HTMLButtonElement) => void;
+  onMinimizeRemote: () => void;
+  onStopWatchingRemote: () => void;
 };
 
-export function ParticipantsGrid({ localName, localStream, localMicMuted, peers, focusedPeerId, focusedStream, focusedConnectionState, focusedStats, hideFocusedVideo, statsEnabled, volume, muted, onVolumeChange, onToggleMute, onToggleStats, onLocalFullscreen, onRemoteFullscreen, fullscreenPeerId, speakingPeerIds, status, onFocusPeer, onFocusLocal, onOpenParticipants }: ParticipantsGridProps) {
+export function ParticipantsGrid({ displayMode, localName, localStream, localViewerCount, localMicMuted, peers, focusedPeerId, focusedStream, focusedConnectionState, focusedStats, hideFocusedVideo, statsEnabled, volume, muted, onVolumeChange, onToggleMute, onToggleStats, onLocalFullscreen, onRemoteFullscreen, fullscreenPeerId, speakingPeerIds, status, onFocusPeer, onFocusLocal, onOpenParticipants, onMinimizeRemote, onStopWatchingRemote }: ParticipantsGridProps) {
   const gridRef = useRef<HTMLDivElement>(null);
   const previousPositions = useRef<Map<string, DOMRect>>(new Map());
   const animations = useRef<Map<string, Animation>>(new Map());
@@ -109,6 +113,7 @@ export function ParticipantsGrid({ localName, localStream, localMicMuted, peers,
         ref={gridRef}
         className="participant-grid"
         data-count={slots}
+        data-display={displayMode}
         aria-label="People in the call"
         style={{ "--participant-columns": columns, "--participant-rows": rows } as CSSProperties}
       >
@@ -116,7 +121,15 @@ export function ParticipantsGrid({ localName, localStream, localMicMuted, peers,
           const speaking = participant.voiceJoined && !participant.micMuted && speakingPeerIds.has(participant.id);
           const voiceStatus = !participant.voiceJoined ? "No voice" : participant.micMuted ? "Microphone muted" : speaking ? "Speaking" : "Microphone on";
           const isFocusedRemote = !participant.local && participant.id === focusedPeerId;
-          const thumbnail = participant.local ? localStream : isFocusedRemote && !hideFocusedVideo ? focusedStream : null;
+          const thumbnail = participant.local
+            ? displayMode === "grid" ? localStream : null
+            : isFocusedRemote && !hideFocusedVideo ? focusedStream : null;
+          const remoteDisplayMode = isFocusedRemote && (displayMode === "stage" || displayMode === "preview");
+          const videoVariant = isFocusedRemote && displayMode === "stage"
+            ? "stage"
+            : isFocusedRemote && displayMode === "preview"
+              ? "preview"
+              : "card";
           const focus = () => participant.local ? onFocusLocal() : onFocusPeer(participant.id);
           const focusLabel = participant.local
             ? "Show your screen on stage"
@@ -128,10 +141,11 @@ export function ParticipantsGrid({ localName, localStream, localMicMuted, peers,
                   stream={thumbnail}
                   name={participant.name}
                   local={participant.local}
+                  viewerCount={participant.local ? localViewerCount : undefined}
                   state={isFocusedRemote ? focusedConnectionState : undefined}
                   stats={isFocusedRemote && statsEnabled ? focusedStats : null}
                   statsEnabled={statsEnabled}
-                  variant="card"
+                  variant={videoVariant}
                   volume={volume}
                   muted={muted}
                   fullscreenId={participant.local ? "local" : participant.id}
@@ -140,6 +154,8 @@ export function ParticipantsGrid({ localName, localStream, localMicMuted, peers,
                   onToggleMute={participant.local ? undefined : onToggleMute}
                   onToggleStats={onToggleStats}
                   onFullscreen={participant.local ? onLocalFullscreen : onRemoteFullscreen}
+                  onMinimize={remoteDisplayMode && displayMode === "stage" ? onMinimizeRemote : undefined}
+                  onStopWatching={remoteDisplayMode ? onStopWatchingRemote : undefined}
                 />
               ) : <span className="grid-person-avatar" aria-hidden="true">{participant.name.slice(0, 1).toUpperCase()}</span>}
                     <span className="grid-person-voice" title={voiceStatus} aria-label={voiceStatus} role="img">
@@ -155,7 +171,7 @@ export function ParticipantsGrid({ localName, localStream, localMicMuted, peers,
 
             </>
           );
-          const className = `participant-grid-card ${speaking ? "is-speaking" : ""} ${participant.sharing ? "is-sharing" : ""} ${thumbnail ? "has-thumbnail" : ""}`;
+          const className = `participant-grid-card ${speaking ? "is-speaking" : ""} ${participant.sharing ? "is-sharing" : ""} ${isFocusedRemote ? "is-focused-remote" : ""} ${thumbnail ? "has-thumbnail" : ""}`;
 
           return participant.sharing ? (
             <div
@@ -176,7 +192,7 @@ export function ParticipantsGrid({ localName, localStream, localMicMuted, peers,
           );
         })}
         {hiddenCount > 0 && (
-          <button type="button" className="participant-grid-card participant-grid-more" data-grid-id="__more__" onClick={onOpenParticipants} aria-label={`Show ${hiddenCount} more people in the call`} title="Show all people">
+          <button type="button" className="participant-grid-card participant-grid-more" data-grid-id="__more__" onClick={(event) => onOpenParticipants(event.currentTarget)} aria-label={`Show ${hiddenCount} more people in the call`} title="Show all people">
             <UsersIcon size={24} /><strong>+{hiddenCount}</strong><span>More people</span>
           </button>
         )}

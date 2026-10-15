@@ -22,6 +22,7 @@ export function useRoom(
   const [status, setStatus] = useState<SocketStatus>("connecting");
   const [peers, setPeers] = useState<Peer[]>([]);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+  const [localViewerCount, setLocalViewerCount] = useState(0);
   const [isStartingShare, setIsStartingShare] = useState(false);
   const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({});
   const [connectionStates, setConnectionStates] = useState<Record<string, PeerConnectionState>>({});
@@ -61,6 +62,7 @@ export function useRoom(
 
           setLocalStream(stream as MediaStream | null);
         },
+        onLocalViewerCount: setLocalViewerCount,
         onIsStartingShare: setIsStartingShare,
         onRemoteStream: (streamId, stream) => {
           setRemoteStreams((current) => {
@@ -185,6 +187,7 @@ export function useRoom(
     status,
     peers,
     localStream,
+    localViewerCount,
     isStartingShare,
     remoteStreams,
     connectionStates,

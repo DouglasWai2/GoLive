@@ -208,6 +208,7 @@ test("limits per-viewer stats polling overhead while sharing to multiple viewers
   const originalClearInterval = globalThis.clearInterval;
   const timers: Array<{ callback: () => void; delayMs: number }> = [];
   const connections: FakePeerConnection[] = [];
+  const viewerCounts: number[] = [];
   const track = new FakeMediaTrack();
   const stream: MediaStream = {
     id: "polling-benchmark-stream",
@@ -228,6 +229,7 @@ test("limits per-viewer stats polling overhead while sharing to multiple viewers
       onStatus: () => {},
       onPeers: () => {},
       onLocalStream: () => {},
+      onLocalViewerCount: (count) => viewerCounts.push(count),
       onIsStartingShare: () => {},
       onRemoteStream: () => {},
       onConnectionState: () => {},
@@ -273,6 +275,7 @@ test("limits per-viewer stats polling overhead while sharing to multiple viewers
         subscribed: true,
       });
     }
+    assert.deepEqual(viewerCounts, [1, 2, 3]);
     await flushAsyncWork();
     await flushAsyncWork();
 
@@ -300,6 +303,17 @@ test("limits per-viewer stats polling overhead while sharing to multiple viewers
     assert.deepEqual(connections.map((connection) => connection.statsCallCount), [5, 5, 5]);
     assert.equal(callsAfterChange, 15);
     assert.equal(callsAfterChange, baselineCallsAtOneSecondCadence / 2);
+
+    socket.receive({
+      type: "stream-subscriber",
+      peerId: "viewer-2",
+      streamId: "polling-benchmark-stream-id",
+      subscribed: false,
+    });
+    assert.deepEqual(viewerCounts, [1, 2, 3, 2]);
+
+    session.stopSharing();
+    assert.deepEqual(viewerCounts, [1, 2, 3, 2, 0]);
   } finally {
     session.stop();
     globalThis.WebSocket = originalWebSocket;

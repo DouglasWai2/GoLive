@@ -5,6 +5,10 @@ import type {
   RTCPeerConnection as CorePeerConnection,
 } from "@golive/core";
 import { detectHardwareAcceleration, orderVideoCodecs } from "@golive/core";
+import {
+  captureProcessedMicrophone,
+  releaseProcessedMicrophone,
+} from "../audio/microphoneAudio";
 
 /*
  * Browser adapter: navigator.mediaDevices + native WebRTC globals.
@@ -38,8 +42,8 @@ export const webAdapter: PlatformAdapter = {
     return stream;
   },
 
-  getUserMedia: (constraints) =>
-    navigator.mediaDevices.getUserMedia(constraints),
+  getUserMedia: captureProcessedMicrophone,
+  releaseMediaStream: releaseProcessedMicrophone,
 
   isCaptureRejected: (error) =>
     error instanceof DOMException && error.name === "NotAllowedError",
