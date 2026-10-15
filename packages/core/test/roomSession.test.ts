@@ -1224,7 +1224,7 @@ test("keeps publishing independent from one focused incoming screen", async () =
   const adapter = {
     getDisplayMedia: async () => localStream,
     isCaptureRejected: () => false,
-    serializeCandidate: () => ({ candidate: "candidate" }),
+    serializeCandidate: (candidate) => candidate as IceCandidateInit,
     createPeerConnection: () => {
       const connection = new FakePeerConnection();
       connections.push(connection);
@@ -1313,6 +1313,38 @@ test("keeps publishing independent from one focused incoming screen", async () =
       && message.target === "local-viewer"
       && (message.data as Record<string, unknown>).type === "offer"
     )));
+
+    const screenCandidateConnections = [
+      { connection: connections[0]!, target: "remote-one", streamId: remoteStreamOne },
+      { connection: connections[1]!, target: "local-viewer", streamId: localStreamId },
+    ];
+    for (const { connection } of screenCandidateConnections) {
+      for (let index = 0; index < 17; index += 1) {
+        connection.onicecandidate?.({ candidate: { candidate: `candidate-${index}` } });
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 550));
+
+    for (const { target, streamId } of screenCandidateConnections) {
+      const candidateBatches = socket.sent.filter((message) => {
+        const data = message.data as { candidates?: unknown[] };
+        return message.type === "signal"
+          && message.channel === "screen"
+          && message.target === target
+          && message.streamId === streamId
+          && Array.isArray(data.candidates);
+      });
+      assert.equal(candidateBatches.length, 3);
+      assert.deepEqual(
+        candidateBatches.flatMap((message) => (
+          (message.data as { candidates: IceCandidateInit[] }).candidates
+        )),
+        Array.from({ length: 17 }, (_, index) => ({ candidate: `candidate-${index}` })),
+      );
+      assert.ok(candidateBatches.every((message) => (
+        (message.data as { candidates: unknown[] }).candidates.length <= 8
+      )));
+    }
 
     session.focusPeer("remote-two");
     assert.equal(connections[0]?.connectionState, "closed");

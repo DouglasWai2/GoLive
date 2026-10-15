@@ -449,7 +449,7 @@ export class SignalingService {
       if (!streamId) return;
 
       const signalType = signal.type;
-      const isCandidate = Boolean(signal.candidate);
+      const isCandidate = Boolean(signal.candidate) || Array.isArray(signal.candidates);
       const isPublisher = client.sharing
         && client.streamId === streamId
         && target.subscribedStreamId === streamId;
@@ -471,6 +471,19 @@ export class SignalingService {
           streamId,
           targetPeerId: target.id,
         });
+        return;
+      }
+
+      if (Array.isArray(signal.candidates)) {
+        for (const candidate of signal.candidates) {
+          send(target.socket, {
+            type: "signal",
+            from: client.id,
+            channel: "screen",
+            streamId,
+            data: { candidate },
+          });
+        }
         return;
       }
 
@@ -695,7 +708,6 @@ function parseMessage(raw: Buffer | ArrayBuffer | Buffer[]): ClientMessage | nul
       const data = parseSignalData(message.data);
       if (!data) return null;
       const channel = message.channel === "voice" ? "voice" : "screen";
-      if (channel === "screen" && "candidates" in data) return null;
       if (channel === "screen" && !isValidStreamId(message.streamId)) return null;
       if (channel === "voice" && message.streamId !== undefined) return null;
       return {

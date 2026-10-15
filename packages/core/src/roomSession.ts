@@ -73,8 +73,8 @@ const RELAY_FAILURE_GRACE_MS = 15_000;
 const TURN_FETCH_RETRY_MS = 30_000;
 const STREAM_UNAVAILABLE_MESSAGE =
   "Unable to start stream right now. Try again later.";
-const VOICE_CANDIDATE_BATCH_SIZE = 8;
-const VOICE_CANDIDATE_BATCH_MS = 500;
+const ICE_CANDIDATE_BATCH_SIZE = 8;
+const ICE_CANDIDATE_BATCH_MS = 500;
 
 /*
  * setTimeout/setInterval resolve to `number` in browsers and to a Timeout
@@ -82,6 +82,13 @@ const VOICE_CANDIDATE_BATCH_MS = 500;
  * within a given environment, so a single handle type works everywhere.
  */
 type TimerHandle = ReturnType<typeof setTimeout>;
+type ScreenCandidateBatch = {
+  peerId: string;
+  streamId: string;
+  candidates: IceCandidateInit[];
+  timer: TimerHandle;
+  isCurrent: () => boolean;
+};
 type ShareRequestResult =
   | "accepted"
   | "rejected"
@@ -134,6 +141,7 @@ export class RoomSession {
   private signalQueues = new Map<string, Promise<void>>();
   private peerGenerations = new Map<string, number>();
   private subscribers = new Set<string>();
+  private screenCandidateBatches = new Map<RTCPeerConnection, ScreenCandidateBatch>();
 
   private focusedPeerId: string | null = null;
   private focusedOwnerPeerId: string | null = null;
@@ -260,6 +268,7 @@ export class RoomSession {
     this.clearKeepalive();
     this.clearReconnectTimer();
     this.clearVoiceCandidateBatches();
+    this.clearScreenCandidateBatches();
 
     for (const timer of this.iceRecoveryTimers.values()) {
       clearTimeout(timer);
@@ -1228,13 +1237,13 @@ export class RoomSession {
       batch = {
         connection,
         candidates: [],
-        timer: setTimeout(() => this.flushVoiceCandidateBatch(peerId), VOICE_CANDIDATE_BATCH_MS),
+        timer: setTimeout(() => this.flushVoiceCandidateBatch(peerId), ICE_CANDIDATE_BATCH_MS),
       };
       this.voiceCandidateBatches.set(peerId, batch);
     }
 
     batch.candidates.push(candidate);
-    if (batch.candidates.length >= VOICE_CANDIDATE_BATCH_SIZE) {
+    if (batch.candidates.length >= ICE_CANDIDATE_BATCH_SIZE) {
       this.flushVoiceCandidateBatch(peerId);
     }
   }
@@ -1262,6 +1271,64 @@ export class RoomSession {
 
   private clearVoiceCandidateBatches() {
     for (const peerId of this.voiceCandidateBatches.keys()) this.clearVoiceCandidateBatch(peerId);
+  }
+
+  private queueScreenCandidate(
+    peerId: string,
+    streamId: string,
+    connection: RTCPeerConnection,
+    candidate: IceCandidateInit,
+    isCurrent: () => boolean,
+  ) {
+    if (!isCurrent()) return;
+
+    let batch = this.screenCandidateBatches.get(connection);
+    if (!batch) {
+      batch = {
+        peerId,
+        streamId,
+        candidates: [],
+        timer: setTimeout(
+          () => this.flushScreenCandidateBatch(connection),
+          ICE_CANDIDATE_BATCH_MS,
+        ),
+        isCurrent,
+      };
+      this.screenCandidateBatches.set(connection, batch);
+    }
+
+    batch.candidates.push(candidate);
+    if (batch.candidates.length >= ICE_CANDIDATE_BATCH_SIZE) {
+      this.flushScreenCandidateBatch(connection);
+    }
+  }
+
+  private flushScreenCandidateBatch(connection: RTCPeerConnection) {
+    const batch = this.screenCandidateBatches.get(connection);
+    if (!batch) return;
+    this.clearScreenCandidateBatch(connection);
+    if (!batch.isCurrent()) return;
+
+    this.send({
+      type: "signal",
+      target: batch.peerId,
+      channel: "screen",
+      streamId: batch.streamId,
+      data: { candidates: batch.candidates },
+    });
+  }
+
+  private clearScreenCandidateBatch(connection: RTCPeerConnection) {
+    const batch = this.screenCandidateBatches.get(connection);
+    if (!batch) return;
+    clearTimeout(batch.timer);
+    this.screenCandidateBatches.delete(connection);
+  }
+
+  private clearScreenCandidateBatches() {
+    for (const connection of this.screenCandidateBatches.keys()) {
+      this.clearScreenCandidateBatch(connection);
+    }
   }
 
   private async createVoiceOffer(peerId: string, allowNonElected = false) {
@@ -1611,6 +1678,7 @@ export class RoomSession {
     }
 
     if (existing) {
+      this.clearScreenCandidateBatch(existing);
       this.peerConnections.delete(peerId);
     }
 
@@ -1638,8 +1706,8 @@ export class RoomSession {
     }
 
     /*
-     * Send ALL locally generated ICE candidates
-     * through our signaling WebSocket.
+     * Batch locally generated ICE candidates so one ICE gathering cycle does
+     * not exceed the signaling WebSocket's per-message rate limit.
      */
     connection.onicecandidate = (event) => {
       if (!event.candidate) {
@@ -1657,15 +1725,15 @@ export class RoomSession {
         this.deps.adapter.serializeCandidate(event.candidate),
       );
 
-      this.send({
-        type: "signal",
-        target: peerId,
-        channel: "screen",
-        ...(this.localStreamId ? { streamId: this.localStreamId } : {}),
-        data: {
-          candidate: this.deps.adapter.serializeCandidate(event.candidate),
-        },
-      });
+      const streamId = this.localStreamId;
+      if (!streamId) return;
+      this.queueScreenCandidate(
+        peerId,
+        streamId,
+        connection,
+        this.deps.adapter.serializeCandidate(event.candidate),
+        () => this.peerConnections.get(peerId) === connection && this.localStreamId === streamId,
+      );
     };
 
     /*
@@ -1903,13 +1971,13 @@ export class RoomSession {
 
     connection.onicecandidate = (event) => {
       if (!event.candidate || this.focusedConnection !== connection) return;
-      this.send({
-        type: "signal",
-        target: peerId,
-        channel: "screen",
+      this.queueScreenCandidate(
+        peerId,
         streamId,
-        data: { candidate: this.deps.adapter.serializeCandidate(event.candidate) },
-      });
+        connection,
+        this.deps.adapter.serializeCandidate(event.candidate),
+        () => this.focusedConnection === connection && this.focusedStreamId === streamId,
+      );
     };
     connection.onicecandidateerror = (event) => {
       console.warn(`[screen:${streamId}] ICE candidate error`, event);
@@ -1992,6 +2060,7 @@ export class RoomSession {
     this.focusedStatsInFlight = null;
 
     if (connection) {
+      this.clearScreenCandidateBatch(connection);
       connection.ontrack = null;
       connection.onicecandidate = null;
       connection.onicecandidateerror = null;
@@ -3203,6 +3272,7 @@ export class RoomSession {
     const connection = this.peerConnections.get(peerId);
 
     if (connection) {
+      this.clearScreenCandidateBatch(connection);
       connection.ontrack = null;
       connection.onicecandidate = null;
       connection.onicecandidateerror = null;

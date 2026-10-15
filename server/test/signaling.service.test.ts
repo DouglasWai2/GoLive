@@ -302,6 +302,37 @@ test("allows concurrent screen shares and enforces one authorized focused subscr
     });
     await aliceStillAuthorized;
 
+    const screenCandidates = Array.from({ length: 8 }, (_, index) => ({
+      candidate: `screen-batch-${index}`,
+    }));
+    const lastScreenCandidate = waitFor(carolSocket, (message) => (
+      message.type === "signal"
+      && message.from === alice.sessionId
+      && message.streamId === aliceStreamId
+      && (message.data as { candidate?: { candidate?: string } }).candidate?.candidate
+        === "screen-batch-7"
+    ));
+    aliceSocket.receive({
+      type: "signal",
+      target: carol.sessionId,
+      channel: "screen",
+      streamId: aliceStreamId,
+      data: { candidates: screenCandidates },
+    });
+    await lastScreenCandidate;
+    assert.deepEqual(
+      carolSocket.sent
+        .filter((message) => message.type === "signal"
+          && message.from === alice.sessionId
+          && message.streamId === aliceStreamId
+          && screenCandidates.some((candidate) => (
+            (message.data as { candidate?: { candidate?: string } }).candidate?.candidate
+              === candidate.candidate
+          )))
+        .map((message) => message.data),
+      screenCandidates.map((candidate) => ({ candidate })),
+    );
+
     const aliceUnsubscribed = waitFor(aliceSocket, (message) => (
       message.type === "stream-subscriber"
       && message.peerId === carol.sessionId
