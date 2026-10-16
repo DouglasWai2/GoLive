@@ -3,8 +3,9 @@ import type {
   IceCandidateInit,
   PlatformAdapter,
   RTCPeerConnection as CorePeerConnection,
+  VideoCodecPreference,
 } from "@golive/core";
-import { detectHardwareAcceleration, orderVideoCodecs } from "@golive/core";
+import { availableVideoCodecs, detectHardwareAcceleration, orderVideoCodecs, preferVideoCodec } from "@golive/core";
 import {
   captureProcessedMicrophone,
   releaseProcessedMicrophone,
@@ -19,6 +20,14 @@ async function getHardwareAcceleration(): Promise<HardwareAccelerationSupport> {
   if (hwAccelCache) return hwAccelCache;
   hwAccelCache = await detectHardwareAcceleration();
   return hwAccelCache;
+}
+
+export function getBrowserScreenVideoCodecs(): VideoCodecPreference[] {
+  try {
+    return availableVideoCodecs(RTCRtpSender.getCapabilities("video")?.codecs ?? []);
+  } catch {
+    return [];
+  }
 }
 
 export const webAdapter: PlatformAdapter = {
@@ -54,7 +63,7 @@ export const webAdapter: PlatformAdapter = {
   createPeerConnection: ({ iceServers }) =>
     new RTCPeerConnection({ iceServers }) as unknown as CorePeerConnection,
 
-  configureVideoCodecs: async (connection) => {
+  configureVideoCodecs: async (connection, { preferredCodec }) => {
     if (
       typeof RTCRtpSender === "undefined"
       || typeof RTCRtpSender.getCapabilities !== "function"
@@ -69,8 +78,8 @@ export const webAdapter: PlatformAdapter = {
       return;
     }
 
-    const hwAccel = await getHardwareAcceleration();
-    const codecs = orderVideoCodecs(capabilities.codecs, hwAccel);
+    const hwAccel = preferredCodec === "auto" ? await getHardwareAcceleration() : undefined;
+    const codecs = preferVideoCodec(orderVideoCodecs(capabilities.codecs, hwAccel), preferredCodec);
     const peerConnection = connection as unknown as RTCPeerConnection;
 
     for (const transceiver of peerConnection.getTransceivers()) {

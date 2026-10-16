@@ -24,12 +24,13 @@ import {
   computeOutboundVideoStats,
   configureVideoSender,
   getPeerMediaStats,
+  getScreenViewerBitrate,
   logSelectedIceRoute,
   preferStereoScreenAudio,
   type InboundVideoSample,
   type OutboundVideoSample,
 } from "./webrtc";
-import type { PlatformAdapter } from "./adapter";
+import type { PlatformAdapter, ScreenSenderLimits } from "./adapter";
 
 export type RoomSessionDeps = {
   baseUrl: string;
@@ -142,6 +143,8 @@ export class RoomSession {
   private scaleResolutionDownBy = 1;
 
   private peerConnections = new Map<string, RTCPeerConnection>();
+  private senderSettingsQueues = new Map<RTCPeerConnection, Promise<void>>();
+  private senderLimits = new WeakMap<RTCPeerConnection, ScreenSenderLimits>();
   private pendingCandidates = new Map<string, unknown[]>();
   private pendingOffers = new Map<string, symbol>();
   private signalQueues = new Map<string, Promise<void>>();
@@ -2243,9 +2246,25 @@ export class RoomSession {
    * createOffer() so the encoding caps are baked into the SDP.
    */
   private async applySenderSettings(connection: RTCPeerConnection) {
+    const previous = this.senderSettingsQueues.get(connection) ?? Promise.resolve();
+    const next = previous
+      .catch(() => {})
+      .then(() => this.applySenderSettingsNow(connection));
+    this.senderSettingsQueues.set(connection, next);
+
+    try {
+      await next;
+    } finally {
+      if (this.senderSettingsQueues.get(connection) === next) {
+        this.senderSettingsQueues.delete(connection);
+      }
+    }
+  }
+
+  private async applySenderSettingsNow(connection: RTCPeerConnection) {
     const settings = this.shareSettings;
 
-    if (!settings) {
+    if (!settings || connection.signalingState === "closed" || !this.localStream) {
       return;
     }
 
@@ -2257,12 +2276,29 @@ export class RoomSession {
       return;
     }
 
+    const limits = this.senderLimits.get(connection);
     await configureVideoSender(sender, {
-      maxBitrate: settings.maxBitrate,
-      maxFramerate: settings.frameRate,
-      scaleResolutionDownBy: this.scaleResolutionDownBy,
+      maxBitrate: getScreenViewerBitrate(settings.maxBitrate, this.subscribers.size),
+      maxFramerate: Math.min(settings.frameRate, limits?.maxFramerate ?? settings.frameRate),
+      scaleResolutionDownBy: Math.max(
+        this.scaleResolutionDownBy,
+        limits?.maxWidth ? (this.scaleResolutionDownBy * settings.width) / limits.maxWidth : 1,
+        limits?.maxHeight ? (this.scaleResolutionDownBy * settings.height) / limits.maxHeight : 1,
+      ),
       degradationPreference: "maintain-resolution",
     });
+  }
+
+  private rebalancePeerSenderSettings() {
+    if (!this.localStream || !this.sharingAnnounced || this.subscribers.size === 0) return;
+
+    for (const [peerId, connection] of this.peerConnections) {
+      if (!this.subscribers.has(peerId)) continue;
+
+      void this.applySenderSettings(connection).catch((caught) => {
+        console.warn(`[${peerId}] Could not rebalance screen bitrate`, caught);
+      });
+    }
   }
 
   /* Sample inbound and outbound video health for the debug overlays. */
@@ -2444,13 +2480,17 @@ export class RoomSession {
         return;
       }
 
-      await this.applySenderSettings(connection);
-
       try {
-        await this.deps.adapter.configureVideoCodecs?.(connection);
+        const limits = await this.deps.adapter.configureVideoCodecs?.(connection, {
+          screenPublisherConnectionCount: this.peerConnections.size,
+          preferredCodec: this.shareSettings?.videoCodec ?? "auto",
+        });
+        if (limits) this.senderLimits.set(connection, limits);
       } catch (caught) {
         console.warn(`[${peerId}] Could not configure video codecs`, caught);
       }
+
+      await this.applySenderSettings(connection);
 
       const offer = await connection.createOffer(
         iceRestart ? { iceRestart: true } : undefined,
@@ -2760,7 +2800,10 @@ export class RoomSession {
 
       this.signalQueues.delete(message.peer.id);
       this.closePeer(message.peer.id);
-      this.subscribers.delete(message.peer.id);
+      if (this.subscribers.delete(message.peer.id)) {
+        this.emitLocalViewerCount();
+        this.rebalancePeerSenderSettings();
+      }
       this.voiceSignalQueues.delete(message.peer.id);
       this.closeVoicePeer(message.peer.id);
 
@@ -2784,7 +2827,10 @@ export class RoomSession {
 
       this.closePeer(message.peerId);
       this.closeVoicePeer(message.peerId);
-      this.subscribers.delete(message.peerId);
+      if (this.subscribers.delete(message.peerId)) {
+        this.emitLocalViewerCount();
+        this.rebalancePeerSenderSettings();
+      }
 
       this.peers = this.peers.filter((peer) => peer.id !== message.peerId);
 
@@ -2859,11 +2905,18 @@ export class RoomSession {
       if (message.subscribed) {
         const isNewSubscriber = !this.subscribers.has(message.peerId);
         this.subscribers.add(message.peerId);
-        if (isNewSubscriber) this.emitLocalViewerCount();
+        if (isNewSubscriber) {
+          this.emitLocalViewerCount();
+          this.rebalancePeerSenderSettings();
+        }
         if (this.sharingAnnounced && this.localStream) void this.createOffer(message.peerId);
       } else {
-        if (this.subscribers.delete(message.peerId)) this.emitLocalViewerCount();
+        const wasSubscribed = this.subscribers.delete(message.peerId);
         this.closePeer(message.peerId);
+        if (wasSubscribed) {
+          this.emitLocalViewerCount();
+          this.rebalancePeerSenderSettings();
+        }
       }
       return;
     }
@@ -3340,6 +3393,7 @@ export class RoomSession {
 
     if (connection) {
       this.clearScreenCandidateBatch(connection);
+      this.senderSettingsQueues.delete(connection);
       connection.ontrack = null;
       connection.onicecandidate = null;
       connection.onicecandidateerror = null;

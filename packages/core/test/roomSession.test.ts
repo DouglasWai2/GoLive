@@ -11,6 +11,7 @@ import type {
   ShareSettings,
   RTCPeerConnection,
   RTCRtpSender,
+  RTCRtpSendParameters,
   SessionDescriptionInit,
   WebSocketLike,
 } from "../src/types";
@@ -63,12 +64,17 @@ class FakePeerConnection {
   onconnectionstatechange: (() => void) | null = null;
   readonly sender: RTCRtpSender = {
     track: null,
-    getParameters: () => ({}),
-    setParameters: async () => {},
+    getParameters: () => ({ encodings: [{ maxBitrate: this.senderMaxBitrate }] }),
+    setParameters: async (parameters) => {
+      this.senderMaxBitrate = parameters.encodings?.[0]?.maxBitrate;
+    },
     replaceTrack: async (track) => {
       this.sender.track = track;
     },
   };
+  senderMaxBitrate?: number;
+  videoSenderParameters: RTCRtpSendParameters | null = null;
+  readonly trackSenders: RTCRtpSender[] = [];
   transceiverCount = 0;
   readonly transceivers: Array<{ sender: RTCRtpSender; direction: string }> = [];
   readonly addedTracks: Array<{ track: MediaTrack; stream: MediaStream }> = [];
@@ -77,6 +83,15 @@ class FakePeerConnection {
 
   addTrack(track: MediaTrack, stream: MediaStream): void {
     this.addedTracks.push({ track, stream });
+    const sender: RTCRtpSender = {
+      track,
+      getParameters: () => ({ encodings: [{ maxBitrate: this.senderMaxBitrate }] }),
+      setParameters: async (parameters) => {
+        if (track.kind === "video") this.videoSenderParameters = structuredClone(parameters);
+        this.senderMaxBitrate = parameters.encodings?.[0]?.maxBitrate;
+      },
+    };
+    this.trackSenders.push(sender);
   }
   addTransceiver(
     _kind: "audio" | "video",
@@ -105,8 +120,8 @@ class FakePeerConnection {
     this.remoteDescription = description;
     this.signalingState = description.type === "offer" ? "have-remote-offer" : "stable";
   }
-  getSenders(): never[] {
-    return [];
+  getSenders(): RTCRtpSender[] {
+    return [...this.trackSenders, this.sender];
   }
   async getStats() {
     this.statsCallCount += 1;
@@ -205,6 +220,93 @@ test("joins without TURN and keeps every room WebSocket alive", () => {
   }
 });
 
+test("passes the preferred codec to four independent offers and applies adapter limits", async () => {
+  const originalWebSocket = globalThis.WebSocket;
+  const track = new FakeMediaTrack();
+  const stream: MediaStream = {
+    id: "four-viewer-stream",
+    getTracks: () => [track],
+    getVideoTracks: () => [track],
+    getAudioTracks: () => [],
+  };
+  const connections: FakePeerConnection[] = [];
+  const codecCounts: number[] = [];
+  const preferences: string[] = [];
+
+  globalThis.WebSocket = FakeSocket as unknown as typeof WebSocket;
+  const session = new RoomSession(
+    {
+      onStatus: () => {},
+      onPeers: () => {},
+      onLocalStream: () => {},
+      onIsStartingShare: () => {},
+      onRemoteStream: () => {},
+      onConnectionState: () => {},
+      onRemoteStats: () => {},
+      onOutboundStats: () => {},
+      onError: () => {},
+    },
+    {
+      baseUrl: "https://signal.example.com",
+      adapter: {
+        getDisplayMedia: async () => stream,
+        createPeerConnection: () => {
+          const connection = new FakePeerConnection();
+          connections.push(connection);
+          return connection as unknown as RTCPeerConnection;
+        },
+        configureVideoCodecs: (_connection, { screenPublisherConnectionCount, preferredCodec }) => {
+          codecCounts.push(screenPublisherConnectionCount);
+          preferences.push(preferredCodec);
+          return screenPublisherConnectionCount > 2
+            ? { maxWidth: 854, maxHeight: 480, maxFramerate: 15 }
+            : undefined;
+        },
+      } as PlatformAdapter,
+    },
+  );
+
+  try {
+    session.start("room-id", "Sharer", "room-token");
+    const socket = FakeSocket.instance;
+    assert.ok(socket);
+    socket.open();
+    socket.receive({ type: "authenticated" });
+    socket.receive({ type: "room-state", selfId: "sharer", peers: [] });
+
+    const startSharing = session.startSharing({ ...DEFAULT_SHARE_SETTINGS, videoCodec: "AV1" });
+    await flushAsyncWork();
+    socket.receive({ type: "sharing-accepted", sharing: true, streamId: "four-viewer-stream-id" });
+    await startSharing;
+
+    for (const peerId of ["viewer-1", "viewer-2", "viewer-3", "viewer-4"]) {
+      socket.receive({ type: "stream-subscriber", peerId, streamId: "four-viewer-stream-id", subscribed: true });
+    }
+    await flushAsyncWork();
+    await flushAsyncWork();
+
+    assert.deepEqual(codecCounts, [1, 2, 3, 4]);
+    assert.deepEqual(preferences, ["AV1", "AV1", "AV1", "AV1"]);
+    assert.equal(connections.length, 4);
+    assert.equal(socket.sent.filter((message) => message.type === "signal"
+      && (message.data as SessionDescriptionInit).type === "offer").length, 4);
+    assert.deepEqual(connections.map((connection) => connection.senderMaxBitrate), [
+      2_000_000, 2_000_000, 2_000_000, 2_000_000,
+    ]);
+    assert.deepEqual(connections.map((connection) => (
+      connection.videoSenderParameters?.encodings?.[0]?.maxFramerate
+    )), [60, 60, 15, 15]);
+    assert.deepEqual(connections.map((connection) => (
+      connection.videoSenderParameters?.encodings?.[0]?.scaleResolutionDownBy
+    )), [1, 1, 2.25, 2.25]);
+    assert.equal(track.stopCount, 0);
+  } finally {
+    session.stop();
+    globalThis.WebSocket = originalWebSocket;
+    FakeSocket.instance = null;
+  }
+});
+
 test("limits per-viewer stats polling overhead while sharing to multiple viewers", async () => {
   const originalWebSocket = globalThis.WebSocket;
   const originalSetInterval = globalThis.setInterval;
@@ -283,6 +385,11 @@ test("limits per-viewer stats polling overhead while sharing to multiple viewers
     await flushAsyncWork();
 
     assert.equal(connections.length, 3);
+    assert.deepEqual(connections.map((connection) => connection.senderMaxBitrate), [
+      Math.floor(DEFAULT_SHARE_SETTINGS.maxBitrate / 3),
+      Math.floor(DEFAULT_SHARE_SETTINGS.maxBitrate / 3),
+      Math.floor(DEFAULT_SHARE_SETTINGS.maxBitrate / 3),
+    ]);
     const peerStatsTimers = timers.filter((timer) => timer.delayMs < 10_000);
     assert.equal(peerStatsTimers.length, 3);
     assert.deepEqual(peerStatsTimers.map((timer) => timer.delayMs), [2_000, 2_000, 2_000]);
@@ -314,6 +421,9 @@ test("limits per-viewer stats polling overhead while sharing to multiple viewers
       subscribed: false,
     });
     assert.deepEqual(viewerCounts, [1, 2, 3, 2]);
+    await flushAsyncWork();
+    assert.equal(connections[0]?.senderMaxBitrate, DEFAULT_SHARE_SETTINGS.maxBitrate / 2);
+    assert.equal(connections[2]?.senderMaxBitrate, DEFAULT_SHARE_SETTINGS.maxBitrate / 2);
 
     session.stopSharing();
     assert.deepEqual(viewerCounts, [1, 2, 3, 2, 0]);
@@ -484,6 +594,7 @@ test("keeps captured media alive and restores sharing after signaling reconnects
     frameRate: 30,
     maxBitrate: 4_000_000,
     includeAudio: false,
+    videoCodec: "auto",
   };
 
   try {
@@ -929,6 +1040,7 @@ test("keeps a late viewer screen offer alive across voice state updates", async 
     const sharing = session.startSharing({
       ...DEFAULT_SHARE_SETTINGS,
       includeAudio: false,
+      videoCodec: "auto",
     });
     await flushAsyncWork();
     socket.receive({ type: "sharing-accepted", sharing: true, streamId });

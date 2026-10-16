@@ -1,18 +1,20 @@
-import { Dimensions, PixelRatio, Platform } from "react-native";
+import { Dimensions, NativeModules, PixelRatio, Platform } from "react-native";
 import {
   mediaDevices,
   MediaStream as RNMediaStream,
   RTCPeerConnection,
   RTCRtpSender,
 } from "react-native-webrtc";
-import { orderVideoCodecs } from "@golive/core";
+import { availableVideoCodecs, orderVideoCodecs } from "@golive/core";
 import type {
   IceCandidateInit,
   MediaStream,
   PlatformAdapter,
   RTCPeerConnection as CorePeerConnection,
+  VideoCodecPreference,
 } from "@golive/core";
 import { getScreenCaptureResolutionScale } from "./utils/screenCapture";
+import { selectScreenVideoCodecs } from "./utils/screenVideoCodecs";
 
 type NativeCandidate = {
   candidate?: string;
@@ -29,6 +31,32 @@ type UserMediaConstraints = {
     autoGainControl: boolean;
   };
 };
+
+const screenCodecChoices = new WeakMap<CorePeerConnection, {
+  codecs: NonNullable<ReturnType<typeof RTCRtpSender.getCapabilities>>["codecs"];
+  overflow: boolean;
+}>();
+
+export function getNativeScreenVideoCodecs(): VideoCodecPreference[] {
+  try {
+    return availableVideoCodecs(RTCRtpSender.getCapabilities("video")?.codecs ?? []);
+  } catch {
+    return [];
+  }
+}
+
+function getNativeHardwareScreenCodecs(): VideoCodecPreference[] {
+  if (Platform.OS !== "android") return [];
+  try {
+    const nativeModule = NativeModules.WebRTCModule as {
+      getHardwareVideoEncoderCodecs?: () => string[];
+    } | undefined;
+    const hardware = nativeModule?.getHardwareVideoEncoderCodecs?.() ?? [];
+    return getNativeScreenVideoCodecs().filter((codec) => hardware.includes(codec));
+  } catch {
+    return [];
+  }
+}
 
 /*
  * Android adapter: react-native-webrtc.
@@ -114,20 +142,40 @@ export const nativeAdapter: PlatformAdapter = {
       golivePeerConnectionPurpose: purpose,
     } as any) as unknown as CorePeerConnection,
 
-  configureVideoCodecs: (connection) => {
+  configureVideoCodecs: (connection, { screenPublisherConnectionCount, preferredCodec }) => {
     const capabilities = RTCRtpSender.getCapabilities("video");
 
     if (!capabilities) {
       return;
     }
 
-    const codecs = orderVideoCodecs(capabilities.codecs);
+    let choice = screenCodecChoices.get(connection);
+    if (!choice) {
+      choice = selectScreenVideoCodecs(
+        orderVideoCodecs(capabilities.codecs),
+        Platform.OS === "android" ? screenPublisherConnectionCount : 1,
+        preferredCodec,
+        getNativeHardwareScreenCodecs(),
+      );
+      screenCodecChoices.set(connection, choice);
+      console.log(
+        `Screen publisher ${screenPublisherConnectionCount}: ${choice.codecs[0]?.mimeType ?? "default"}${choice.overflow ? " (overflow fallback)" : " preferred"}`,
+      );
+      if (screenPublisherConnectionCount > 2 && !choice.overflow && Platform.OS === "android" && (preferredCodec === "auto" || preferredCodec === "H264")) {
+        console.warn("VP8 is unavailable; additional Android screen viewers may exceed the hardware encoder limit");
+      }
+    }
     const peerConnection = connection as unknown as RTCPeerConnection;
 
     for (const transceiver of peerConnection.getTransceivers()) {
       if (transceiver.sender.track?.kind === "video") {
-        transceiver.setCodecPreferences(codecs);
+        transceiver.setCodecPreferences(choice.codecs);
       }
+    }
+
+    if (choice.overflow) {
+      // VP8 may run in software; keep extra viewers from overwhelming the device.
+      return { maxWidth: 854, maxHeight: 480, maxFramerate: 15 };
     }
   },
 };

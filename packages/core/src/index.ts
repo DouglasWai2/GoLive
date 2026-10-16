@@ -2,6 +2,7 @@ export type {
   Peer,
   VoiceState,
   ShareSettings,
+  VideoCodecPreference,
   RemoteVideoStats,
   OutboundVideoStats,
   SocketStatus,
@@ -65,6 +66,7 @@ export {
   resolutionOptions,
   frameRateOptions,
   bitrateOptions,
+  videoCodecOptions,
   DEFAULT_SHARE_SETTINGS,
   formatBitrate,
   formatResolution,
@@ -77,7 +79,7 @@ export type {
   FrameRateOption,
   BitrateOption,
 } from "./sharePresets";
-export { orderVideoCodecs, detectHardwareAcceleration } from "./adapter";
+export { orderVideoCodecs, detectHardwareAcceleration, availableVideoCodecs, preferVideoCodec } from "./adapter";
 export type {
   DisplayMediaConstraints,
   UserMediaConstraints,

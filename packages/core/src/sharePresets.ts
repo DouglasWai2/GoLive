@@ -1,4 +1,12 @@
-import type { ShareSettings } from "./types";
+import type { ShareSettings, VideoCodecPreference } from "./types";
+
+export const videoCodecOptions: { value: VideoCodecPreference; label: string }[] = [
+  { value: "auto", label: "Auto" },
+  { value: "H264", label: "H.264" },
+  { value: "VP8", label: "VP8" },
+  { value: "VP9", label: "VP9" },
+  { value: "AV1", label: "AV1" },
+];
 
 export type ResolutionOption = {
   label: string;
@@ -43,6 +51,7 @@ export const DEFAULT_SHARE_SETTINGS: ShareSettings = {
   frameRate: 60,
   maxBitrate: 8_000_000,
   includeAudio: true,
+  videoCodec: "auto",
 };
 
 export function formatBitrate(bps: number): string {

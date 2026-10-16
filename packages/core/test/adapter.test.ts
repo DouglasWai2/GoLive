@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  availableVideoCodecs,
   detectHardwareAcceleration,
   orderVideoCodecs,
+  preferVideoCodec,
   type VideoCodecCapability,
 } from "../src/adapter";
 
@@ -16,7 +18,7 @@ const codecs: VideoCodecCapability[] = [
 test("prefers H.264 over AV1 when hardware efficiency is unknown", () => {
   assert.deepEqual(
     orderVideoCodecs(codecs).map(({ mimeType }) => mimeType),
-    ["video/H264", "video/VP9", "video/AV1", "video/rtx"],
+    ["video/H264", "video/AV1", "video/VP9", "video/rtx"],
   );
 });
 
@@ -35,11 +37,11 @@ test("WebRTC codec availability alone does not count as hardware acceleration", 
   });
   assert.deepEqual(
     orderVideoCodecs(codecs, support).map(({ mimeType }) => mimeType),
-    ["video/H264", "video/VP9", "video/AV1", "video/rtx"],
+    ["video/H264", "video/AV1", "video/VP9", "video/rtx"],
   );
 });
 
-test("prefers efficient alternatives but keeps H.264 ahead of AV1", async () => {
+test("prefers hardware AV1 over unaccelerated H.264 in Auto", async () => {
   const support = await detectHardwareAcceleration(codecs, async ({ video }) => ({
     supported: true,
     powerEfficient: video.contentType.includes("av01"),
@@ -48,8 +50,16 @@ test("prefers efficient alternatives but keeps H.264 ahead of AV1", async () => 
   assert.equal(support.AV1, true);
   assert.deepEqual(
     orderVideoCodecs(codecs, support).map(({ mimeType }) => mimeType),
-    ["video/H264", "video/AV1", "video/VP9", "video/rtx"],
+    ["video/AV1", "video/H264", "video/VP9", "video/rtx"],
   );
+});
+
+test("offers only available primary codecs and retains negotiation fallbacks", () => {
+  assert.deepEqual(availableVideoCodecs(codecs), ["H264", "VP9", "AV1"]);
+  assert.deepEqual(preferVideoCodec(orderVideoCodecs(codecs), "AV1").map((codec) => codec.mimeType), [
+    "video/AV1", "video/H264", "video/VP9", "video/rtx",
+  ]);
+  assert.deepEqual(preferVideoCodec(codecs, "VP8"), codecs);
 });
 
 test("uses the conservative ordering when MediaCapabilities is unavailable", async () => {

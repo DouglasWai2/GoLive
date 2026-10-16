@@ -18,8 +18,10 @@ import {
   DEFAULT_SHARE_SETTINGS,
   frameRateOptions,
   resolutionOptions,
+  videoCodecOptions,
 } from "@golive/core";
 import { colors, controlShadow, radii, technicalText } from "../theme";
+import { getNativeScreenVideoCodecs } from "../adapter";
 
 type ShareSheetProps = {
   visible: boolean;
@@ -37,6 +39,7 @@ export function ShareSheet({ visible, isStarting, onStart, onCancel }: ShareShee
     ...DEFAULT_SHARE_SETTINGS,
     includeAudio: supportsDeviceAudio,
   }));
+  const [availableCodecs] = useState(getNativeScreenVideoCodecs);
   const [requestingPermission, setRequestingPermission] = useState(false);
   const [audioPermissionIssue, setAudioPermissionIssue] = useState<AudioPermissionIssue | null>(null);
   const insets = useSafeAreaInsets();
@@ -140,7 +143,7 @@ export function ShareSheet({ visible, isStarting, onStart, onCancel }: ShareShee
             })}
           </View>
 
-            <Text style={styles.label}>Max bitrate</Text>
+          <Text style={styles.label}>Max bitrate</Text>
           <View style={styles.segmented}>
             {bitrateOptions.map((option) => {
               const active = settings.maxBitrate === option.value;
@@ -157,7 +160,28 @@ export function ShareSheet({ visible, isStarting, onStart, onCancel }: ShareShee
                 </Pressable>
               );
             })}
-            </View>
+          </View>
+
+          <Text style={styles.label}>Preferred video codec</Text>
+          <View style={styles.codecOptions} accessibilityRole="radiogroup">
+            {videoCodecOptions.filter((option) => option.value === "auto" || availableCodecs.includes(option.value)).map((option) => {
+              const active = settings.videoCodec === option.value;
+              return (
+                <Pressable
+                  key={option.value}
+                  style={({ pressed }) => [styles.codecOption, active && styles.segmentActive, pressed && styles.pressed]}
+                  disabled={busy}
+                  onPress={() => setSettings((current) => ({ ...current, videoCodec: option.value }))}
+                  accessibilityRole="radio"
+                  accessibilityLabel={option.label}
+                  accessibilityState={{ checked: active, disabled: busy }}
+                >
+                  <Text style={[styles.segmentText, active && styles.segmentTextActive]}>{option.label}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+          <Text style={styles.codecHint}>The viewer must also support it. Availability does not guarantee hardware encoding; Auto is recommended for 3+ viewers.</Text>
 
             <View style={[styles.audioSetting, !supportsDeviceAudio && styles.audioSettingDisabled]}>
               <View style={styles.audioCopy}>
@@ -240,6 +264,9 @@ const styles = StyleSheet.create({
   segmentActive: { backgroundColor: colors.acid },
   segmentText: { color: "#8d8d84", fontSize: 11, fontWeight: "600" },
   segmentTextActive: { color: colors.acidInk, fontWeight: "800" },
+  codecOptions: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+  codecOption: { minHeight: 48, minWidth: 58, paddingHorizontal: 9, borderRadius: radii.control, borderWidth: 1, borderColor: colors.line, alignItems: "center", justifyContent: "center" },
+  codecHint: { color: colors.muted, fontSize: 10, lineHeight: 15, marginTop: 7 },
   audioSetting: { minHeight: 66, marginTop: 17, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 1, borderColor: "#373732", borderRadius: radii.control, backgroundColor: "#22221e", flexDirection: "row", alignItems: "center", gap: 12 },
   audioSettingDisabled: { opacity: 0.55 },
   audioCopy: { flex: 1 },

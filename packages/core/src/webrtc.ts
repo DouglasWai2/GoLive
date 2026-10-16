@@ -482,3 +482,18 @@ export async function configureVideoSender(
     await sender.setParameters(fallback);
   }
 }
+
+/**
+ * Share the selected screen bitrate budget across each active P2P viewer.
+ * Without this, every additional viewer multiplies the sharer's outbound cap.
+ */
+export function getScreenViewerBitrate(maxBitrate: number, viewerCount: number): number {
+  const totalBitrate = Number.isFinite(maxBitrate)
+    ? Math.max(1, Math.floor(maxBitrate))
+    : 1;
+  const viewers = Number.isFinite(viewerCount)
+    ? Math.max(1, Math.floor(viewerCount))
+    : 1;
+
+  return Math.max(1, Math.floor(totalBitrate / viewers));
+}

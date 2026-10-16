@@ -5,6 +5,7 @@ import type {
   RTCPeerConnection,
   RTCRtpSender,
 } from "./types";
+import type { VideoCodecPreference } from "./types";
 
 export type DisplayMediaConstraints = {
   video: {
@@ -26,6 +27,12 @@ export type UserMediaConstraints = {
 
 export type VideoCodecCapability = {
   mimeType: string;
+};
+
+export type ScreenSenderLimits = {
+  maxWidth?: number;
+  maxHeight?: number;
+  maxFramerate?: number;
 };
 
 export type HardwareAccelerationSupport = {
@@ -160,11 +167,11 @@ export async function detectHardwareAcceleration(
 }
 
 const videoCodecPriority: Record<string, number> = {
-  H264: 0,
+  H264: 3,
+  AV1X: 0,
+  AV1: 0,
   VP8: 1,
   VP9: 2,
-  AV1: 3,
-  AV1X: 3,
   HEVC: 4,
 };
 
@@ -186,14 +193,12 @@ export function orderVideoCodecs<T extends VideoCodecCapability>(
   const hwPriority = (codec: VideoCodecCapability): number => {
     const key = getHardwareCodec(codec.mimeType);
 
-    // Keep H.264 as the safe default even when MediaCapabilities reports AV1
-    // as power efficient; that signal is not a definitive hardware check.
-    if (key === "H264") return -1;
-    if (!hwAccel) return basePriority(codec);
+    if (!hwAccel) return key === "H264" ? -1 : basePriority(codec);
     if (!key) return Number.MAX_SAFE_INTEGER;
 
-    // Prefer efficient alternatives over software-only ones, but not over H.264.
-    return (hwAccel[key] ? 1 : 10) + basePriority(codec);
+    // A power-efficient encoder is preferred to a software-only codec.
+    // MediaCapabilities is a heuristic; the peer may still negotiate a fallback.
+    return (hwAccel[key] ? 0 : key === "H264" ? 10 : 20) + basePriority(codec);
   };
 
   return codecs
@@ -208,6 +213,23 @@ export function orderVideoCodecs<T extends VideoCodecCapability>(
     .map(({ codec }) => codec);
 }
 
+export function availableVideoCodecs(codecs: readonly VideoCodecCapability[]): VideoCodecPreference[] {
+  return (["H264", "VP8", "VP9", "AV1"] as const).filter((codec) =>
+    codecs.some((capability) => getHardwareCodec(capability.mimeType) === codec),
+  );
+}
+
+/** Reorder, rather than remove, codecs so peers can negotiate a fallback. */
+export function preferVideoCodec<T extends VideoCodecCapability>(
+  codecs: readonly T[],
+  preference: VideoCodecPreference,
+): T[] {
+  if (preference === "auto") return [...codecs];
+  const primary = codecs.filter((codec) => getHardwareCodec(codec.mimeType) === preference);
+  if (primary.length === 0) return [...codecs];
+  return [...primary, ...codecs.filter((codec) => getHardwareCodec(codec.mimeType) !== preference)];
+}
+
 export type PlatformAdapter = {
   getDisplayMedia: (constraints: DisplayMediaConstraints) => Promise<MediaStream>;
   getUserMedia?: (constraints: UserMediaConstraints) => Promise<MediaStream>;
@@ -220,5 +242,6 @@ export type PlatformAdapter = {
   }) => RTCPeerConnection;
   configureVideoCodecs?: (
     connection: RTCPeerConnection,
-  ) => void | Promise<void>;
+    context: { screenPublisherConnectionCount: number; preferredCodec: VideoCodecPreference },
+  ) => void | ScreenSenderLimits | Promise<void | ScreenSenderLimits>;
 };

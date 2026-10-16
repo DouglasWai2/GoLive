@@ -9,15 +9,15 @@ import org.webrtc.VideoEncoder;
 import org.webrtc.VideoEncoderFactory;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * This is a custom video encoder factory for WebRTC which behaves similarly
  * to the default one in iOS. It supports the following codecs:
  *
- * - In hardware: H.264 (high, baseline)
- * - In software: VP8, VP9, AV1
+ * - In hardware: H.264 (high, baseline), plus VP8, VP9 and AV1 when available
+ * - In software: codecs for which the device exposes no hardware encoder
  */
 public class H264AndSoftwareVideoEncoderFactory implements VideoEncoderFactory {
     private final VideoEncoderFactory hardwareVideoEncoderFactory;
@@ -31,11 +31,28 @@ public class H264AndSoftwareVideoEncoderFactory implements VideoEncoderFactory {
     @Nullable
     @Override
     public VideoEncoder createEncoder(VideoCodecInfo codecInfo) {
-        if (codecInfo.name.equalsIgnoreCase("H264")) {
-            return this.hardwareVideoEncoderFactory.createEncoder(codecInfo);
+        for (VideoCodecInfo hardwareCodec : this.hardwareVideoEncoderFactory.getSupportedCodecs()) {
+            if (hardwareCodec.name.equalsIgnoreCase(codecInfo.name)) {
+                VideoEncoder encoder = this.hardwareVideoEncoderFactory.createEncoder(codecInfo);
+                if (encoder != null) {
+                    return encoder;
+                }
+                break;
+            }
         }
 
         return this.softwareVideoEncoderFactory.createEncoder(codecInfo);
+    }
+
+    public String[] getHardwareCodecNames() {
+        List<String> names = new ArrayList<>();
+        for (VideoCodecInfo codec : hardwareVideoEncoderFactory.getSupportedCodecs()) {
+            String name = codec.name.toUpperCase(Locale.ROOT);
+            if (!names.contains(name)) {
+                names.add(name);
+            }
+        }
+        return names.toArray(new String[0]);
     }
 
     @Override
@@ -66,7 +83,25 @@ public class H264AndSoftwareVideoEncoderFactory implements VideoEncoderFactory {
         if (h264Baseline != null) {
             codecs.add(h264Baseline);
         }
-        codecs.addAll(Arrays.asList(this.softwareVideoEncoderFactory.getSupportedCodecs()));
+
+        for (VideoCodecInfo hwCodec : hwCodecs) {
+            if (!hwCodec.name.equalsIgnoreCase("H264")) {
+                codecs.add(hwCodec);
+            }
+        }
+
+        for (VideoCodecInfo softwareCodec : this.softwareVideoEncoderFactory.getSupportedCodecs()) {
+            boolean hardwareAvailable = false;
+            for (VideoCodecInfo hwCodec : hwCodecs) {
+                if (hwCodec.name.equalsIgnoreCase(softwareCodec.name)) {
+                    hardwareAvailable = true;
+                    break;
+                }
+            }
+            if (!hardwareAvailable) {
+                codecs.add(softwareCodec);
+            }
+        }
 
         return codecs.toArray(new VideoCodecInfo[codecs.size()]);
     }

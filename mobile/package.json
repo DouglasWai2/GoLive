@@ -1,6 +1,6 @@
 {
   "name": "@golive/mobile",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "private": true,
   "main": "index.ts",
   "scripts": {
@@ -20,7 +20,7 @@
   },
   "dependencies": {
     "@config-plugins/react-native-webrtc": "^15.0.2",
-    "@golive/core": "1.2.1",
+    "@golive/core": "1.2.2",
     "@neondatabase/auth": "^0.5.0-beta",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-native-community/slider": "^5.2.0",

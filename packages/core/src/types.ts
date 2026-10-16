@@ -22,12 +22,15 @@ export type VoiceState = {
   requestingMicrophone: boolean;
 };
 
+export type VideoCodecPreference = "auto" | "H264" | "VP8" | "VP9" | "AV1";
+
 export type ShareSettings = {
   width: number;
   height: number;
   frameRate: number;
   maxBitrate: number;
   includeAudio: boolean;
+  videoCodec: VideoCodecPreference;
 };
 
 export type RemoteVideoStats = {

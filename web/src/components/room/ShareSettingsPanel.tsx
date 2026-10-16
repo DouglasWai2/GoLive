@@ -5,8 +5,10 @@ import {
   DEFAULT_SHARE_SETTINGS,
   frameRateOptions,
   resolutionOptions,
+  videoCodecOptions,
 } from "@golive/core";
 import { ScreenIcon } from "../icons";
+import { getBrowserScreenVideoCodecs } from "../../platform/webAdapter";
 
 type ShareSettingsPanelProps = {
   isStarting: boolean;
@@ -16,6 +18,7 @@ type ShareSettingsPanelProps = {
 
 export function ShareSettingsPanel({ isStarting, onStart, onCancel }: ShareSettingsPanelProps) {
   const [settings, setSettings] = useState<ShareSettings>(DEFAULT_SHARE_SETTINGS);
+  const [availableCodecs] = useState(getBrowserScreenVideoCodecs);
 
   const resolution = resolutionOptions.find(
     (option) => option.width === settings.width && option.height === settings.height,
@@ -101,6 +104,24 @@ export function ShareSettingsPanel({ isStarting, onStart, onCancel }: ShareSetti
             </button>
           ))}
         </div>
+      </div>
+
+      <div className="setting-row">
+        <span className="setting-label" id="share-codec-label">Preferred video codec</span>
+        <div className="segmented codec-segmented" role="group" aria-labelledby="share-codec-label">
+          {videoCodecOptions.filter((option) => option.value === "auto" || availableCodecs.includes(option.value)).map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              className={settings.videoCodec === option.value ? "active" : ""}
+              aria-pressed={settings.videoCodec === option.value}
+              onClick={() => setSettings((current) => ({ ...current, videoCodec: option.value }))}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+        <small className="setting-hint">The viewer must also support it; availability does not guarantee hardware encoding.</small>
       </div>
 
       <div className="share-settings-actions">

@@ -180,6 +180,17 @@ public class WebRTCModule extends ReactContextBaseJavaModule {
         return mScreenAdm;
     }
 
+    @ReactMethod(isBlockingSynchronousMethod = true)
+    public WritableArray getHardwareVideoEncoderCodecs() {
+        WritableArray codecs = Arguments.createArray();
+        if (mVideoEncoderFactory instanceof H264AndSoftwareVideoEncoderFactory) {
+            for (String codec : ((H264AndSoftwareVideoEncoderFactory) mVideoEncoderFactory).getHardwareCodecNames()) {
+                codecs.pushString(codec);
+            }
+        }
+        return codecs;
+    }
+
     public synchronized void onMicrophoneTrackCreated() {
         microphoneTrackCount += 1;
         MediaProjectionService.setMicrophoneActive(true);
