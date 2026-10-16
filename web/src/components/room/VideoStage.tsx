@@ -113,7 +113,7 @@ export function VideoStage({ localStream, localViewerCount, peers, focusedPeerId
   );
   const localOutboundStats = peers.flatMap((peer) => {
     const stats = outboundStats[peer.id];
-    return stats ? [{ peerId: peer.id, peerName: peer.name, stats }] : [];
+    return stats ? [stats] : [];
   });
   const mainSource: "local" | "remote" | null = stageSource === "none"
     ? null

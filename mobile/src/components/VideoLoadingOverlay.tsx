@@ -7,6 +7,7 @@ import { colors } from "../theme";
 type VideoLoadingOverlayProps = {
   phase: VideoPlaybackPhase;
   connectionState?: PeerConnectionState | null;
+  compact?: boolean;
 };
 
 function loadingCopy(phase: VideoPlaybackPhase, connectionState?: PeerConnectionState | null) {
@@ -58,12 +59,27 @@ function loadingCopy(phase: VideoPlaybackPhase, connectionState?: PeerConnection
   };
 }
 
-export function VideoLoadingOverlay({ phase, connectionState }: VideoLoadingOverlayProps) {
+export function VideoLoadingOverlay({ phase, connectionState, compact = false }: VideoLoadingOverlayProps) {
   if (phase === "playing" && connectionState !== "disconnected" && connectionState !== "failed") {
     return null;
   }
 
   const copy = loadingCopy(phase, connectionState);
+
+  if (compact) {
+    return (
+      <View
+        pointerEvents="none"
+        style={styles.compactOverlay}
+        accessible
+        accessibilityRole="progressbar"
+        accessibilityLabel={`${copy.title}. ${copy.message}`}
+        accessibilityLiveRegion="polite"
+      >
+        <ActivityIndicator size="small" color={colors.acid} />
+      </View>
+    );
+  }
 
   return (
     <View
@@ -86,6 +102,17 @@ export function VideoLoadingOverlay({ phase, connectionState }: VideoLoadingOver
 }
 
 const styles = StyleSheet.create({
+  compactOverlay: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    zIndex: 2,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(8,8,8,0.65)",
+  },
   overlay: {
     position: "absolute",
     top: 0,

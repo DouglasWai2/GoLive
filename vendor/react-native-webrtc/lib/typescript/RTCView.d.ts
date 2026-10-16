@@ -80,6 +80,10 @@ export interface RTCVideoViewProps extends ViewProps {
             height: number;
         };
     }) => void;
+    /** Called after the renderer presents its first video frame (Android). */
+    onFirstFrameRendered?: (event: {
+        nativeEvent: Record<string, never>;
+    }) => void;
 }
 export interface RTCIOSPIPOptions {
     /**

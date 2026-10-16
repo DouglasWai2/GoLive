@@ -7,15 +7,9 @@ type RemoteStreamStatsProps = {
   outbound?: never;
 };
 
-export type OutboundStatsEntry = {
-  peerId: string;
-  peerName: string;
-  stats: OutboundVideoStats;
-};
-
 type OutboundStreamStatsProps = {
   stats?: never;
-  outbound: OutboundStatsEntry[];
+  outbound: OutboundVideoStats[];
 };
 
 type StreamStatsProps = RemoteStreamStatsProps | OutboundStreamStatsProps;
@@ -34,28 +28,34 @@ function Stat({ label, children }: { label: string; children: ReactNode }) {
 
 export function StreamStats(props: StreamStatsProps) {
   if (props.outbound) {
+    const resolutions = props.outbound.flatMap(({ width, height }) =>
+      width !== null && height !== null ? [{ width, height }] : [],
+    );
+    const lowestResolution = resolutions.reduce<{ width: number; height: number } | null>(
+      (lowest, current) =>
+        !lowest || current.width * current.height < lowest.width * lowest.height
+          ? current
+          : lowest,
+      null,
+    );
+    const frameRates = props.outbound.flatMap(({ fps }) => fps === null ? [] : [fps]);
+    const lowestFrameRate = frameRates.length > 0 ? Math.min(...frameRates) : null;
+    const totalBitrateKbps = props.outbound.reduce((total, stats) => total + stats.bitrateKbps, 0);
+    const codecs = [...new Set(
+      props.outbound.flatMap(({ codec }) => codec === null ? [] : [formatCodec(codec)]),
+    )];
+    const codec = codecs.length === 0 ? "—" : codecs.length === 1 ? codecs[0] : "Mixed";
+
     return (
       <div className="stream-stats outbound-stream-stats">
-        {props.outbound.map(({ peerId, peerName, stats }) => (
-          <div className="outbound-stream-stats-row" key={peerId}>
-            <Stat label="Resolution">
-              {stats.width !== null && stats.height !== null
-                ? `${stats.width}×${stats.height}`
-                : "—"}
-            </Stat>
-            <Stat label="Frame rate">{value(stats.fps, " fps")}</Stat>
-            <Stat label="Send bitrate">{formatKbps(stats.bitrateKbps)}</Stat>
-            <Stat label="Available">
-              {stats.availableOutgoingBitrateKbps === null
-                ? "—"
-                : formatKbps(stats.availableOutgoingBitrateKbps)}
-            </Stat>
-            <Stat label="Limited by">{stats.qualityLimitationReason ?? "—"}</Stat>
-            <Stat label="RTT">{value(stats.rttMs, " ms")}</Stat>
-            <Stat label="Connection">{formatConnectionRoute(stats.route)}</Stat>
-            <Stat label="Codec">{formatCodec(stats.codec)}</Stat>
-          </div>
-        ))}
+        <div className="outbound-stream-stats-row">
+          <Stat label="Min resolution">
+            {lowestResolution ? `${lowestResolution.width}×${lowestResolution.height}` : "—"}
+          </Stat>
+          <Stat label="Min frame rate">{value(lowestFrameRate, " fps")}</Stat>
+          <Stat label="Total bitrate">{formatKbps(totalBitrateKbps)}</Stat>
+          <Stat label="Codec">{codec}</Stat>
+        </div>
       </div>
     );
   }

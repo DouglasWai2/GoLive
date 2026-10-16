@@ -36,64 +36,136 @@ export type HardwareAccelerationSupport = {
   HEVC: boolean;
 };
 
+type VideoEncodingConfiguration = {
+  type: "webrtc";
+  video: {
+    contentType: string;
+    width: number;
+    height: number;
+    bitrate: number;
+    framerate: number;
+  };
+};
+
+type VideoEncodingInfo = {
+  supported: boolean;
+  powerEfficient: boolean;
+};
+
+type VideoEncodingInfoQuery = (
+  configuration: VideoEncodingConfiguration,
+) => Promise<VideoEncodingInfo>;
+
+const hardwareCodecContentTypes: Record<keyof HardwareAccelerationSupport, string> = {
+  H264: 'video/mp4; codecs="avc1.42E01E"',
+  VP8: 'video/webm; codecs="vp8"',
+  VP9: 'video/webm; codecs="vp9"',
+  AV1: 'video/mp4; codecs="av01.0.10M.08"',
+  HEVC: 'video/mp4; codecs="hvc1.1.6.L120.B0"',
+};
+
+function getHardwareCodec(mimeType: string): keyof HardwareAccelerationSupport | null {
+  const mime = mimeType.split("/").pop()?.toUpperCase() ?? "";
+
+  switch (mime) {
+    case "H264":
+    case "AVC":
+      return "H264";
+    case "VP8":
+      return "VP8";
+    case "VP9":
+      return "VP9";
+    case "AV1":
+    case "AV01":
+    case "AV1X":
+      return "AV1";
+    case "HEVC":
+    case "H265":
+      return "HEVC";
+    default:
+      return null;
+  }
+}
+
+function getBrowserVideoCodecs(): readonly VideoCodecCapability[] {
+  try {
+    if (typeof RTCRtpSender === "undefined" || !RTCRtpSender.getCapabilities) {
+      return [];
+    }
+
+    return RTCRtpSender.getCapabilities("video")?.codecs ?? [];
+  } catch {
+    return [];
+  }
+}
+
+function getVideoEncodingInfoQuery(): VideoEncodingInfoQuery | undefined {
+  if (
+    typeof navigator === "undefined"
+    || typeof navigator.mediaCapabilities?.encodingInfo !== "function"
+  ) {
+    return undefined;
+  }
+
+  return (configuration) => navigator.mediaCapabilities.encodingInfo(configuration);
+}
+
 /**
- * Detects hardware acceleration support for video codecs.
- * Uses RTCRtpSender.getCapabilities() to check for hardware encoder support.
+ * Uses MediaCapabilities' power-efficiency signal as a hardware-encoding
+ * heuristic, and only for codecs also exposed by WebRTC. getCapabilities()
+ * alone lists usable codecs; it does not indicate hardware acceleration.
+ * Browsers may not expose this signal, in which case codec ordering falls back
+ * to the conservative H.264-first priority.
  */
-export async function detectHardwareAcceleration(): Promise<HardwareAccelerationSupport> {
-  const defaultSupport: HardwareAccelerationSupport = {
-    H264: true, // H264 is almost always hardware accelerated
+export async function detectHardwareAcceleration(
+  codecs: readonly VideoCodecCapability[] = getBrowserVideoCodecs(),
+  encodingInfo: VideoEncodingInfoQuery | null | undefined = getVideoEncodingInfoQuery(),
+): Promise<HardwareAccelerationSupport> {
+  const support: HardwareAccelerationSupport = {
+    H264: false,
     VP8: false,
     VP9: false,
     AV1: false,
     HEVC: false,
   };
 
-  try {
-    if (typeof RTCRtpSender === "undefined" || !RTCRtpSender.getCapabilities) {
-      return defaultSupport;
-    }
+  if (!encodingInfo) return support;
 
-    const capabilities = RTCRtpSender.getCapabilities("video");
-    if (!capabilities || !capabilities.codecs) {
-      return defaultSupport;
-    }
-
-    const support: HardwareAccelerationSupport = { ...defaultSupport };
-
-    for (const codec of capabilities.codecs) {
-      const mimeType = codec.mimeType?.toLowerCase();
-      if (!mimeType) continue;
-
-      // Check if the codec has hardware acceleration
-      // The presence of the codec in getCapabilities doesn't guarantee HW accel,
-      // but we can check for specific implementations
-      if (mimeType.includes("av1") || mimeType.includes("av01")) {
-        support.AV1 = true;
-      } else if (mimeType.includes("h264") || mimeType.includes("avc")) {
-        support.H264 = true;
-      } else if (mimeType.includes("vp9")) {
-        support.VP9 = true;
-      } else if (mimeType.includes("vp8")) {
-        support.VP8 = true;
-      } else if (mimeType.includes("hevc") || mimeType.includes("h265")) {
-        support.HEVC = true;
-      }
-    }
-
-    return support;
-  } catch {
-    return defaultSupport;
+  const availableCodecs = new Set<keyof HardwareAccelerationSupport>();
+  for (const codec of codecs) {
+    const key = codec.mimeType ? getHardwareCodec(codec.mimeType) : null;
+    if (key) availableCodecs.add(key);
   }
+
+  await Promise.all([...availableCodecs].map(async (key) => {
+    try {
+      const result = await encodingInfo({
+        type: "webrtc",
+        video: {
+          contentType: hardwareCodecContentTypes[key],
+          width: 1920,
+          height: 1080,
+          bitrate: 8_000_000,
+          framerate: 60,
+        },
+      });
+
+      support[key] = result.supported && result.powerEfficient;
+    } catch {
+      // A failed query is not evidence of hardware acceleration.
+    }
+  }));
+
+  return support;
 }
 
 const videoCodecPriority: Record<string, number> = {
-  AV1: 0,
-  AV1X: 0,
-  H264: 1,
-  HEVC: 2,
-  VP8: 3,
-  VP9: 4,
+  H264: 0,
+  VP8: 1,
+  VP9: 2,
+  AV1: 3,
+  AV1X: 3,
+  HEVC: 4,
 };
 
 /**
@@ -105,16 +177,23 @@ export function orderVideoCodecs<T extends VideoCodecCapability>(
   hwAccel?: HardwareAccelerationSupport,
 ): T[] {
   const basePriority = (codec: VideoCodecCapability): number => {
-    const mime = codec.mimeType.split("/").pop()?.toUpperCase() ?? "";
-    return videoCodecPriority[mime] ?? Number.MAX_SAFE_INTEGER;
+    const key = getHardwareCodec(codec.mimeType);
+    return key
+      ? videoCodecPriority[key]
+      : Number.MAX_SAFE_INTEGER;
   };
 
   const hwPriority = (codec: VideoCodecCapability): number => {
+    const key = getHardwareCodec(codec.mimeType);
+
+    // Keep H.264 as the safe default even when MediaCapabilities reports AV1
+    // as power efficient; that signal is not a definitive hardware check.
+    if (key === "H264") return -1;
     if (!hwAccel) return basePriority(codec);
-    const mime = codec.mimeType.split("/").pop()?.toUpperCase() ?? "";
-    const hwAccelerated = hwAccel[mime as keyof HardwareAccelerationSupport];
-    // Hardware accelerated codecs get priority boost (subtract 10)
-    return hwAccelerated ? basePriority(codec) - 10 : basePriority(codec);
+    if (!key) return Number.MAX_SAFE_INTEGER;
+
+    // Prefer efficient alternatives over software-only ones, but not over H.264.
+    return (hwAccel[key] ? 1 : 10) + basePriority(codec);
   };
 
   return codecs

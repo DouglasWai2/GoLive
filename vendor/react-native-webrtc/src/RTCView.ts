@@ -81,6 +81,9 @@ export interface RTCVideoViewProps extends ViewProps {
    * @param {number} event.nativeEvent.height - The height of the video.
    */
   onDimensionsChange?: (event: { nativeEvent: { width: number; height: number } }) => void;
+
+  /** Called after the renderer presents its first video frame (Android). */
+  onFirstFrameRendered?: (event: { nativeEvent: Record<string, never> }) => void;
 }
 
 export interface RTCIOSPIPOptions {

@@ -1,11 +1,28 @@
 import { useEffect, useRef } from "react";
 import { NativeModules, Platform } from "react-native";
+import {
+  DEFAULT_VOICE_PLAYBACK_SETTINGS,
+  getVoicePlaybackVolume,
+  type VoicePlaybackSettings,
+} from "../utils/voicePlayback";
 
 type VoiceAudioProps = {
   tracks: Record<string, any>;
   deafened: boolean;
+  globalVolume: number;
+  settings: Record<string, VoicePlaybackSettings>;
   activeMediaCount: number;
 };
+
+function setTrackVolume(peerId: string, track: any, volume: number) {
+  if (!track || typeof track._setVolume !== "function") return;
+
+  try {
+    track._setVolume(volume);
+  } catch (error) {
+    console.warn(`VoiceAudio: failed to set volume for ${peerId}`, error);
+  }
+}
 
 const setLoudspeakerPreferred = (enabled: boolean) => {
   if (Platform.OS === "android") {
@@ -15,15 +32,14 @@ const setLoudspeakerPreferred = (enabled: boolean) => {
 
 /**
  * VoiceAudio handles playback of remote voice tracks on mobile.
- * Uses track._setVolume() for per-track volume control (deafen).
+ * Uses track._setVolume() for per-participant, room-wide, and deafen volume.
  * No audio element needed - react-native-webrtc handles playback natively.
  */
-export function VoiceAudio({ tracks, deafened, activeMediaCount }: VoiceAudioProps) {
+export function VoiceAudio({ tracks, deafened, globalVolume, settings, activeMediaCount }: VoiceAudioProps) {
   const tracksRef = useRef(tracks);
-  const deafenedRef = useRef(deafened);
+  const previousTracksRef = useRef(tracks);
 
   tracksRef.current = tracks;
-  deafenedRef.current = deafened;
 
   useEffect(() => {
     setLoudspeakerPreferred(true);
@@ -35,30 +51,27 @@ export function VoiceAudio({ tracks, deafened, activeMediaCount }: VoiceAudioPro
   }, [activeMediaCount]);
 
   useEffect(() => {
-    const volume = deafened ? 0 : 1;
+    for (const [peerId, previousTrack] of Object.entries(previousTracksRef.current)) {
+      if (tracks[peerId] !== previousTrack) setTrackVolume(peerId, previousTrack, 1);
+    }
 
     for (const [peerId, track] of Object.entries(tracks)) {
-      if (track && typeof track._setVolume === "function") {
-        try {
-          track._setVolume(volume);
-        } catch (e) {
-          console.warn(`VoiceAudio: failed to set volume for ${peerId}`, e);
-        }
-      }
+      const participantSettings = settings[peerId] ?? DEFAULT_VOICE_PLAYBACK_SETTINGS;
+      setTrackVolume(
+        peerId,
+        track,
+        getVoicePlaybackVolume(participantSettings, globalVolume, deafened),
+      );
     }
-  }, [deafened, tracks]);
+
+    previousTracksRef.current = tracks;
+  }, [deafened, globalVolume, settings, tracks]);
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      for (const track of Object.values(tracksRef.current)) {
-        if (track && typeof track._setVolume === "function") {
-          try {
-            track._setVolume(1);
-          } catch {
-            // ignore
-          }
-        }
+      for (const [peerId, track] of Object.entries(tracksRef.current)) {
+        setTrackVolume(peerId, track, 1);
       }
     };
   }, []);

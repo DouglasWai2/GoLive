@@ -36,11 +36,10 @@ export function useVideoPlaybackState(stream: MediaStream | null, active = true)
       setPlayback({ stream, active: true, phase });
     };
     const onMuted = () => {
-      setPlayback((current) => (
-        current.stream === stream && current.phase === "playing"
-          ? { stream, active: true, phase: "buffering" }
-          : current
-      ));
+      setPlayback((current) => {
+        if (current.stream !== stream || current.phase !== "playing") return current;
+        return { stream, active: true, phase: "buffering" };
+      });
     };
     const onUnmuted = () => setPhase("playing");
     const onEnded = () => setPhase("ended");
@@ -71,7 +70,9 @@ export function useVideoPlaybackState(stream: MediaStream | null, active = true)
 
   let phase: VideoPlaybackPhase = "playing";
   if (active && stream) {
-    phase = playback.active && playback.stream === stream ? playback.phase : "loading";
+    phase = playback.active && playback.stream === stream
+      ? playback.phase
+      : "loading";
   }
 
   return { phase, onDimensionsChange };

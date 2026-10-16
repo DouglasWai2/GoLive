@@ -26,9 +26,46 @@ export function ScreenIcon({ size = 20, color = "currentColor" }: IconProps) {
 export function ScreenOffIcon({ size = 20, color = "currentColor" }: IconProps) {
   return (
     <Svg {...common(size, color)}>
-      <Path d="M4 5.5 20 19M8 21h8M12 17v4" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
-      <Path d="M3 12V6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-1" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-      <Path d="M3 16v-1" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+      <Path d="M8 4h11a2 2 0 0 1 2 2v9M3 7v8a2 2 0 0 0 2 2h12M8 21h8M12 17v4M3 3l18 18" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </Svg>
+  );
+}
+
+export function PhoneOffIcon({ size = 20, color = "currentColor" }: IconProps) {
+  return (
+    <Svg {...common(size, color)}>
+      <Path d="M3 13.5c5.2-4.4 12.8-4.4 18 0l-2 3.2a1.5 1.5 0 0 1-1.9.6l-2.1-1a1.5 1.5 0 0 1-.9-1.4v-1.2a14 14 0 0 0-4.2 0v1.2a1.5 1.5 0 0 1-.9 1.4l-2.1 1a1.5 1.5 0 0 1-1.9-.6L3 13.5Z" stroke={color} strokeWidth="1.8" strokeLinejoin="round" />
+    </Svg>
+  );
+}
+
+export function ChevronDownIcon({ size = 14, color = "currentColor", expanded = false }: IconProps & { expanded?: boolean }) {
+  return (
+    <Svg {...common(size, color)}>
+      <Path
+        d={expanded ? "m6 15 6-6 6 6" : "m6 9 6 6 6-6"}
+        stroke={color}
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </Svg>
+  );
+}
+
+export function CopyIcon({ size = 18, color = "currentColor" }: IconProps) {
+  return (
+    <Svg {...common(size, color)}>
+      <Rect x="8" y="8" width="11" height="11" rx="2" stroke={color} strokeWidth="1.8" />
+      <Path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" stroke={color} strokeWidth="1.8" />
+    </Svg>
+  );
+}
+
+export function CheckIcon({ size = 18, color = "currentColor" }: IconProps) {
+  return (
+    <Svg {...common(size, color)}>
+      <Path d="m5 12 4.5 4.5L19 7" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
     </Svg>
   );
 }

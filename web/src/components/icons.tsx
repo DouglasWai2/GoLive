@@ -133,6 +133,14 @@ export function MicrophoneIcon({ size = 18 }: IconProps) {
   );
 }
 
+export function HeadphonesIcon({ size = 16 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M4 13v-1a8 8 0 0 1 16 0v1M4 13h3v7H6a2 2 0 0 1-2-2v-5ZM20 13h-3v7h1a2 2 0 0 0 2-2v-5Z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 export function MicrophoneMutedIcon({ size = 18 }: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">

@@ -1,4 +1,4 @@
-import { Pressable, StyleSheet, View } from "react-native";
+import { Pressable, StyleSheet, View, type StyleProp, type ViewStyle } from "react-native";
 import SliderBase, { type SliderProps } from "@react-native-community/slider";
 import { VolumeIcon, VolumeMutedIcon } from "./icons";
 import { colors, radii } from "../theme";
@@ -9,6 +9,11 @@ type VolumeControlProps = {
   volume: number;
   muted: boolean;
   disabled?: boolean;
+  volumeLabel?: string;
+  muteLabel?: string;
+  unmuteLabel?: string;
+  disabledLabel?: string;
+  sliderStyle?: StyleProp<ViewStyle>;
   onVolumeChange: (volume: number) => void;
   onToggleMute: () => void;
 };
@@ -17,9 +22,17 @@ export function VolumeControl({
   volume,
   muted,
   disabled = false,
+  volumeLabel = "Stream volume",
+  muteLabel = "Mute stream",
+  unmuteLabel = "Unmute stream",
+  disabledLabel = "No shared audio",
+  sliderStyle,
   onVolumeChange,
   onToggleMute,
 }: VolumeControlProps) {
+  const actionLabel = disabled ? disabledLabel : muted ? unmuteLabel : muteLabel;
+  const level = muted || disabled ? 0 : volume;
+
   return (
     <View style={[styles.wrap, disabled && styles.wrapDisabled]}>
       <Pressable
@@ -27,7 +40,7 @@ export function VolumeControl({
         onPress={onToggleMute}
         disabled={disabled}
         accessibilityRole="button"
-        accessibilityLabel={disabled ? "No shared audio" : muted ? "Unmute stream" : "Mute stream"}
+        accessibilityLabel={actionLabel}
         accessibilityState={{ selected: muted, disabled }}
       >
         {muted ? (
@@ -37,11 +50,11 @@ export function VolumeControl({
         )}
       </Pressable>
       <Slider
-        style={styles.slider}
+        style={[styles.slider, sliderStyle]}
         minimumValue={0}
         maximumValue={1}
         step={0.05}
-        value={disabled ? 0 : volume}
+        value={level}
         disabled={disabled}
         onSlidingStart={() => {
           if (muted) onToggleMute();
@@ -50,7 +63,7 @@ export function VolumeControl({
         minimumTrackTintColor={muted || disabled ? "#6e6e66" : colors.acid}
         maximumTrackTintColor="#45453f"
         thumbTintColor={muted || disabled ? "#98988f" : colors.acid}
-        accessibilityLabel={disabled ? "No shared audio" : "Stream volume"}
+        accessibilityLabel={disabled ? disabledLabel : volumeLabel}
       />
     </View>
   );

@@ -86,6 +86,6 @@ export type {
   HardwareAccelerationSupport,
 } from "./adapter";
 export { RoomSession } from "./roomSession";
-export type { RoomSessionDeps, RoomSessionCallbacks } from "./roomSession";
+export type { RoomSessionDeps, RoomSessionCallbacks, VoiceAudioLevels } from "./roomSession";
 export { notificationSoundDefinition } from "./notificationSounds";
 export type { NotificationSound, NotificationTone } from "./notificationSounds";

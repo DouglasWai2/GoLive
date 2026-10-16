@@ -11,13 +11,22 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { Peer } from "@golive/core";
 import {
+  ChevronDownIcon,
   CloseIcon,
   MicrophoneIcon,
   MicrophoneMutedIcon,
   ScreenIcon,
   ScreenOffIcon,
+  VolumeIcon,
+  VolumeMutedIcon,
 } from "./icons";
+import { RoomVoiceVolumeControl } from "./RoomVoiceVolumeControl";
+import { VolumeControl } from "./VolumeControl";
 import { colors, controlShadow, radii, technicalText } from "../theme";
+import {
+  DEFAULT_VOICE_PLAYBACK_SETTINGS,
+  type VoicePlaybackSettings,
+} from "../utils/voicePlayback";
 
 type ParticipantsListProps = {
   participants: Peer[];
@@ -30,6 +39,11 @@ type ParticipantsListProps = {
   onClose?: () => void;
   focusedPeerId?: string | null;
   onWatchPeer?: (peerId: string) => void;
+  voicePlaybackSettings: Record<string, VoicePlaybackSettings>;
+  globalVoiceVolume: number;
+  onVoiceVolumeChange: (peerId: string, volume: number) => void;
+  onTogglePeerVoiceMute: (peerId: string) => void;
+  onGlobalVoiceVolumeChange: (volume: number) => void;
 };
 
 type ParticipantRowProps = {
@@ -41,6 +55,10 @@ type ParticipantRowProps = {
   shareStarting?: boolean;
   focused?: boolean;
   onWatch?: () => void;
+  voiceVolume?: number;
+  voiceMuted?: boolean;
+  onVoiceVolumeChange?: (volume: number) => void;
+  onToggleVoiceMute?: () => void;
 };
 
 function ParticipantRow({
@@ -52,63 +70,103 @@ function ParticipantRow({
   shareStarting = false,
   focused = false,
   onWatch,
+  voiceVolume = 1,
+  voiceMuted = false,
+  onVoiceVolumeChange,
+  onToggleVoiceMute,
 }: ParticipantRowProps) {
+  const [voiceSettingsExpanded, setVoiceSettingsExpanded] = useState(false);
   const voiceLabel = !voiceJoined ? "No voice" : micMuted ? "Mic muted" : "Mic on";
   const voiceColor = !voiceJoined || micMuted ? colors.muted : colors.acid;
   const shareLabel = shareStarting ? "Starting" : sharing ? "Sharing" : "Not sharing";
   const shareColor = sharing ? colors.acid : colors.muted;
+  const canAdjustVoice = !isYou && voiceJoined && onVoiceVolumeChange && onToggleVoiceMute;
 
   return (
-    <View style={styles.participantRow}>
-      <View style={styles.participantCopy}>
-        <View style={styles.nameLine}>
-          <Text numberOfLines={1} ellipsizeMode="tail" style={styles.name}>
-            {name}
-          </Text>
-          {isYou ? <Text style={styles.youBadge}>YOU</Text> : null}
-        </View>
-        <View style={styles.statusLine}>
-          {!isYou ? (
+    <View style={styles.participantEntry}>
+      <View style={styles.participantRow}>
+        <View style={styles.participantCopy}>
+          <View style={styles.nameLine}>
+            <Text numberOfLines={1} ellipsizeMode="tail" style={styles.name}>
+              {name}
+            </Text>
+            {isYou ? <Text style={styles.youBadge}>YOU</Text> : null}
+          </View>
+          <View style={styles.statusLine}>
+            {!isYou ? (
+              <View style={styles.statusBadge}>
+                {sharing ? (
+                  <ScreenIcon size={14} color={shareColor} />
+                ) : (
+                  <ScreenOffIcon size={14} color={shareColor} />
+                )}
+                <Text style={[styles.statusText, { color: shareColor }]}>{shareLabel}</Text>
+              </View>
+            ) : null}
             <View style={styles.statusBadge}>
-              {sharing ? (
-                <ScreenIcon size={14} color={shareColor} />
+              {voiceJoined && !micMuted ? (
+                <MicrophoneIcon size={14} color={voiceColor} />
               ) : (
-                <ScreenOffIcon size={14} color={shareColor} />
+                <MicrophoneMutedIcon size={14} color={voiceColor} />
               )}
-              <Text style={[styles.statusText, { color: shareColor }]}>{shareLabel}</Text>
+              <Text style={[styles.statusText, { color: voiceColor }]}>{voiceLabel}</Text>
             </View>
-          ) : null}
-          <View style={styles.statusBadge}>
-            {voiceJoined && !micMuted ? (
-              <MicrophoneIcon size={14} color={voiceColor} />
-            ) : (
-              <MicrophoneMutedIcon size={14} color={voiceColor} />
-            )}
-            <Text style={[styles.statusText, { color: voiceColor }]}>{voiceLabel}</Text>
           </View>
         </View>
+
+        {onWatch ? (
+          <Pressable
+            style={({ pressed }) => [
+              styles.watchButton,
+              focused && styles.watchButtonSelected,
+              shareStarting && styles.buttonDisabled,
+              pressed && !shareStarting && styles.pressed,
+            ]}
+            onPress={onWatch}
+            disabled={shareStarting}
+            accessibilityRole="button"
+            accessibilityLabel={focused ? `Watching ${name}'s screen` : `Watch ${name}'s screen`}
+            accessibilityHint="Switches the screen shown in the room."
+            accessibilityState={{ selected: focused, disabled: shareStarting, busy: shareStarting }}
+          >
+            <ScreenIcon size={16} color={focused ? colors.acidInk : colors.paper} />
+            <Text style={[styles.watchText, focused && styles.watchTextSelected]}>
+              {shareStarting ? "Starting" : focused ? "Watching" : "Watch"}
+            </Text>
+          </Pressable>
+        ) : null}
       </View>
 
-      {onWatch ? (
-        <Pressable
-          style={({ pressed }) => [
-            styles.watchButton,
-            focused && styles.watchButtonSelected,
-            shareStarting && styles.buttonDisabled,
-            pressed && !shareStarting && styles.pressed,
-          ]}
-          onPress={onWatch}
-          disabled={shareStarting}
-          accessibilityRole="button"
-          accessibilityLabel={focused ? `Watching ${name}'s screen` : `Watch ${name}'s screen`}
-          accessibilityHint="Switches the screen shown in the room."
-          accessibilityState={{ selected: focused, disabled: shareStarting, busy: shareStarting }}
-        >
-          <ScreenIcon size={16} color={focused ? colors.acidInk : colors.paper} />
-          <Text style={[styles.watchText, focused && styles.watchTextSelected]}>
-            {shareStarting ? "Starting" : focused ? "Watching" : "Watch"}
-          </Text>
-        </Pressable>
+      {canAdjustVoice ? (
+        <View style={styles.voiceSettings}>
+          <Pressable
+            style={({ pressed }) => [styles.voiceSettingsToggle, pressed && styles.pressed]}
+            onPress={() => setVoiceSettingsExpanded((expanded) => !expanded)}
+            accessibilityRole="button"
+            accessibilityLabel={`${voiceSettingsExpanded ? "Hide" : "Show"} ${name}'s voice volume controls`}
+            accessibilityState={{ expanded: voiceSettingsExpanded }}
+          >
+            {voiceMuted ? (
+              <VolumeMutedIcon size={16} color={colors.redText} />
+            ) : (
+              <VolumeIcon size={16} color={colors.paper} />
+            )}
+            <Text style={styles.voiceSettingsLabel}>Voice volume</Text>
+            <ChevronDownIcon size={16} color={colors.muted} expanded={voiceSettingsExpanded} />
+          </Pressable>
+          {voiceSettingsExpanded ? (
+            <VolumeControl
+              volume={voiceVolume}
+              muted={voiceMuted}
+              volumeLabel={`${name}'s voice volume`}
+              muteLabel={`Mute ${name}'s voice`}
+              unmuteLabel={`Unmute ${name}'s voice`}
+              sliderStyle={styles.participantVoiceSlider}
+              onVolumeChange={onVoiceVolumeChange}
+              onToggleMute={onToggleVoiceMute}
+            />
+          ) : null}
+        </View>
       ) : null}
     </View>
   );
@@ -122,6 +180,11 @@ export function ParticipantsList({
   onClose,
   focusedPeerId,
   onWatchPeer,
+  voicePlaybackSettings,
+  globalVoiceVolume,
+  onVoiceVolumeChange,
+  onTogglePeerVoiceMute,
+  onGlobalVoiceVolumeChange,
 }: ParticipantsListProps) {
   const [dismissedLocally, setDismissedLocally] = useState(false);
   const { width, height } = useWindowDimensions();
@@ -192,6 +255,11 @@ export function ParticipantsList({
             </Pressable>
           </View>
 
+          <RoomVoiceVolumeControl
+            volume={globalVoiceVolume}
+            onVolumeChange={onGlobalVoiceVolumeChange}
+          />
+
           <ScrollView
             style={styles.list}
             contentContainerStyle={styles.listContent}
@@ -207,6 +275,8 @@ export function ParticipantsList({
               const shareStarting = participant.sharing && !participant.streamId;
               const canWatch = participant.sharing && Boolean(onWatchPeer);
               const focused = participant.id === focusedPeerId;
+              const voiceSettings = voicePlaybackSettings[participant.id]
+                ?? DEFAULT_VOICE_PLAYBACK_SETTINGS;
 
               return (
                 <ParticipantRow
@@ -217,6 +287,10 @@ export function ParticipantsList({
                   sharing={participant.sharing}
                   shareStarting={shareStarting}
                   focused={focused}
+                  voiceVolume={voiceSettings.volume}
+                  voiceMuted={voiceSettings.muted}
+                  onVoiceVolumeChange={(volume) => onVoiceVolumeChange(participant.id, volume)}
+                  onToggleVoiceMute={() => onTogglePeerVoiceMute(participant.id)}
                   onWatch={canWatch ? () => {
                     onWatchPeer?.(participant.id);
                     if (!shareStarting) close();
@@ -297,14 +371,12 @@ const styles = StyleSheet.create({
   list: { flexShrink: 1 },
   listContent: { paddingTop: 6, paddingBottom: 8 },
   participantRow: {
-    minHeight: 68,
+    minHeight: 50,
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
-    paddingVertical: 9,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.line,
   },
+  participantEntry: { paddingVertical: 9, gap: 6, borderBottomWidth: 1, borderBottomColor: colors.line },
   participantCopy: { flex: 1, minWidth: 0, gap: 7 },
   nameLine: { flexDirection: "row", alignItems: "center", gap: 8 },
   name: { flexShrink: 1, color: colors.paper, fontSize: 14, fontWeight: "700" },
@@ -321,6 +393,20 @@ const styles = StyleSheet.create({
   statusLine: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8 },
   statusBadge: { flexDirection: "row", alignItems: "center", gap: 4 },
   statusText: { fontSize: 11, fontWeight: "600" },
+  voiceSettings: { gap: 8 },
+  voiceSettingsToggle: {
+    minHeight: 48,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderColor: colors.lineStrong,
+    borderRadius: radii.control,
+    backgroundColor: colors.surfaceControl,
+  },
+  voiceSettingsLabel: { flex: 1, color: colors.paper, fontSize: 12, fontWeight: "600" },
+  participantVoiceSlider: { flex: 1 },
   watchButton: {
     minWidth: 94,
     minHeight: 48,

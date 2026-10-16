@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import type { PeerConnectionState, RemoteVideoStats } from "@golive/core";
+import type { OutboundVideoStats, PeerConnectionState, RemoteVideoStats } from "@golive/core";
 import { CloseIcon, FullscreenExitIcon, FullscreenIcon, MinimizeIcon, UsersIcon } from "./icons";
-import { StreamStats, type OutboundStatsEntry } from "./room/StreamStats";
+import { StreamStats } from "./room/StreamStats";
 import StatsButton from "./room/StatsButton";
 import { VolumeControl } from "./room/VolumeControl";
 import { useVideoPlaybackState } from "../hooks/useVideoPlaybackState";
@@ -15,7 +15,7 @@ type VideoTileProps = {
   state?: PeerConnectionState;
   qualityLabel?: string | null;
   stats?: RemoteVideoStats | null;
-  outboundStats?: OutboundStatsEntry[];
+  outboundStats?: OutboundVideoStats[];
   volume?: number;
   muted?: boolean;
   statsEnabled?: boolean;

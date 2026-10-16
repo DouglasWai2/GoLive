@@ -87,12 +87,20 @@ public class RTCVideoViewManager extends SimpleViewManager<WebRTCView> {
         view.setOnDimensionsChange(onDimensionsChange);
     }
 
+    @ReactProp(name = "onFirstFrameRendered")
+    public void setOnFirstFrameRendered(WebRTCView view, boolean onFirstFrameRendered) {
+        view.setOnFirstFrameRendered(onFirstFrameRendered);
+    }
+
     @Override
     public Map<String, Object> getExportedCustomDirectEventTypeConstants() {
         Map<String, Object> eventTypeConstants = new HashMap<>();
         Map<String, String> dimensionsChangeEvent = new HashMap<>();
         dimensionsChangeEvent.put("registrationName", "onDimensionsChange");
         eventTypeConstants.put("onDimensionsChange", dimensionsChangeEvent);
+        Map<String, String> firstFrameRenderedEvent = new HashMap<>();
+        firstFrameRenderedEvent.put("registrationName", "onFirstFrameRendered");
+        eventTypeConstants.put("onFirstFrameRendered", firstFrameRenderedEvent);
         return eventTypeConstants;
     }
 }

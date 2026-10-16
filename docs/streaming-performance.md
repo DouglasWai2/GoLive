@@ -13,9 +13,12 @@ resultados abaixo são um registro a preencher, não números presumidos.
   cadência; falhas de `applyConstraints()` são ignoradas.
 - No navegador, `webAdapter` usa `getDisplayMedia()` com as restrições de vídeo
   e ordena os codecs com `detectHardwareAcceleration()` e `orderVideoCodecs()`.
-  A detecção usa codecs anunciados por `RTCRtpSender.getCapabilities()` como
-  indicador; anunciar um codec **não comprova** aceleração por hardware. A
-  prioridade do codec negociado deve ser conferida nas estatísticas de cada peer.
+  `RTCRtpSender.getCapabilities()` informa quais codecs WebRTC estão disponíveis,
+  não quais têm encoder de hardware. Para os codecs anunciados, a detecção usa
+  `MediaCapabilities.encodingInfo()` e `powerEfficient` como heurística; isso
+  também não é prova definitiva de hardware. Sem esse sinal, a ordem começa por
+  H.264, seguida por VP8, VP9, AV1 e HEVC. Confira o codec negociado nas
+  estatísticas de cada peer.
 - No Android, `mobile/src/adapter.ts` usa MediaProjection e o caminho nativo
   continua com `DEFAULT_FPS = 30`; as restrições width/height e FPS do core não
   alteram esse teto do capturador. **Baseline pré-`62ea2f4`:** o
@@ -42,12 +45,14 @@ resultados abaixo são um registro a preencher, não números presumidos.
   `degradationPreference = maintain-resolution` para a tela; o fallback mantém os limites
   de encoding se a preferência não for aceita. Esses valores são limites, não
   uma promessa de FPS ou uma política adaptativa agregada entre peers.
-- `orderVideoCodecs()` aplica a prioridade de `packages/core/src/adapter.ts` e,
-  no browser, promove codecs anunciados pela detecção acima. O adapter Android
-  usa a ordem de codecs sem essa detecção do browser. No factory Android
-  vendorizado, H.264 pode usar encoder de hardware quando EGL está disponível;
-  VP8/VP9/AV1 usam encoder software. Sem EGL, o factory usa software. A aceleração
-  efetiva depende do aparelho, do codec negociado e das capacidades do peer remoto.
+- `orderVideoCodecs()` usa H.264 como prioridade conservadora, seguido por VP8,
+  VP9, AV1 e HEVC; no browser, prefere codecs alternativos marcados como
+  eficientes, sem deixar que essa heurística coloque AV1 à frente de H.264. O
+  adapter Android usa a ordem conservadora sem essa detecção. No
+  factory Android vendorizado, H.264 pode usar encoder de hardware quando EGL
+  está disponível; VP8/VP9/AV1 usam encoder software. Sem EGL, o factory usa
+  software. A implementação efetiva depende do aparelho, do codec negociado e
+  das capacidades do peer remoto.
 - Cada viewer recebe somente a tela focada, mas pode haver vários viewers
   independentes focando a mesma tela. O core lê FPS encoded/decoded quando o
   browser os fornece e os contadores RTP disponíveis; o painel mostra FPS,
@@ -60,7 +65,7 @@ resultados abaixo são um registro a preencher, não números presumidos.
 
 | Opção                                                            | Custo/benefício provável                                                                                                                                                                                                                                        | Suporte e risco                                                                                                                                                                                                                                                                                                                          | Prioridade                                                                                    |
 | ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| **Medir codec negociado e encoder Android**                      | Comparar H.264 com outros codecs suportados pode identificar menor CPU e FPS mais estável, sobretudo com três peers; medir também resolução, bitrate e legibilidade.                                                                                            | A ordem da branch `dev` já considera capacidades anunciadas no browser, mas isso não comprova encoder hardware. O adapter Android usa prioridade estática; seu factory pode usar H.264 hardware com EGL. Não trocar a prioridade global sem A/B, pois pode afetar compatibilidade e qualidade.                                           | Alta: medir codecs e implementação efetivamente negociados com 1 e 3 viewers.                 |
+| **Medir codec negociado e encoder Android**                      | Comparar H.264 com outros codecs suportados pode identificar menor CPU e FPS mais estável, sobretudo com três peers; medir também resolução, bitrate e legibilidade.                                                                                            | O browser usa `powerEfficient` como heurística, não prova de encoder hardware; sem o sinal, começa por H.264. O adapter Android usa prioridade conservadora; seu factory pode usar H.264 hardware com EGL. Medir implementação negociada antes de alterar preferências.                                                            | Alta: medir codecs e implementação efetivamente negociados com 1 e 3 viewers.                 |
 | **Escala Android antes da captura (`62ea2f4`)**                  | Calcula a escala pré-captura a partir do tamanho físico e dos limites selecionados para preservar a rasterização de saída em portrait/landscape; sender continua aplicando seu limite. Potencial redução de pixels de origem, sem ganho real de CPU/FPS medido. | O adapter encaminha `android.resolutionScale`; MediaProjection mantém captura nativa a 30 fps. O cálculo considera rotação e cai para escala 1 com dimensões inválidas. Validar legibilidade e tamanho final em dispositivo; a prova atual é geométrica/sintética, não de desempenho.                                                    | Alta: comparação A/B da versão pré e pós `62ea2f4`, 1 e 3 viewers, mesmas opções.             |
 | **Orçamento agregado de bitrate**                                | Fazer o teto total acompanhar o número de viewers (ex.: orçamento de 6 Mbps dividido em 2 Mbps por sender para 3 viewers) reduz disputa pelo uplink. `setParameters()` existe nas duas plataformas; o congestion control ainda ajusta cada rota.                | Hoje a configuração é um teto por sender, sem controlador global. Um adaptador dinâmico baseado em `availableOutgoingBitrate` precisa de agregação, limites mínimos e histerese; amostras por rota podem oscilar e baixar a qualidade de todos.                                                                                          | Alta após medir rede; testar caps fixos antes de implementar controle adaptativo.             |
 | **Simulcast/SVC**                                                | Pode dar resoluções/camadas diferentes por viewer e responder a redes heterogêneas.                                                                                                                                                                             | Uma camada/cópia por encoding pode aumentar CPU, bitrate total e sessões do encoder; não elimina o fan-out P2P nem garante encode único entre PeerConnections. O wrapper RN inclui RIDs e parâmetros básicos, mas não declara/serializa `scalabilityMode`; SVC no Android não está demonstrado. Suporte browser depende de codec/versão. | Baixa até haver necessidade de viewers com qualidades distintas; protótipo em branch e medir. |

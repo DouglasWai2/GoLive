@@ -8,6 +8,7 @@ import {
 import type { MicrophoneAudioSettings } from "../../audio/microphoneAudio";
 import type { MicrophoneAudioMeterState } from "../../audio/microphoneAudio";
 import type { MicrophoneTestState } from "../../hooks/useMicrophoneAudio";
+import { HeadphonesIcon, MicrophoneIcon } from "../icons";
 
 const INPUT_THRESHOLD_MIN_DB = getNoiseGateThresholdDb(100);
 const INPUT_THRESHOLD_MAX_DB = getNoiseGateThresholdDb(0);
@@ -47,25 +48,30 @@ export function MicrophoneSettings({
   const measuredLevel = meterReading
     ? `${Math.round(meterReading.levelDb)} dBFS`
     : meterState.status === "unavailable"
-      ? "Meter unavailable"
+      ? "Unavailable"
       : meterState.status === "listening"
         ? "Listening…"
         : !processingSupported
-          ? "Meter unavailable"
+          ? "Unavailable"
           : !micMuted || testState === "starting" || testState === "active"
-            ? "Waiting for input"
-            : "Start test to view level";
+            ? "Waiting"
+            : "Test mic to see level";
   const thresholdLabel = settings.gateStrength === 0
-    ? "Gate off"
-    : settings.automaticSensitivity && !meterReading
-      ? meterState.status === "unavailable"
-        ? "Auto threshold · unavailable"
-        : meterState.status === "listening"
-          ? "Auto threshold · measuring"
-          : "Auto threshold · waiting for microphone"
-      : meterReading
-        ? `${settings.automaticSensitivity ? "Auto · " : ""}Gate ${meterReading.gateOpen ? "open" : "closed"} · ${Math.round(thresholdDb)} dBFS`
-        : `Gate threshold · ${Math.round(thresholdDb)} dBFS`;
+    ? "Off"
+    : meterReading
+      ? `Gate ${meterReading.gateOpen ? "open" : "closed"}`
+      : settings.automaticSensitivity && meterState.status === "unavailable"
+        ? "Unavailable"
+        : settings.automaticSensitivity && meterState.status === "listening"
+          ? "Measuring"
+          : settings.automaticSensitivity
+            ? "Auto"
+            : "";
+  const thresholdOutput = settings.automaticSensitivity
+    ? meterReading
+      ? `Auto · ${Math.round(thresholdDb)} dBFS`
+      : "Auto"
+    : `${Math.round(thresholdDb)} dBFS`;
 
   useEffect(() => subscribeMicrophoneAudioMeter(setMeterState), []);
 
@@ -73,7 +79,6 @@ export function MicrophoneSettings({
     <section id={id} className="microphone-settings" aria-label="Microphone settings">
       <header className="microphone-settings-head">
         <strong>Microphone settings</strong>
-        <small>Changes apply live and are saved on this device.</small>
       </header>
 
       <div className="microphone-setting">
@@ -83,7 +88,6 @@ export function MicrophoneSettings({
             {settings.gateStrength === 0 ? "Off" : `${settings.gateStrength}%`}
           </output>
         </div>
-        <small id="microphone-gate-help">Controls how much sound is reduced while the gate is closed.</small>
         <input
           id="microphone-gate-strength"
           type="range"
@@ -91,7 +95,6 @@ export function MicrophoneSettings({
           max="100"
           step="1"
           value={settings.gateStrength}
-          aria-describedby="microphone-gate-help"
           aria-valuetext={settings.gateStrength === 0 ? "Off" : `${settings.gateStrength} percent`}
           disabled={!processingSupported}
           onChange={(event) => onChange({ gateStrength: Number(event.currentTarget.value) })}
@@ -101,14 +104,14 @@ export function MicrophoneSettings({
       <div className="microphone-setting">
         <div className="microphone-auto-sensitivity">
           <div className="microphone-auto-sensitivity-copy">
-            <label htmlFor="microphone-auto-sensitivity">Adjust input sensitivity automatically</label>
-            <small>Automatically follows background noise.</small>
+            <label htmlFor="microphone-auto-sensitivity">Auto</label>
           </div>
           <div className="microphone-auto-toggle">
             <input
               id="microphone-auto-sensitivity"
               type="checkbox"
               role="switch"
+              aria-label="Adjust input sensitivity automatically"
               checked={settings.automaticSensitivity}
               disabled={!processingSupported}
               onChange={(event) => onChange({ automaticSensitivity: event.currentTarget.checked })}
@@ -118,15 +121,8 @@ export function MicrophoneSettings({
         </div>
         <div className="microphone-setting-heading">
           <label htmlFor="microphone-sensitivity">Input sensitivity</label>
-          <output htmlFor="microphone-sensitivity">
-            {settings.automaticSensitivity ? "Auto" : `${Math.round(thresholdDb)} dBFS`}
-          </output>
+          <output htmlFor="microphone-sensitivity">{thresholdOutput}</output>
         </div>
-        <small id="microphone-sensitivity-help">
-          {settings.automaticSensitivity
-            ? "Automatic mode adjusts the orange threshold to recent background noise."
-            : "Set the orange opening threshold. A lower dBFS value lets quieter speech through."}
-        </small>
         <div className="microphone-sensitivity-slider">
           <div
             className={`microphone-level-meter ${meterReading?.gateOpen ? "is-gate-open" : "is-gate-closed"}`}
@@ -157,7 +153,7 @@ export function MicrophoneSettings({
               left: `calc(${INPUT_THRESHOLD_MIN_POSITION}% - ${SENSITIVITY_SLIDER_THUMB_HALF_SIZE_PX}px)`,
               width: `calc(${INPUT_THRESHOLD_MAX_POSITION - INPUT_THRESHOLD_MIN_POSITION}% + ${SENSITIVITY_SLIDER_THUMB_HALF_SIZE_PX * 2}px)`,
             }}
-            aria-describedby="microphone-sensitivity-help microphone-input-level"
+            aria-describedby="microphone-input-level"
             aria-valuetext={settings.automaticSensitivity ? "Automatic threshold" : `${Math.round(thresholdDb)} dBFS threshold`}
             disabled={!processingSupported || settings.automaticSensitivity}
             onChange={(event) => onChange({
@@ -166,19 +162,19 @@ export function MicrophoneSettings({
           />
         </div>
         <div id="microphone-input-level" className="microphone-level-readout">
-          <span>Mic {measuredLevel}</span>
-          <span>{thresholdLabel}</span>
+          <span><MicrophoneIcon size={13} />{measuredLevel}</span>
+          {thresholdLabel && <span className="microphone-level-state">{thresholdLabel}</span>}
         </div>
       </div>
 
       {!processingSupported && (
         <p className="microphone-settings-note" role="status">
-          This browser does not support microphone audio processing.
+          Audio effects unavailable in this browser.
         </p>
       )}
       {processingSupported && meterState.status === "unavailable" && (
         <p className="microphone-settings-note" role="status">
-          Browser audio processing could not start. The microphone may still work, but the live meter and noise gate are unavailable.
+          Audio processing unavailable. The mic still works; meter and gate are off.
         </p>
       )}
 
@@ -188,27 +184,34 @@ export function MicrophoneSettings({
           className={testIsRunning ? "microphone-test-button is-testing" : "microphone-test-button"}
           disabled={!micMuted || testState === "cancelling"}
           aria-pressed={testState === "active"}
+          aria-label={testState === "starting"
+            ? "Cancel microphone test"
+            : testState === "active"
+              ? "Stop microphone test"
+              : testState === "cancelling"
+                ? "Stopping microphone test"
+                : "Test microphone"}
           aria-describedby="microphone-test-note"
           onClick={testIsRunning ? onStopTest : onStartTest}
         >
           {testState === "starting"
-            ? "Cancel test"
+            ? "Cancel"
             : testState === "active"
-              ? "Stop test"
+              ? "Stop"
               : testState === "cancelling"
-                ? "Cancelling test…"
-                : "Test microphone"}
+                ? "Stopping…"
+                : "Test mic"}
         </button>
         <small id="microphone-test-note">
           {!micMuted
-            ? "Mute your microphone to test privately."
-            : "Use headphones to avoid feedback while monitoring."}
+            ? "Mute mic first."
+            : <><HeadphonesIcon size={14} />Headphones recommended.</>}
         </small>
       </div>
 
       {testError && <p className="microphone-test-error" role="alert">{testError}</p>}
-      {testState === "active" && <p className="microphone-test-status" role="status">Live test is private and is not sent to the call.</p>}
-      {testState === "cancelling" && <p className="microphone-test-status" role="status">Waiting for the browser microphone request to finish; any late capture will be stopped.</p>}
+      {testState === "active" && <p className="microphone-test-status" role="status">Private test · not shared</p>}
+      {testState === "cancelling" && <p className="microphone-test-status" role="status">Stopping when the browser responds…</p>}
     </section>
   );
 }

@@ -4,8 +4,10 @@ import type { ShareSettings, SocketStatus, VoiceState } from "@golive/core";
 import {
   MicrophoneIcon,
   MicrophoneMutedIcon,
+  PhoneOffIcon,
   ScreenIcon,
-  StopIcon,
+  ScreenOffIcon,
+  UsersIcon,
   VolumeIcon,
   VolumeMutedIcon,
 } from "./icons";
@@ -13,58 +15,77 @@ import { colors, controlShadow, radii, technicalText } from "../theme";
 
 type ControlDockProps = {
   name: string;
+  participantsCount: number;
+  participantsOpen: boolean;
   status: SocketStatus;
   localStream: unknown;
   isStartingShare: boolean;
   activeSettings: ShareSettings | null;
   voiceState: VoiceState;
   deafened: boolean;
+  onOpenParticipants: () => void;
   onOpenSettings: () => void;
   onStopShare: () => void;
   onSetMicrophoneMuted: (muted: boolean) => void;
   onToggleDeafen: () => void;
+  onLeave: () => void;
 };
 
 export function ControlDock({
   name,
+  participantsCount,
+  participantsOpen,
   status,
   localStream,
   isStartingShare,
   activeSettings,
   voiceState,
   deafened,
+  onOpenParticipants,
   onOpenSettings,
   onStopShare,
   onSetMicrophoneMuted,
   onToggleDeafen,
+  onLeave,
 }: ControlDockProps) {
   const { width } = useWindowDimensions();
   const canShare = status === "connected" && !localStream && !isStartingShare;
   const microphoneDisabled = status !== "connected" || voiceState.requestingMicrophone;
   const showIdentity = width >= 640;
-  const showVoiceLabels = width >= 640;
-  const showShareLabel = width >= 520;
   const showPrivacy = width >= 960;
 
   return (
     <View style={[styles.dock, width < 400 && styles.dockCompact]}>
-      <View style={styles.identity}>
-        {showIdentity ? (
-          <View style={styles.youChip}>
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>{name.slice(0, 1).toUpperCase()}</Text>
-            </View>
-            <View style={styles.youCopy}>
-              <Text style={styles.youLabel}>You</Text>
-              <Text style={styles.youName} numberOfLines={1}>{name}</Text>
-            </View>
+      {showIdentity ? (
+        <View style={styles.youChip}>
+          <View style={styles.avatar}>
+            <Text style={styles.avatarText}>{name.slice(0, 1).toUpperCase()}</Text>
           </View>
-        ) : null}
+          <View style={styles.youCopy}>
+            <Text style={styles.youLabel}>You</Text>
+            <Text style={styles.youName} numberOfLines={1}>{name}</Text>
+          </View>
+        </View>
+      ) : null}
+
+      <View style={styles.actions} accessibilityRole="toolbar" accessibilityLabel="Call controls">
+        <Pressable
+          style={({ pressed }) => [styles.button, styles.participantsButton, participantsOpen && styles.buttonSelected, pressed && styles.pressed]}
+          onPress={onOpenParticipants}
+          accessibilityRole="button"
+          accessibilityLabel={`${participantsOpen ? "Close" : "Show"} people in the call, ${participantsCount} ${participantsCount === 1 ? "participant" : "participants"}`}
+          accessibilityState={{ expanded: participantsOpen }}
+        >
+          <UsersIcon size={18} color={participantsOpen ? colors.acid : colors.paper} />
+          <View pointerEvents="none" style={styles.participantBadge}>
+            <Text style={styles.participantBadgeText}>{participantsCount}</Text>
+          </View>
+        </Pressable>
+
         <View style={styles.voiceControls}>
           <Pressable
             style={({ pressed }) => [
-              styles.voiceButton,
-              !showVoiceLabels && styles.voiceButtonCompact,
+              styles.button,
               voiceState.micMuted ? styles.voiceButtonMuted : styles.voiceButtonActive,
               microphoneDisabled && styles.buttonDisabled,
               pressed && !microphoneDisabled && styles.pressed,
@@ -85,22 +106,16 @@ export function ControlDock({
             {voiceState.requestingMicrophone ? (
               <ActivityIndicator size="small" color={colors.paper} />
             ) : voiceState.micMuted ? (
-              <MicrophoneMutedIcon size={20} color={colors.muted} />
+              <MicrophoneMutedIcon size={18} color={colors.redText} />
             ) : (
-              <MicrophoneIcon size={20} color={colors.paper} />
+              <MicrophoneIcon size={18} color={colors.acid} />
             )}
-            {showVoiceLabels ? (
-              <Text style={styles.voiceButtonText}>
-                {voiceState.requestingMicrophone ? "Starting…" : voiceState.micMuted ? "Unmute" : "Mute"}
-              </Text>
-            ) : null}
           </Pressable>
 
           <Pressable
             style={({ pressed }) => [
-              styles.voiceButton,
-              !showVoiceLabels && styles.voiceButtonCompact,
-              deafened ? styles.voiceButtonMuted : styles.voiceButtonActive,
+              styles.button,
+              deafened && styles.voiceButtonMuted,
               pressed && styles.pressed,
             ]}
             onPress={onToggleDeafen}
@@ -109,18 +124,13 @@ export function ControlDock({
             accessibilityState={{ selected: deafened }}
           >
             {deafened ? (
-              <VolumeMutedIcon size={20} color={colors.muted} />
+              <VolumeMutedIcon size={18} color={colors.redText} />
             ) : (
-              <VolumeIcon size={20} color={colors.paper} />
+              <VolumeIcon size={18} color={colors.paper} />
             )}
-            {showVoiceLabels ? (
-              <Text style={styles.voiceButtonText}>{deafened ? "Undeafen" : "Deafen"}</Text>
-            ) : null}
           </Pressable>
         </View>
-      </View>
 
-      <View style={styles.shareControl}>
         {localStream ? (
           <View style={styles.sharingState}>
             {activeSettings && width >= 820 ? (
@@ -135,25 +145,20 @@ export function ControlDock({
               </View>
             ) : null}
             <Pressable
-              style={({ pressed }) => [
-                styles.stopButton,
-                !showShareLabel && styles.iconOnlyButton,
-                pressed && styles.pressed,
-              ]}
+              style={({ pressed }) => [styles.button, styles.stopButton, pressed && styles.pressed]}
               onPress={onStopShare}
               accessibilityRole="button"
-              accessibilityLabel="Stop sharing"
+              accessibilityLabel="Stop sharing your screen"
               accessibilityState={{ selected: true }}
             >
-              <StopIcon size={16} color={colors.redText} />
-              {showShareLabel ? <Text style={styles.stopText}>Stop sharing</Text> : null}
+              <ScreenOffIcon size={20} color={colors.redText} />
             </Pressable>
           </View>
         ) : (
           <Pressable
             style={({ pressed }) => [
+              styles.button,
               styles.shareButton,
-              !showShareLabel && styles.iconOnlyButton,
               !canShare && styles.buttonDisabled,
               pressed && canShare && styles.pressed,
             ]}
@@ -165,16 +170,22 @@ export function ControlDock({
             accessibilityState={{ selected: false, disabled: !canShare, busy: isStartingShare }}
           >
             {isStartingShare ? (
-              <ActivityIndicator size="small" color={colors.acidInk} />
+              <ActivityIndicator size="small" color={colors.acid} />
             ) : (
-              <ScreenIcon size={20} color={colors.acidInk} />
+              <ScreenIcon size={20} color={colors.acid} />
             )}
-            {showShareLabel ? (
-              <Text style={styles.shareText}>{isStartingShare ? "Choosing a screen…" : "Share screen"}</Text>
-            ) : null}
           </Pressable>
         )}
       </View>
+
+      <Pressable
+        style={({ pressed }) => [styles.leaveButton, pressed && styles.pressed]}
+        onPress={onLeave}
+        accessibilityRole="button"
+        accessibilityLabel="Leave room"
+      >
+        <PhoneOffIcon size={22} color={colors.paper} />
+      </Pressable>
 
       {showPrivacy ? (
         <View style={styles.privacyNote}>
@@ -200,6 +211,7 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(28,28,25,0.97)",
     borderWidth: 1,
     borderColor: colors.lineStrong,
+    borderRadius: 20,
     paddingHorizontal: 14,
     flexDirection: "row",
     alignItems: "center",
@@ -207,40 +219,49 @@ const styles = StyleSheet.create({
     gap: 8,
     ...controlShadow,
   },
-  dockCompact: { paddingHorizontal: 10 },
-  identity: { flexDirection: "row", alignItems: "center", gap: 16, minWidth: 0 },
+  dockCompact: { left: 8, right: 8, paddingHorizontal: 8, gap: 8 },
   youChip: { flexDirection: "row", alignItems: "center", gap: 10, minWidth: 0 },
   avatar: { width: 37, height: 37, borderRadius: 19, backgroundColor: "#34342f", alignItems: "center", justifyContent: "center" },
   avatarText: { color: "#c2c1b8", fontSize: 13, fontWeight: "700" },
   youCopy: { flexShrink: 1, minWidth: 0 },
   youLabel: { ...technicalText, color: "#98988f", fontSize: 8, marginBottom: 3 },
   youName: { color: colors.paper, fontSize: 12, fontWeight: "700" },
+  actions: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, minWidth: 0, flexShrink: 1 },
   voiceControls: { flexDirection: "row", alignItems: "center", gap: 8 },
-  voiceButton: {
-    minHeight: 48,
-    minWidth: 96,
-    paddingHorizontal: 10,
-    borderRadius: radii.control,
-    backgroundColor: colors.surfaceControl,
-    flexDirection: "row",
+  button: {
+    width: 48,
+    height: 48,
+    borderWidth: 1,
+    borderColor: colors.lineStrong,
+    borderRadius: radii.round,
+    backgroundColor: "#2c2c27",
     alignItems: "center",
     justifyContent: "center",
-    gap: 7,
   },
-  voiceButtonCompact: { minWidth: 48, width: 48, paddingHorizontal: 0 },
+  participantsButton: { position: "relative" },
+  participantBadge: {
+    position: "absolute",
+    top: 1,
+    right: 1,
+    minWidth: 17,
+    height: 17,
+    paddingHorizontal: 3,
+    borderRadius: radii.round,
+    backgroundColor: colors.acid,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  participantBadgeText: { color: colors.acidInk, fontFamily: "monospace", fontSize: 9, lineHeight: 11, fontWeight: "700" },
   voiceButtonActive: { borderWidth: 1, borderColor: "rgba(201,255,66,0.55)" },
-  voiceButtonMuted: { borderWidth: 1, borderColor: colors.lineStrong },
-  voiceButtonText: { color: colors.paper, fontSize: 11, fontWeight: "700" },
-  shareControl: { flexGrow: 1, flexShrink: 1, minWidth: 48, alignItems: "center", paddingHorizontal: 4 },
-  sharingState: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10 },
+  voiceButtonMuted: { borderWidth: 1, borderColor: "#874a40", backgroundColor: "#382723" },
+  buttonSelected: { borderColor: "rgba(201,255,66,0.55)" },
+  sharingState: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 },
   qualityBadge: { minHeight: 40, borderWidth: 1, borderColor: colors.lineStrong, borderRadius: radii.control, backgroundColor: colors.surfaceControl, paddingHorizontal: 10, flexDirection: "row", alignItems: "center", gap: 7 },
   qualityText: { color: "#c2c1b8", fontFamily: "monospace", fontSize: 10 },
   qualityDot: { width: 4, height: 4, borderRadius: 2, backgroundColor: colors.acid },
-  shareButton: { minHeight: 48, minWidth: 148, paddingHorizontal: 16, borderRadius: radii.control, backgroundColor: colors.acid, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 9 },
-  shareText: { color: colors.acidInk, fontSize: 13, fontWeight: "800" },
-  stopButton: { minHeight: 48, minWidth: 48, paddingHorizontal: 14, borderRadius: radii.control, backgroundColor: "#31201d", borderWidth: 1, borderColor: "#69342d", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },
-  iconOnlyButton: { width: 48, minWidth: 48, paddingHorizontal: 0 },
-  stopText: { color: colors.redText, fontSize: 13, fontWeight: "800" },
+  shareButton: { borderColor: "#454e32", backgroundColor: "#343b25" },
+  stopButton: { borderColor: "#874a40", backgroundColor: "#382723" },
+  leaveButton: { width: 52, height: 48, borderRadius: 22, backgroundColor: "#db3732", alignItems: "center", justifyContent: "center" },
   privacyNote: { flexDirection: "row", alignItems: "center", gap: 9, maxWidth: "26%" },
   privacyIcon: { width: 36, height: 36, borderWidth: 1, borderColor: colors.lineStrong, borderRadius: 18, alignItems: "center", justifyContent: "center" },
   privacyArrow: { color: colors.muted, fontSize: 13 },

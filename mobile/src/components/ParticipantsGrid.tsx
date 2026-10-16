@@ -1,14 +1,18 @@
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { useEffect, useRef, useState } from "react";
+import { AccessibilityInfo, Animated, Pressable, StyleSheet, Text, View } from "react-native";
 import type { ViewStyle } from "react-native";
 import type { MediaStream, Peer } from "@golive/core";
 import { MicrophoneIcon, MicrophoneMutedIcon, ScreenIcon, UsersIcon } from "./icons";
 import { VideoTile } from "./VideoTile";
 import { colors, radii, technicalText } from "../theme";
+import { getParticipantGridColumns } from "../utils/participantGridLayout";
 
 type ParticipantsGridProps = {
   localName: string;
   localStream: MediaStream | null;
   localMicMuted: boolean;
+  localSpeaking: boolean;
+  speakingPeerIds: Set<string>;
   peers: Peer[];
   focusedPeerId: string | null;
   focusedStream: MediaStream | null;
@@ -34,6 +38,8 @@ export function ParticipantsGrid({
   localName,
   localStream,
   localMicMuted,
+  localSpeaking,
+  speakingPeerIds,
   peers,
   focusedPeerId,
   focusedStream,
@@ -41,6 +47,48 @@ export function ParticipantsGrid({
   onFocusLocal,
   onOpenParticipants,
 }: ParticipantsGridProps) {
+  const speakerPulse = useRef(new Animated.Value(0.35)).current;
+  const [reduceMotion, setReduceMotion] = useState<boolean | null>(null);
+  const [gridSize, setGridSize] = useState({ width: 0, height: 0 });
+  const hasSpeakingParticipant = localSpeaking || speakingPeerIds.size > 0;
+
+  useEffect(() => {
+    let active = true;
+    void AccessibilityInfo.isReduceMotionEnabled().then((enabled) => {
+      if (active) setReduceMotion(enabled);
+    }).catch(() => {});
+    const subscription = AccessibilityInfo.addEventListener("reduceMotionChanged", setReduceMotion);
+    return () => {
+      active = false;
+      subscription.remove();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!hasSpeakingParticipant || reduceMotion !== false) {
+      speakerPulse.stopAnimation();
+      speakerPulse.setValue(hasSpeakingParticipant ? 0.65 : 0.35);
+      return;
+    }
+
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(speakerPulse, {
+          toValue: 1,
+          duration: 650,
+          useNativeDriver: true,
+        }),
+        Animated.timing(speakerPulse, {
+          toValue: 0.35,
+          duration: 650,
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    animation.start();
+    return () => animation.stop();
+  }, [hasSpeakingParticipant, reduceMotion, speakerPulse]);
+
   const participants: ParticipantCell[] = [
     {
       id: LOCAL_PARTICIPANT_ID,
@@ -70,7 +118,7 @@ export function ParticipantsGrid({
   }
 
   const slots = visible.length + Number(hiddenCount > 0);
-  const columns = Math.min(3, Math.ceil(Math.sqrt(slots)));
+  const columns = getParticipantGridColumns(slots, gridSize.width, gridSize.height);
   const rows = Math.ceil(slots / columns);
   const cells: Array<ParticipantCell | { kind: "more" }> = [
     ...visible,
@@ -78,12 +126,27 @@ export function ParticipantsGrid({
   ];
 
   return (
-    <View style={styles.grid} accessibilityLabel="People in the call">
+    <View
+      style={styles.grid}
+      accessibilityLabel="People in the call"
+      onLayout={({ nativeEvent }) => {
+        const { width, height } = nativeEvent.layout;
+        setGridSize((current) => current.width === width && current.height === height
+          ? current
+          : { width, height });
+      }}
+    >
       {Array.from({ length: rows }, (_, rowIndex) => {
         const rowCells = cells.slice(rowIndex * columns, (rowIndex + 1) * columns);
         const isPartialRow = rowCells.length < columns;
+        const partialWidth = `${100 / columns}%` as `${number}%`;
         const partialCardWidth: ViewStyle | null = isPartialRow
-          ? { width: `${100 / columns}%` as `${number}%`, flexGrow: 0 }
+          ? {
+              width: partialWidth,
+              flexBasis: partialWidth,
+              flexGrow: 0,
+              flexShrink: 0,
+            }
           : null;
 
         return (
@@ -120,7 +183,12 @@ export function ParticipantsGrid({
                 ? "No voice"
                 : cell.micMuted
                   ? "Microphone muted"
-                  : "Microphone on";
+                  : (cell.local ? localSpeaking : speakingPeerIds.has(cell.id))
+                    ? "Speaking"
+                    : "Microphone on";
+              const speaking = cell.voiceJoined
+                && !cell.micMuted
+                && (cell.local ? localSpeaking : speakingPeerIds.has(cell.id));
               const cardContent = (
                 <>
                   {stream ? (
@@ -159,8 +227,14 @@ export function ParticipantsGrid({
                     <Text style={styles.name} numberOfLines={1}>
                       {cell.name}{cell.local ? " (you)" : ""}
                     </Text>
-                    <Text style={styles.voiceStatus} numberOfLines={1}>{voiceStatus}</Text>
                   </View>
+                  {speaking ? (
+                    <Animated.View
+                      accessible={false}
+                      pointerEvents="none"
+                      style={[styles.speakingAura, { opacity: speakerPulse }]}
+                    />
+                  ) : null}
                 </>
               );
 
@@ -168,6 +242,7 @@ export function ParticipantsGrid({
                 styles.card,
                 cell.sharing && styles.sharingCard,
                 isFocusedRemote && styles.focusedCard,
+                speaking && styles.speakingCard,
                 partialCardWidth,
               ];
 
@@ -179,8 +254,8 @@ export function ParticipantsGrid({
                   accessibilityRole="button"
                   accessibilityState={{ selected: cell.local ? false : isFocusedRemote }}
                   accessibilityLabel={cell.local
-                    ? "Show your screen on stage"
-                    : `${isFocusedRemote ? "Focused on" : "Watch"} ${cell.name}'s screen`}
+                    ? `Show your screen on stage${speaking ? ", speaking" : ""}`
+                    : `${isFocusedRemote ? "Focused on" : "Watch"} ${cell.name}'s screen${speaking ? ", speaking" : ""}`}
                 >
                   {cardContent}
                 </Pressable>
@@ -235,6 +310,21 @@ const styles = StyleSheet.create({
   },
   focusedCard: {
     borderColor: colors.acid,
+  },
+  speakingCard: {
+    borderColor: colors.acid,
+    boxShadow: "0 0 14px rgba(201, 255, 66, 0.22)",
+  },
+  speakingAura: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    borderWidth: 2,
+    borderRadius: radii.overlay,
+    borderColor: "rgba(201,255,66,0.9)",
+    backgroundColor: "rgba(201,255,66,0.035)",
   },
   avatar: {
     width: 58,
@@ -297,6 +387,10 @@ const styles = StyleSheet.create({
     color: colors.muted,
     fontSize: 8,
     textAlign: "center",
+  },
+  speakingVoiceStatus: {
+    color: colors.acid,
+    fontWeight: "700",
   },
   moreCard: {
     flexGrow: 1,

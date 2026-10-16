@@ -72,6 +72,7 @@ class FakePeerConnection {
   transceiverCount = 0;
   readonly transceivers: Array<{ sender: RTCRtpSender; direction: string }> = [];
   readonly addedTracks: Array<{ track: MediaTrack; stream: MediaStream }> = [];
+  statsReports: Array<Record<string, unknown>> = [];
   statsCallCount = 0;
 
   addTrack(track: MediaTrack, stream: MediaStream): void {
@@ -110,7 +111,9 @@ class FakePeerConnection {
   async getStats() {
     this.statsCallCount += 1;
     return {
-      forEach: () => {},
+      forEach: (callback: (report: Record<string, unknown>) => void) => {
+        this.statsReports.forEach(callback);
+      },
       get: () => undefined,
     };
   }
@@ -783,6 +786,15 @@ test("auto-joins voice muted and requests the microphone only on unmute", async 
     ));
     assert.equal(microphoneRequests, 0);
 
+    connections[0]!.statsReports = [
+      { type: "inbound-rtp", kind: "audio", audioLevel: 0.12 },
+      { type: "outbound-rtp", kind: "audio", audioLevel: 0.08 },
+    ];
+    assert.deepEqual(await session.getVoiceAudioLevels(), {
+      local: 0,
+      peers: { b: 0.12 },
+    });
+
     socket.receive({
       type: "signal",
       from: "b",
@@ -813,6 +825,10 @@ test("auto-joins voice muted and requests the microphone only on unmute", async 
     assert.equal(microphoneTracks[0]?.enabled, true);
     assert.equal(connections[0]?.sender.track, microphoneTracks[0]);
     assert.equal(connections[0]?.transceivers[0]?.direction, "sendrecv");
+    assert.deepEqual(await session.getVoiceAudioLevels(), {
+      local: 0.08,
+      peers: { b: 0.12 },
+    });
     assert.ok(socket.sent.filter((message) =>
       message.type === "signal" && message.channel === "voice",
     ).length > voiceOffersBeforeUnmute);

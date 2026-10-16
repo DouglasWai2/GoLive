@@ -182,6 +182,10 @@ export function useRoom(
     sessionRef.current?.focusPeer(peerId);
   }, []);
   const setMicrophoneMuted = (muted: boolean) => sessionRef.current?.setMicrophoneMuted(muted);
+  const getVoiceAudioLevels = useCallback(
+    () => sessionRef.current?.getVoiceAudioLevels() ?? Promise.resolve({ local: 0, peers: {} }),
+    [],
+  );
 
   return {
     status,
@@ -200,6 +204,7 @@ export function useRoom(
     stopSharing,
     focusPeer,
     setMicrophoneMuted,
+    getVoiceAudioLevels,
     playNotificationSound,
   };
 }

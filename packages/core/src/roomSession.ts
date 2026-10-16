@@ -36,6 +36,11 @@ export type RoomSessionDeps = {
   adapter: PlatformAdapter;
 };
 
+export type VoiceAudioLevels = {
+  local: number;
+  peers: Record<string, number>;
+};
+
 export type RoomSessionCallbacks = {
   onStatus: (status: SocketStatus) => void;
   onPeers: (peers: Peer[]) => void;
@@ -842,6 +847,55 @@ export class RoomSession {
   focusPeer(peerId: string | null) {
     this.focusedPeerId = peerId && peerId !== this.selfId ? peerId : null;
     this.syncFocusedSubscription();
+  }
+
+  async getVoiceAudioLevels(): Promise<VoiceAudioLevels> {
+    if (!this.active || !this.voiceJoined) return { local: 0, peers: {} };
+
+    const audiblePeerIds = new Set(
+      this.peers
+        .filter((peer) => peer.voiceJoined && !peer.micMuted)
+        .map((peer) => peer.id),
+    );
+    const shouldReadLocal = !this.micMuted;
+    const samples = await Promise.all(
+      Array.from(this.voicePeerConnections)
+        .filter(([peerId]) => shouldReadLocal || audiblePeerIds.has(peerId))
+        .map(async ([peerId, connection]) => {
+          const sample = { peerId, local: 0, remote: 0 };
+          if (connection.connectionState === "closed") return sample;
+
+          try {
+            const stats = await connection.getStats();
+            stats.forEach((report) => {
+              const rawLevel = report.audioLevel;
+              if (typeof rawLevel !== "number" || !Number.isFinite(rawLevel)) return;
+              const level = Math.max(0, Math.min(1, rawLevel));
+              const type = report.type;
+
+              if (type === "inbound-rtp" && audiblePeerIds.has(peerId)) {
+                sample.remote = Math.max(sample.remote, level);
+              } else if (
+                shouldReadLocal
+                && (type === "media-source" || type === "outbound-rtp")
+              ) {
+                sample.local = Math.max(sample.local, level);
+              }
+            });
+          } catch {
+            // Voice activity is only a visual hint; stats can be unavailable during renegotiation.
+          }
+
+          return sample;
+        }),
+    );
+
+    const levels: VoiceAudioLevels = { local: 0, peers: {} };
+    for (const sample of samples) {
+      levels.local = Math.max(levels.local, sample.local);
+      levels.peers[sample.peerId] = sample.remote;
+    }
+    return levels;
   }
 
   private connectSocket() {

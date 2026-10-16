@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import Svg, { Path } from "react-native-svg";
 import { RTCView } from "react-native-webrtc";
 import type { MediaStream as RNMediaStream } from "react-native-webrtc";
@@ -11,6 +11,9 @@ import { CloseIcon, FullscreenIcon } from "./icons";
 import { colors, radii, technicalText } from "../theme";
 import { useVideoPlaybackState } from "../hooks/useVideoPlaybackState";
 import { VideoLoadingOverlay } from "./VideoLoadingOverlay";
+
+type DimensionsChangeEvent = { nativeEvent: { width: number; height: number } };
+const IOS_FRAME_SETTLE_MS = 350;
 
 type VideoTileProps = {
   stream: MediaStream;
@@ -74,8 +77,42 @@ export function VideoTile({
   const hasAudio = rnStream.getAudioTracks().length > 0;
   const { phase: playbackPhase, onDimensionsChange } = useVideoPlaybackState(stream, !local);
   const [controlsVisible, setControlsVisible] = useState(true);
+  const [frameReadyStream, setFrameReadyStream] = useState<MediaStream | null>(null);
+  const frameReadyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isPreview = variant === "preview";
-  const showStats = variant === "stage";
+  const isStage = variant === "stage";
+  const showStats = isStage;
+
+  const markFrameReady = useCallback(() => {
+    if (frameReadyTimer.current) {
+      clearTimeout(frameReadyTimer.current);
+      frameReadyTimer.current = null;
+    }
+    setFrameReadyStream(stream);
+  }, [stream]);
+
+  const handleDimensionsChange = useCallback((event: DimensionsChangeEvent) => {
+    onDimensionsChange(event);
+    const { width: frameWidth, height: frameHeight } = event.nativeEvent;
+    if (frameWidth <= 0 || frameHeight <= 0 || (frameWidth === 2 && frameHeight === 2)) return;
+
+    // Android reports dimensions before SurfaceViewRenderer presents its first frame.
+    // iOS has no first-frame event, so leave the cover up briefly after dimensions arrive.
+    if (Platform.OS === "android") return;
+    if (frameReadyTimer.current) clearTimeout(frameReadyTimer.current);
+    frameReadyTimer.current = setTimeout(markFrameReady, IOS_FRAME_SETTLE_MS);
+  }, [markFrameReady, onDimensionsChange]);
+
+  useEffect(() => {
+    setFrameReadyStream(null);
+    if (frameReadyTimer.current) {
+      clearTimeout(frameReadyTimer.current);
+      frameReadyTimer.current = null;
+    }
+    return () => {
+      if (frameReadyTimer.current) clearTimeout(frameReadyTimer.current);
+    };
+  }, [stream]);
 
   useEffect(() => {
     if (local || !onVolumeChange || !onToggleMute) return;
@@ -93,15 +130,23 @@ export function VideoTile({
   const showControls = showBottomControls || Boolean(onSelect) || (!local && Boolean(onStopWatching || onMinimize));
 
   return (
-    <View style={[styles.tile, isPreview && styles.tilePreview, small && styles.tileSmall]}>
+    <View style={[styles.tile, isStage && styles.tileStage, isPreview && !small && styles.tilePreview, small && styles.tileSmall]}>
       <RTCView
         style={styles.video}
         streamURL={rnStream.toURL()}
         objectFit="contain"
         mirror={false}
-        onDimensionsChange={onDimensionsChange}
+        {...(Platform.OS === "android" ? { zOrder: isPreview ? 1 : 0 } : {})}
+        onDimensionsChange={handleDimensionsChange}
+        onFirstFrameRendered={Platform.OS === "android" ? markFrameReady : undefined}
       />
-      {!local ? <VideoLoadingOverlay phase={playbackPhase} connectionState={state} /> : null}
+      {!local ? (
+        <VideoLoadingOverlay
+          phase={frameReadyStream === stream ? playbackPhase : "loading"}
+          connectionState={state}
+          compact={!isStage}
+        />
+      ) : null}
       {showControls ? (
         <Pressable
           style={styles.tapArea}
@@ -110,12 +155,13 @@ export function VideoTile({
           accessibilityLabel={isPreview && onSelect
             ? `Show ${local ? "your" : `${name}'s`} screen on stage`
             : controlsVisible ? "Hide screen share controls" : "Show screen share controls"}
+          accessibilityHint={isPreview && onSelect ? "Drag to move this thumbnail." : undefined}
         />
       ) : null}
-      {controlsVisible ? (
-        <View pointerEvents="none" style={[styles.meta, isPreview && styles.metaPreview]}>
+      {isStage && controlsVisible ? (
+        <View pointerEvents="none" style={styles.meta}>
           <View style={styles.liveDot} />
-          <Text style={[styles.name, isPreview && styles.namePreview]} numberOfLines={1}>
+          <Text style={styles.name} numberOfLines={1}>
             {local ? "Your screen" : `${name}'s screen`}
           </Text>
           {local && qualityLabel ? <Text style={styles.state} numberOfLines={1}>{qualityLabel}</Text> : null}
@@ -126,8 +172,8 @@ export function VideoTile({
       {controlsVisible && showStats && local && statsEnabled && outboundStats.length > 0 ? (
         <StreamStats outbound={outboundStats} />
       ) : null}
-      {showBottomControls && controlsVisible ? (
-        <View style={[styles.controls, isPreview && styles.controlsPreview]}>
+      {isStage && showBottomControls && controlsVisible ? (
+        <View style={styles.controls}>
           {showStats && onToggleStats ? (
             <StatsButton statsEnabled={statsEnabled} onToggle={onToggleStats} />
           ) : null}
@@ -152,8 +198,8 @@ export function VideoTile({
           ) : null}
         </View>
       ) : null}
-      {!local && (onMinimize || onStopWatching) && controlsVisible ? (
-        <View style={[styles.topControls, isPreview && styles.topControlsPreview]}>
+      {isStage && !local && (onMinimize || onStopWatching) && controlsVisible ? (
+        <View style={styles.topControls}>
           {onMinimize ? (
             <Pressable
               style={({ pressed }) => [styles.button, styles.actionButton, pressed && styles.pressed]}
@@ -190,20 +236,33 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     borderRadius: radii.control,
   },
+  tileStage: {
+    width: "100%",
+    height: "100%",
+  },
   tilePreview: {
     flex: 0,
     width: "100%",
     aspectRatio: 16 / 10,
-    minHeight: 96,
+    minHeight: 0,
     maxHeight: 280,
     borderColor: "#56564e",
     borderRadius: radii.overlay,
   },
   tileSmall: {
-    minHeight: 96,
+    flex: 1,
+    width: "100%",
+    height: "100%",
+    minHeight: 0,
+    borderWidth: 0,
+    borderRadius: 0,
   },
   video: {
-    flex: 1,
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
     backgroundColor: "#000",
   },
   tapArea: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0 },
@@ -219,15 +278,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     zIndex: 3,
   },
-  metaPreview: {
-    left: 8,
-    top: 8,
-    maxWidth: "48%",
-    minHeight: 28,
-    paddingHorizontal: 8,
-    gap: 6,
-  },
-  namePreview: { fontSize: 10 },
   liveDot: {
     width: 6,
     height: 6,
@@ -258,7 +308,6 @@ const styles = StyleSheet.create({
     gap: 8,
     zIndex: 3,
   },
-  controlsPreview: { right: 7, bottom: 7, gap: 5 },
   topControls: {
     position: "absolute",
     top: 12,
@@ -268,7 +317,6 @@ const styles = StyleSheet.create({
     gap: 6,
     zIndex: 3,
   },
-  topControlsPreview: { top: 7, right: 7, gap: 5 },
   button: {
     backgroundColor: "rgba(16,16,14,0.88)",
     borderWidth: 1,

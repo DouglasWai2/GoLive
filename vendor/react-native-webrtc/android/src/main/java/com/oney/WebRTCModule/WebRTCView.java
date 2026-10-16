@@ -154,6 +154,9 @@ public class WebRTCView extends ViewGroup {
      */
     private boolean onDimensionsChangeEnabled = false;
 
+    /** Whether the first-frame event is enabled by the React Native consumer. */
+    private boolean onFirstFrameRenderedEnabled = false;
+
     public WebRTCView(Context context) {
         super(context);
 
@@ -260,6 +263,15 @@ public class WebRTCView extends ViewGroup {
         post(() -> {
             Log.d(TAG, "First frame rendered.");
             surfaceViewRenderer.setBackgroundColor(Color.TRANSPARENT);
+            if (onFirstFrameRenderedEnabled) {
+                try {
+                    ReactContext reactContext = (ReactContext) getContext();
+                    reactContext.getJSModule(RCTEventEmitter.class)
+                            .receiveEvent(getId(), "onFirstFrameRendered", Arguments.createMap());
+                } catch (Exception e) {
+                    Log.e(TAG, "Error calling onFirstFrameRendered callback", e);
+                }
+            }
         });
     }
 
@@ -607,5 +619,9 @@ public class WebRTCView extends ViewGroup {
      */
     public void setOnDimensionsChange(boolean enabled) {
         this.onDimensionsChangeEnabled = enabled;
+    }
+
+    public void setOnFirstFrameRendered(boolean enabled) {
+        this.onFirstFrameRenderedEnabled = enabled;
     }
 }
