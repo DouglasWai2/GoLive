@@ -7,6 +7,7 @@ const nativeDir = __dirname;
 const service = fs.readFileSync(path.join(nativeDir, "VoiceSessionService.kt"), "utf8");
 const moduleSource = fs.readFileSync(path.join(nativeDir, "VoiceSessionModule.kt"), "utf8");
 const queue = fs.readFileSync(path.join(nativeDir, "VoiceSessionActionQueue.kt"), "utf8");
+const generatedNativeDir = path.join(__dirname, "../../android/app/src/main/java/com/golive/mobile");
 
 function functionBody(source, signature) {
   const start = source.indexOf(signature);
@@ -80,4 +81,31 @@ test("Android 14 microphone FGS promotion is rejected while Activity is not resu
   assert.match(update, /requiresVisibleMicrophonePromotion\(active,\s*next\)/);
   assert.ok(update.indexOf("requiresVisibleMicrophonePromotion") < update.indexOf("startForegroundFor(next)"));
   assert.match(moduleUpdate, /VoiceSessionService\.updateFromModule/);
+});
+
+test("active status exposes room identity and state for safe JS bridge recovery", () => {
+  const activeStatus = functionBody(service, "internal fun activeStatus(");
+  const moduleActiveStatus = functionBody(moduleSource, "fun getActiveStatus(");
+
+  assert.match(moduleActiveStatus, /VoiceSessionService\.activeStatus/);
+  for (const field of [
+    "sessionId",
+    "roomLabel",
+    "playbackActive",
+    "microphoneActive",
+    "micMuted",
+    "deafened",
+    "projectionActive",
+    "activeTypes",
+  ]) {
+    assert.match(activeStatus, new RegExp(`\\"${field}\\"`));
+  }
+});
+
+test("Expo plugin Kotlin sources remain byte-identical to generated app sources", () => {
+  for (const filename of ["VoiceSessionModule.kt", "VoiceSessionService.kt", "VoiceSessionActionQueue.kt"]) {
+    const template = fs.readFileSync(path.join(nativeDir, filename), "utf8");
+    const generated = fs.readFileSync(path.join(generatedNativeDir, filename), "utf8");
+    assert.equal(generated, template, `${filename} generated source drifted from its Expo plugin template`);
+  }
 });

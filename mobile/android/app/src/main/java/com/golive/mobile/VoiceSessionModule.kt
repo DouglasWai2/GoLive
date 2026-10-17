@@ -115,6 +115,12 @@ class VoiceSessionModule(
     promise.resolve(VoiceSessionService.status(reactApplicationContext, normalized))
   }
 
+  /** Exposes the active service identity so a re-created JS bridge can reconcile safely. */
+  @ReactMethod
+  fun getActiveStatus(promise: Promise) {
+    promise.resolve(VoiceSessionService.activeStatus(reactApplicationContext))
+  }
+
   /** Returns matching actions without deleting them; ackAction removes only after JS applied one. */
   @ReactMethod
   fun consumePendingActions(sessionId: String, promise: Promise) {

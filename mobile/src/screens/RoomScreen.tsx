@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Pressable, Share, StyleSheet, Text, View, useWindowDimensions } from "react-native";
+import { ActivityIndicator, Linking, Pressable, Share, StyleSheet, Text, View, useWindowDimensions } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { buildInviteUrl, createInvite, formatBitrate, formatResolution } from "@golive/core";
@@ -63,7 +63,6 @@ export function RoomScreen({
   const [focusedPeerId, setFocusedPeerId] = useState<string | null>(null);
   const [stoppedWatchingRemote, setStoppedWatchingRemote] = useState(false);
   const [stageSource, setStageSource] = useState<"local" | "remote" | "none">("remote");
-  const [deafened, setDeafened] = useState(false);
   const [globalVoiceVolume, setGlobalVoiceVolume] = useState(1);
   const [voicePlaybackSettings, setVoicePlaybackSettings] = useState<Record<string, VoicePlaybackSettings>>({});
   const [stageSize, setStageSize] = useState({ width: 0, height: 0 });
@@ -92,8 +91,12 @@ export function RoomScreen({
     stopSharing,
     focusPeer: setFocusedRemotePeer,
     setMicrophoneMuted,
+    deafened,
+    setDeafened,
+    notificationPermissionGranted,
+    voiceSessionReady,
     playNotificationSound,
-  } = useRoom(roomId, name, token, onSessionRejected, onSessionReplaced);
+  } = useRoom(roomId, name, token, onSessionRejected, onSessionReplaced, onLeave);
 
   useEffect(() => {
     void (async () => {
@@ -247,6 +250,12 @@ export function RoomScreen({
     playNotificationSound(nextDeafened ? "deafen" : "undeafen");
   };
 
+  const openAppSettings = () => {
+    void Linking.openSettings().catch(() => {
+      setError("Could not open Android app settings. Open Settings and find GoLive to change permissions.");
+    });
+  };
+
   const changeVoiceVolume = (peerId: string, nextVolume: number) => {
     setVoicePlaybackSettings((current) => {
       const previous = current[peerId] ?? DEFAULT_VOICE_PLAYBACK_SETTINGS;
@@ -359,9 +368,35 @@ export function RoomScreen({
         </View>
       </View>
 
+      {notificationPermissionGranted === false ? (
+        <View style={styles.permissionBanner} accessibilityRole="alert">
+          <Text style={styles.permissionText}>
+            Notifications are off. Android may hide GoLive’s call notification and its background controls.
+          </Text>
+          <Pressable
+            style={({ pressed }) => [styles.permissionAction, pressed && styles.pressed]}
+            onPress={openAppSettings}
+            accessibilityRole="button"
+            accessibilityLabel="Open app settings to enable GoLive notifications"
+          >
+            <Text style={styles.permissionActionText}>Settings</Text>
+          </Pressable>
+        </View>
+      ) : null}
+
       {error ? (
         <View style={styles.errorBanner} accessibilityRole="alert">
           <Text style={styles.errorText}>{error}</Text>
+          {error === "Microphone permission was not granted." ? (
+            <Pressable
+              style={({ pressed }) => [styles.permissionAction, pressed && styles.pressed]}
+              onPress={openAppSettings}
+              accessibilityRole="button"
+              accessibilityLabel="Open app settings to allow microphone access"
+            >
+              <Text style={styles.permissionActionText}>Settings</Text>
+            </Pressable>
+          ) : null}
           <Pressable
             style={({ pressed }) => [styles.errorClose, pressed && styles.pressed]}
             onPress={() => setError("")}
@@ -554,7 +589,7 @@ export function RoomScreen({
 
       <VoiceAudio
         tracks={remoteVoiceTracks}
-        deafened={deafened}
+        deafened={deafened || !voiceSessionReady}
         globalVolume={globalVoiceVolume}
         settings={voicePlaybackSettings}
         activeMediaCount={Object.keys(remoteVoiceTracks).length + Object.keys(remoteStreams).length}
@@ -628,6 +663,10 @@ const styles = StyleSheet.create({
   statusReconnecting: { backgroundColor: "#ffb13b" },
   statusDisconnected: { backgroundColor: colors.red },
   statusText: { ...technicalText, color: "#77776f", fontSize: 7 },
+  permissionBanner: { marginHorizontal: 16, marginTop: 12, paddingLeft: 13, paddingVertical: 4, minHeight: 56, borderWidth: 1, borderColor: colors.lineStrong, backgroundColor: colors.surfaceRaised, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
+  permissionText: { color: colors.paper, fontSize: 12, lineHeight: 17, flex: 1 },
+  permissionAction: { minHeight: 48, paddingHorizontal: 11, borderWidth: 1, borderColor: colors.lineStrong, alignItems: "center", justifyContent: "center" },
+  permissionActionText: { color: colors.acid, fontSize: 11, fontWeight: "600" },
   errorBanner: { marginHorizontal: 16, marginTop: 12, paddingLeft: 13, minHeight: 44, borderWidth: 1, borderColor: "rgba(255,93,74,0.35)", backgroundColor: "rgba(255,93,74,0.08)", flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   errorText: { color: colors.redText, fontSize: 12, flex: 1 },
   errorClose: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },

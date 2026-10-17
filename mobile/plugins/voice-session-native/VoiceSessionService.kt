@@ -592,6 +592,25 @@ class VoiceSessionService : Service() {
       }
     }
 
+    internal fun activeStatus(context: Context): WritableMap {
+      val service = runningService
+      val activeConfig = service?.config
+      return Arguments.createMap().apply {
+        putBoolean("running", activeConfig != null)
+        putString("sessionId", activeConfig?.sessionId)
+        putBoolean("notificationPermissionGranted", notificationsAllowed(context))
+        activeConfig?.let {
+          putString("roomLabel", it.roomLabel)
+          putBoolean("playbackActive", it.playbackActive)
+          putBoolean("microphoneActive", it.microphoneActive)
+          putBoolean("micMuted", it.micMuted)
+          putBoolean("deafened", it.deafened)
+          putBoolean("projectionActive", it.projectionActive)
+          putInt("activeTypes", service?.foregroundTypes(it) ?: 0)
+        }
+      }
+    }
+
     internal fun notificationsAllowed(context: Context): Boolean {
       val manager = context.getSystemService(NotificationManager::class.java)
       if (!manager.areNotificationsEnabled()) return false

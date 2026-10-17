@@ -177,6 +177,26 @@ the repository root.
    and `android:device` scripts contain a fixed IP; use the commands above
    unless that IP matches your computer.
 
+#### Android background call controls
+
+GoLive starts its voice foreground service while the room is open. On Android
+13 and later, allow **GoLive notifications** when prompted if you want the
+ongoing call notification and its Disconnect, microphone, and deafen actions in
+the notification drawer. A room can remain connected without notification
+permission, but Android may hide that notification and its controls; open the
+GoLive app settings from the in-room notice to enable them. The foreground
+service may still appear in Android's active-apps/task-manager surface.
+
+Microphone access is a separate permission. For privacy and Android's
+background-microphone restrictions (especially Android 14 and later), unmute
+while GoLive is visible. A notification Unmute is applied only when an eligible
+microphone foreground service is already confirmed; otherwise it remains
+pending until GoLive returns to the foreground. This also applies while
+screen-sharing: if Android cannot confirm microphone foreground access, the
+notification action fails closed and does not start microphone capture in the
+background. Voice playback can continue in the background while the service is
+available.
+
 To test a room, create one in the web app at `http://localhost:5173` and paste
 its full invite link into the mobile app, or create the room on mobile and open
 its invite link in the browser. The invite URL must point to the **web app**;

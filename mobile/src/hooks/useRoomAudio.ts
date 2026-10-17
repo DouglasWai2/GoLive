@@ -7,7 +7,6 @@ import {
 } from "expo-audio";
 import type { NotificationSound } from "@golive/core";
 
-const roomActiveSource = require("../../assets/notification-sounds/room-active.wav");
 const shareStartSource = require("../../assets/notification-sounds/share-start.wav");
 const shareStopSource = require("../../assets/notification-sounds/share-stop.wav");
 const peerJoinSource = require("../../assets/notification-sounds/peer-join.wav");
@@ -17,8 +16,7 @@ const micUnmuteSource = require("../../assets/notification-sounds/mic-unmute.wav
 const deafenSource = require("../../assets/notification-sounds/deafen.wav");
 const undeafenSource = require("../../assets/notification-sounds/undeafen.wav");
 
-export function useRoomAudio(roomId: string) {
-  const roomActivePlayer = useAudioPlayer(roomActiveSource);
+export function useRoomAudio() {
   const shareStartPlayer = useAudioPlayer(shareStartSource);
   const shareStopPlayer = useAudioPlayer(shareStopSource);
   const peerJoinPlayer = useAudioPlayer(peerJoinSource);
@@ -29,9 +27,10 @@ export function useRoomAudio(roomId: string) {
   const undeafenPlayer = useAudioPlayer(undeafenSource);
   const audioGeneration = useRef(0);
 
-  const startRoomAudio = useCallback(async () => {
+  const startRoomAudio = useCallback(async (): Promise<boolean | null> => {
     const generation = audioGeneration.current + 1;
     audioGeneration.current = generation;
+    let notificationPermissionGranted: boolean | null = null;
 
     try {
       await setAudioModeAsync({
@@ -42,42 +41,35 @@ export function useRoomAudio(roomId: string) {
         shouldRouteThroughEarpiece: false,
         allowsBackgroundRecording: false,
       });
-
-      if (Platform.OS === "android") {
-        await requestNotificationPermissionsAsync();
-      }
-
-      if (audioGeneration.current !== generation) return;
-
-      roomActivePlayer.loop = true;
-      roomActivePlayer.volume = 0;
-
-      if (Platform.OS === "android") {
-        roomActivePlayer.setActiveForLockScreen(
-          true,
-          { title: "GoLive", artist: `Connected to room ${roomId}` },
-          { isLiveStream: true, showSeekBackward: false, showSeekForward: false },
-        );
-      }
-
-      roomActivePlayer.play();
     } catch {
-      // Room audio is optional; WebRTC should continue if native playback is unavailable.
+      // WebRTC voice audio continues if audio-session setup is unavailable.
     }
-  }, [roomActivePlayer, roomId]);
+
+    if (Platform.OS === "android") {
+      try {
+        const permission = await requestNotificationPermissionsAsync();
+        notificationPermissionGranted = permission.granted;
+      } catch {
+        // The in-app notice remains hidden when the permission API is unavailable.
+      }
+    }
+
+    if (audioGeneration.current !== generation) return notificationPermissionGranted;
+    return notificationPermissionGranted;
+  }, []);
 
   const stopRoomAudio = useCallback(() => {
     audioGeneration.current += 1;
 
-    try {
-      roomActivePlayer.pause();
-      if (Platform.OS === "android") {
-        roomActivePlayer.setActiveForLockScreen(false);
-      }
-    } catch {
-      // Players may already be released while the room component is unmounting.
-    }
-  }, [roomActivePlayer]);
+    void setAudioModeAsync({
+      playsInSilentMode: true,
+      interruptionMode: "doNotMix",
+      allowsRecording: false,
+      shouldPlayInBackground: false,
+      shouldRouteThroughEarpiece: false,
+      allowsBackgroundRecording: false,
+    }).catch(() => {});
+  }, []);
 
   const playNotificationSound = useCallback((sound: NotificationSound) => {
     const player = {

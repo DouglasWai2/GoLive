@@ -779,8 +779,12 @@ test("auto-joins voice muted and requests the microphone only on unmute", async 
   const connections: FakePeerConnection[] = [];
   const purposes: Array<"screen" | "voice"> = [];
   let microphoneRequests = 0;
+  let failNextMicrophoneRequest = false;
   const microphoneTracks: MediaTrack[] = [];
   const microphoneStopCounts: number[] = [];
+  const voiceStates: Array<{ micMuted: boolean; requestingMicrophone: boolean }> = [];
+  let holdNextMicrophoneRequest = false;
+  let releaseMicrophoneRequest: (() => void) | null = null;
   const displayTrack: MediaTrack = {
     id: "display-video",
     kind: "video",
@@ -812,6 +816,16 @@ test("auto-joins voice muted and requests the microphone only on unmute", async 
     getDisplayMedia: () => displayRequest,
     getUserMedia: async () => {
       microphoneRequests += 1;
+      if (holdNextMicrophoneRequest) {
+        holdNextMicrophoneRequest = false;
+        await new Promise<void>((resolve) => {
+          releaseMicrophoneRequest = resolve;
+        });
+      }
+      if (failNextMicrophoneRequest) {
+        failNextMicrophoneRequest = false;
+        throw new Error("microphone capture denied");
+      }
       const requestIndex = microphoneTracks.length;
       microphoneStopCounts.push(0);
       const microphoneTrack: MediaTrack = {
@@ -853,6 +867,12 @@ test("auto-joins voice muted and requests the microphone only on unmute", async 
       onConnectionState: () => {},
       onRemoteStats: () => {},
       onOutboundStats: () => {},
+      onVoiceState: (state) => {
+        voiceStates.push({
+          micMuted: state.micMuted,
+          requestingMicrophone: state.requestingMicrophone,
+        });
+      },
       onError: () => {},
     },
     { baseUrl: "https://signal.example.com", adapter },
@@ -959,19 +979,50 @@ test("auto-joins voice muted and requests the microphone only on unmute", async 
     assert.equal(connections[0]?.sender.track, microphoneTracks[1]);
     assert.equal(connections[0]?.transceivers[0]?.direction, "sendrecv");
 
+    session.handleAppBackground({ keepMicrophone: false });
+    assert.equal(microphoneTracks[1]?.enabled, false);
+    assert.equal(microphoneStopCounts[1], 1);
+
+    await session.setMicrophoneMuted(false);
+    assert.equal(microphoneRequests, 3);
+    assert.equal(microphoneTracks[2]?.enabled, true);
+    session.handleAppBackground({ keepMicrophone: true });
+    assert.equal(microphoneTracks[2]?.enabled, true);
+
     const sharing = session.startSharing(DEFAULT_SHARE_SETTINGS);
     session.handleAppBackground();
-    assert.equal(microphoneTracks[1]?.enabled, true);
+    assert.equal(microphoneTracks[2]?.enabled, true);
 
     session.stopSharing();
     resolveDisplay(displayStream);
     await sharing;
 
     session.handleAppBackground();
-    assert.equal(microphoneTracks[1]?.enabled, false);
-    assert.equal(microphoneStopCounts[1], 1);
+    assert.equal(microphoneTracks[2]?.enabled, false);
+    assert.equal(microphoneStopCounts[2], 1);
     assert.equal(connections[0]?.sender.track, null);
     assert.equal(connections[0]?.transceivers[0]?.direction, "recvonly");
+
+    holdNextMicrophoneRequest = true;
+    const pendingUnmute = session.setMicrophoneMuted(false);
+    await flushAsyncWork();
+    assert.equal(microphoneRequests, 4);
+    await session.handleAppBackground({ keepMicrophone: false });
+    releaseMicrophoneRequest?.();
+    await pendingUnmute;
+    await flushAsyncWork();
+    assert.equal(microphoneTracks[3]?.enabled, false);
+    assert.equal(microphoneStopCounts[3], 1);
+    assert.equal(connections[0]?.sender.track, null);
+
+    failNextMicrophoneRequest = true;
+    await session.setMicrophoneMuted(false);
+    assert.equal(microphoneRequests, 5);
+    assert.deepEqual(voiceStates.slice(-2), [
+      { micMuted: true, requestingMicrophone: true },
+      { micMuted: true, requestingMicrophone: false },
+    ]);
+    assert.equal(microphoneTracks.length, 4);
   } finally {
     session.stop();
     globalThis.WebSocket = originalWebSocket;

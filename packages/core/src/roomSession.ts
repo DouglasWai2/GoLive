@@ -457,15 +457,28 @@ export class RoomSession {
     this.emitVoiceState();
   }
 
-  handleAppBackground() {
-    // MediaProjection backgrounds the activity while its consent UI is shown and
-    // while the user views another app. Keep voice active during screen sharing.
-    if (this.startingShare || this.localStream) return;
-    void this.setMicrophoneMuted(true);
+  handleAppBackground(options: { keepMicrophone?: boolean } = {}) {
+    // Preserve the historical behavior for web and other callers by default,
+    // while allowing native hosts to require an explicitly confirmed FGS.
+    const keepMicrophone = options.keepMicrophone
+      ?? (this.startingShare || Boolean(this.localStream));
+    if (keepMicrophone) return;
+    return this.setMicrophoneMuted(true);
   }
 
   async setMicrophoneMuted(muted: boolean) {
-    if (!this.voiceDesired || this.requestingMicrophone) return;
+    if (!this.voiceDesired) return;
+    if (this.requestingMicrophone) {
+      if (!muted) return;
+      // Invalidate an in-flight permission/capture request. Its eventual stream
+      // will be disposed by the generation checks before it can be attached.
+      this.microphoneGeneration += 1;
+      this.requestingMicrophone = false;
+      this.micMuted = true;
+      this.announceVoiceState();
+      this.emitVoiceState();
+      return;
+    }
 
     if (!muted && !this.microphoneStream) {
       const getUserMedia = this.deps.adapter.getUserMedia;
