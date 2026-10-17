@@ -31,7 +31,10 @@ internal object VoiceSessionActionQueue {
         && it.optString("action") == action
         && (!it.has("value") || value == it.optBoolean("value"))
     }
-    if (sameIntent != null) return sameIntent
+    // Each Unmute tap gets a fresh action ID so an old failed record cannot inherit
+    // the next tap's process-local authorization.
+    val isUnmuteTap = action == "setMicMuted" && value == false
+    if (sameIntent != null && !isUnmuteTap) return sameIntent
 
     // State-setting commands coalesce by operation; a newer desired state replaces the older one.
     if (action != "disconnect") {
@@ -70,6 +73,23 @@ internal object VoiceSessionActionQueue {
   @Synchronized
   fun acknowledge(context: Context, sessionId: String, actionId: String): Boolean {
     val actions = read(context)
+    val removed = actions.removeAll {
+      it.optString("sessionId") == sessionId && it.optString("id") == actionId
+    }
+    return removed && write(context, actions)
+  }
+
+  /** Drops only a failed notification Unmute; unlike ACK, this never claims it was applied. */
+  @Synchronized
+  fun discardFailedUnmute(context: Context, sessionId: String, actionId: String): Boolean {
+    val actions = read(context)
+    val target = actions.firstOrNull {
+      it.optString("sessionId") == sessionId && it.optString("id") == actionId
+    } ?: return false
+    if (target.optString("action") != "setMicMuted"
+      || !target.has("value")
+      || target.optBoolean("value", true)
+    ) return false
     val removed = actions.removeAll {
       it.optString("sessionId") == sessionId && it.optString("id") == actionId
     }

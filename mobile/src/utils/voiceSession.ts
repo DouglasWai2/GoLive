@@ -13,6 +13,7 @@ export type VoiceSessionResult = {
   sessionId: string | null;
   reason?: string;
   activeTypes?: number;
+  microphoneFgsActive?: boolean;
   notificationPermissionGranted?: boolean;
 };
 
@@ -26,6 +27,7 @@ export type VoiceSessionStatus = {
   deafened?: boolean;
   projectionActive?: boolean;
   activeTypes?: number;
+  microphoneFgsActive?: boolean;
   notificationPermissionGranted?: boolean;
 };
 
@@ -83,11 +85,16 @@ export function hasMicrophoneForegroundService(
   status: VoiceSessionStatus | null,
   androidApiLevel: number,
 ): boolean {
-  if (!status?.running || !status.microphoneActive) return false;
+  if (!status?.running) return false;
+  if (status.microphoneFgsActive === true) return true;
+
+  // On API 30+, activeTypes reports the FGS type independently from whether
+  // RoomSession currently owns a live microphone track (muted keeps the type).
+  if (androidApiLevel >= 30) {
+    return ((status.activeTypes ?? 0) & MICROPHONE_FOREGROUND_SERVICE_TYPE) !== 0;
+  }
 
   // Before API 30 there is no microphone foreground-service type bit. A
-  // successful foreground-service status plus active microphone config is the
-  // strongest signal available on those releases.
-  return androidApiLevel < 30
-    || ((status.activeTypes ?? 0) & MICROPHONE_FOREGROUND_SERVICE_TYPE) !== 0;
+  // successful FGS capability signal is the strongest available evidence.
+  return status.microphoneActive === true;
 }

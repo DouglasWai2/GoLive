@@ -16,6 +16,8 @@ import { nativeAdapter } from "../adapter";
 import {
   acknowledgeVoiceSessionAction,
   consumeVoiceSessionActions,
+  consumeVoiceSessionUnmuteClaim,
+  discardFailedVoiceSessionUnmute,
   getActiveVoiceSessionStatus,
   getVoiceSessionStatus,
   isVoiceSessionAvailable,
@@ -243,6 +245,7 @@ export function useRoom(
           micMuted: options.micMuted,
           deafened: options.deafened,
           activeTypes: result.activeTypes,
+          microphoneFgsActive: result.microphoneFgsActive,
           notificationPermissionGranted: result.notificationPermissionGranted,
         };
         if (typeof result.notificationPermissionGranted === "boolean") {
@@ -297,6 +300,7 @@ export function useRoom(
           micMuted: options.micMuted,
           deafened: options.deafened,
           activeTypes: result.activeTypes,
+          microphoneFgsActive: result.microphoneFgsActive,
           notificationPermissionGranted: result.notificationPermissionGranted,
         };
         if (typeof result.notificationPermissionGranted === "boolean") {
@@ -393,7 +397,30 @@ export function useRoom(
               }
               if (typeof action.value !== "boolean") return false;
               if (action.action === "setMicMuted") {
-                return setMicrophoneMutedRef.current(action.value);
+                if (!action.value) {
+                  // The native one-shot claim and local action-ID guard are consumed
+                  // before any microphone permission/capture request.
+                  const authorized = await consumeVoiceSessionUnmuteClaim(sessionId, action.id);
+                  if (!authorized) {
+                    if (isCurrent()) {
+                      setError(
+                        "Notification Unmute was not applied. Open GoLive, check microphone access, and unmute while the app is visible; failed notification requests are not retried.",
+                      );
+                    }
+                    return "discard_failed_unmute";
+                  }
+                }
+                const applied = await setMicrophoneMutedRef.current(action.value);
+                if (applied) return true;
+                if (!action.value) {
+                  if (isCurrent()) {
+                    setError(
+                      "Notification Unmute failed. Open GoLive, check microphone access, and unmute while the app is visible; failed notification requests are not retried.",
+                    );
+                  }
+                  return "discard_failed_unmute";
+                }
+                return false;
               }
               if (action.action === "setDeafened") {
                 deafenedRef.current = action.value;
@@ -406,6 +433,7 @@ export function useRoom(
             },
             (actionId) => acknowledgeVoiceSessionAction(sessionId, actionId),
             isCurrent,
+            (actionId) => discardFailedVoiceSessionUnmute(sessionId, actionId),
           );
 
           if (result.disconnected) {

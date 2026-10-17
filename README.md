@@ -188,14 +188,16 @@ GoLive app settings from the in-room notice to enable them. The foreground
 service may still appear in Android's active-apps/task-manager surface.
 
 Microphone access is a separate permission. For privacy and Android's
-background-microphone restrictions (especially Android 14 and later), unmute
-while GoLive is visible. A notification Unmute is applied only when an eligible
-microphone foreground service is already confirmed; otherwise it remains
-pending until GoLive returns to the foreground. This also applies while
-screen-sharing: if Android cannot confirm microphone foreground access, the
-notification action fails closed and does not start microphone capture in the
-background. Voice playback can continue in the background while the service is
-available.
+background-microphone restrictions (especially Android 14 and later), first
+unmute while GoLive is visible so Android can grant microphone access and
+establish the eligible foreground-service type. GoLive retains that already
+established type while muted; this does not keep a microphone track active.
+Notification Unmute is available in the background only while that capability
+is retained. If it was never established or microphone capture fails, the
+action is discarded rather than deferred, so it cannot unexpectedly unmute
+later; reopen GoLive, check microphone access, and unmute while the app is
+visible. This also applies while screen-sharing. Voice playback can continue in
+the background while the service is available.
 
 To test a room, create one in the web app at `http://localhost:5173` and paste
 its full invite link into the mobile app, or create the room on mobile and open

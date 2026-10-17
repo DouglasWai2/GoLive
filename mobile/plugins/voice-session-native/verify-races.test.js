@@ -58,7 +58,7 @@ test("disconnect persists for ack, then has a bounded process-teardown fallback"
   const watchdog = functionBody(service, "private fun armDisconnectWatchdog(");
   const ack = functionBody(moduleSource, "fun ackAction(");
 
-  assert.ok(action.indexOf("VoiceSessionActionQueue.enqueue") < action.indexOf("armDisconnectWatchdog"));
+  assert.ok(action.indexOf("enqueueNotificationAction") < action.indexOf("armDisconnectWatchdog"));
   assert.match(watchdog, /postDelayed\(runnable,\s*DISCONNECT_WATCHDOG_MS\)/);
   assert.match(watchdog, /activeSessionId\s*!=\s*null\s*&&\s*activeSessionId\s*!=\s*sessionId/);
   assert.match(watchdog, /Process\.killProcess\(Process\.myPid\(\)\)/);
@@ -77,10 +77,73 @@ test("Android 14 microphone FGS promotion is rejected while Activity is not resu
   const moduleUpdate = functionBody(moduleSource, "fun updateCallState(");
 
   assert.match(guard, /Build\.VERSION\.SDK_INT\s*>=\s*Build\.VERSION_CODES\.UPSIDE_DOWN_CAKE/);
+  assert.match(guard, /next\.microphoneActive/);
+  assert.match(guard, /!microphoneFgsEstablished/);
   assert.match(guard, /!VoiceSessionVisibility\.isActivityResumed\(\)/);
-  assert.match(update, /requiresVisibleMicrophonePromotion\(active,\s*next\)/);
+  assert.match(update, /requiresVisibleMicrophonePromotion\(next\)/);
   assert.ok(update.indexOf("requiresVisibleMicrophonePromotion") < update.indexOf("startForegroundFor(next)"));
   assert.match(moduleUpdate, /VoiceSessionService\.updateFromModule/);
+});
+
+test("muting retains only a successfully established mic FGS type without changing track state", () => {
+  const startForeground = functionBody(service, "private fun startForegroundFor(");
+  const foregroundTypes = functionBody(service, "private fun foregroundTypes(");
+  const statusMap = functionBody(service, "private fun statusMap(");
+  const stop = functionBody(service, "private fun stopActiveSession(");
+
+  assert.ok(startForeground.indexOf("startForeground(") < startForeground.indexOf("microphoneFgsEstablished = true"));
+  assert.match(startForeground, /if \(next\.microphoneActive\) microphoneFgsEstablished = true/);
+  assert.match(foregroundTypes, /state\.microphoneActive\s*\|\|\s*microphoneFgsEstablished/);
+  assert.doesNotMatch(foregroundTypes, /projectionActive/);
+  assert.match(statusMap, /putBoolean\("microphoneActive", it\.microphoneActive\)/);
+  assert.match(statusMap, /putBoolean\("microphoneFgsActive", microphoneFgsEstablished\)/);
+  assert.match(stop, /microphoneFgsEstablished\s*=\s*false/);
+});
+
+test("only a failed queued Unmute can be discarded, never another action or session", () => {
+  const discard = functionBody(queue, "fun discardFailedUnmute(");
+  const moduleDiscard = functionBody(moduleSource, "fun discardFailedUnmute(");
+
+  assert.match(discard, /it\.optString\("sessionId"\)\s*==\s*sessionId/);
+  assert.match(discard, /it\.optString\("id"\)\s*==\s*actionId/);
+  assert.match(discard, /target\.optString\("action"\)\s*!=\s*"setMicMuted"/);
+  assert.match(discard, /target\.optBoolean\("value",\s*true\)/);
+  assert.match(moduleDiscard, /VoiceSessionActionQueue\.discardFailedUnmute/);
+});
+
+test("notification Unmute claim is session-scoped, one-shot, and never persisted", () => {
+  const notification = functionBody(service, "private fun handleNotificationAction(");
+  const tapTransaction = functionBody(service, "private fun enqueueNotificationAction(");
+  const tapTransactionSource = service.slice(
+    service.indexOf("private fun enqueueNotificationAction("),
+    service.indexOf("private fun handleStop(", service.indexOf("private fun enqueueNotificationAction(")),
+  );
+  const handleStart = functionBody(service, "private fun handleStart(");
+  const stop = functionBody(service, "private fun stopActiveSession(");
+  const enqueue = functionBody(queue, "fun enqueue(");
+  const grant = functionBody(service, "internal fun grantNotificationUnmute(");
+  const consume = functionBody(service, "internal fun consumeNotificationUnmuteClaim(");
+  const moduleConsume = functionBody(moduleSource, "fun consumeUnmuteClaim(");
+  const moduleDiscard = functionBody(moduleSource, "fun discardFailedUnmute(");
+  const reset = functionBody(moduleSource, "fun resetUnmuteClaims(");
+  const invalidate = functionBody(moduleSource, "override fun invalidate(");
+
+  assert.match(notification, /enqueueNotificationAction\(active\.sessionId,\s*action!!,\s*value\)/);
+  assert.match(tapTransactionSource, /synchronized\(unmuteClaimLock\)/);
+  assert.ok(tapTransaction.indexOf("VoiceSessionActionQueue.enqueue") < tapTransaction.indexOf("grantNotificationUnmute"));
+  assert.match(tapTransaction, /microphoneFgsEstablished/);
+  assert.match(enqueue, /val isUnmuteTap\s*=\s*action\s*==\s*"setMicMuted"\s*&&\s*value\s*==\s*false/);
+  assert.match(enqueue, /sameIntent\s*!=\s*null\s*&&\s*!isUnmuteTap/);
+  assert.match(grant, /unmuteClaims\.add\(UnmuteClaimKey\(sessionId,\s*actionId\)\)/);
+  assert.match(consume, /unmuteClaims\.remove\(UnmuteClaimKey\(sessionId,\s*actionId\)\)/);
+  assert.match(moduleConsume, /VoiceSessionActionQueue\.find/);
+  assert.match(moduleConsume, /VoiceSessionService\.consumeNotificationUnmuteClaim/);
+  assert.match(handleStart, /clearUnmuteClaimsExcept\(requested\.sessionId\)/);
+  assert.match(stop, /clearUnmuteClaims\(sessionId\)/);
+  assert.match(reset, /VoiceSessionService\.clearAllUnmuteClaims/);
+  assert.ok(moduleDiscard.indexOf("revokeNotificationUnmuteClaim") < moduleDiscard.indexOf("discardFailedUnmute"));
+  assert.match(invalidate, /VoiceSessionService\.clearAllUnmuteClaims/);
+  assert.doesNotMatch(queue, /unmuteClaim|unmuteAuthorization/i);
 });
 
 test("active status exposes room identity and state for safe JS bridge recovery", () => {

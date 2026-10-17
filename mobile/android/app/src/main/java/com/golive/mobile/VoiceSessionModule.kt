@@ -89,8 +89,8 @@ class VoiceSessionModule(
       promise.resolve(result(false, "record_audio_permission_missing", config.sessionId))
       return
     }
-    VoiceSessionService.updateFromModule(reactApplicationContext, config) { started, reason, activeTypes ->
-      promise.resolve(result(started, reason, config.sessionId, activeTypes))
+    VoiceSessionService.updateFromModule(reactApplicationContext, config) { started, reason, activeTypes, microphoneFgsActive ->
+      promise.resolve(result(started, reason, config.sessionId, activeTypes, microphoneFgsActive))
     }
   }
 
@@ -121,6 +121,13 @@ class VoiceSessionModule(
     promise.resolve(VoiceSessionService.activeStatus(reactApplicationContext))
   }
 
+  /** A fresh JS runtime must not inherit taps issued by its predecessor. */
+  @ReactMethod
+  fun resetUnmuteClaims(promise: Promise) {
+    VoiceSessionService.clearAllUnmuteClaims()
+    promise.resolve(true)
+  }
+
   /** Returns matching actions without deleting them; ackAction removes only after JS applied one. */
   @ReactMethod
   fun consumePendingActions(sessionId: String, promise: Promise) {
@@ -143,6 +150,23 @@ class VoiceSessionModule(
     promise.resolve(result)
   }
 
+  /** Consumes the process-local claim before JS begins getUserMedia for this exact queued Unmute. */
+  @ReactMethod
+  fun consumeUnmuteClaim(sessionId: String, actionId: String, promise: Promise) {
+    val normalized = normalizeSessionId(sessionId)
+    val pendingAction = if (normalized != null && actionId.isNotBlank()) {
+      VoiceSessionActionQueue.find(reactApplicationContext, normalized, actionId)
+    } else {
+      null
+    }
+    val isPendingUnmute = pendingAction?.optString("action") == "setMicMuted"
+      && pendingAction.has("value")
+      && !pendingAction.optBoolean("value", true)
+    val consumed = isPendingUnmute
+      && VoiceSessionService.consumeNotificationUnmuteClaim(normalized!!, actionId)
+    promise.resolve(consumed)
+  }
+
   @ReactMethod
   fun ackAction(sessionId: String, actionId: String, promise: Promise) {
     val normalized = normalizeSessionId(sessionId)
@@ -160,8 +184,22 @@ class VoiceSessionModule(
     promise.resolve(acknowledged)
   }
 
+  /** Removes only an explicitly failed Unmute; it cannot discard disconnect or other state changes. */
+  @ReactMethod
+  fun discardFailedUnmute(sessionId: String, actionId: String, promise: Promise) {
+    val normalized = normalizeSessionId(sessionId)
+    if (normalized != null && actionId.isNotBlank()) {
+      // Revoke before disk I/O; failed persistence must not restore eligibility.
+      VoiceSessionService.revokeNotificationUnmuteClaim(normalized, actionId)
+    }
+    val discarded = normalized != null && actionId.isNotBlank()
+      && VoiceSessionActionQueue.discardFailedUnmute(reactApplicationContext, normalized, actionId)
+    promise.resolve(discarded)
+  }
+
   override fun invalidate() {
     if (currentModule?.get() === this) currentModule = null
+    VoiceSessionService.clearAllUnmuteClaims()
     super.invalidate()
   }
 
@@ -209,11 +247,13 @@ class VoiceSessionModule(
     reason: String?,
     sessionId: String?,
     activeTypes: Int? = null,
+    microphoneFgsActive: Boolean? = null,
   ): WritableMap = Arguments.createMap().apply {
     putBoolean("started", started)
     putString("sessionId", sessionId)
     if (reason != null) putString("reason", reason)
     if (activeTypes != null) putInt("activeTypes", activeTypes)
+    if (microphoneFgsActive != null) putBoolean("microphoneFgsActive", microphoneFgsActive)
     putBoolean("notificationPermissionGranted", VoiceSessionService.notificationsAllowed(reactApplicationContext))
   }
 
@@ -223,6 +263,7 @@ class VoiceSessionModule(
       reason = data?.getString(VoiceSessionService.RESULT_REASON),
       sessionId = data?.getString(VoiceSessionService.RESULT_SESSION_ID) ?: sessionId,
       activeTypes = data?.getInt(VoiceSessionService.RESULT_ACTIVE_TYPES),
+      microphoneFgsActive = data?.getBoolean(VoiceSessionService.RESULT_MICROPHONE_FGS_ACTIVE),
     )
 
   private fun classifyStartError(error: RuntimeException): String = when (error.javaClass.simpleName) {

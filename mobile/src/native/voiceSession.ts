@@ -5,6 +5,13 @@ import type {
   VoiceSessionResult,
   VoiceSessionStatus,
 } from "../utils/voiceSession";
+import {
+  callBooleanBridgeWithTimeout,
+  consumeUnmuteClaimOnce,
+  createUnmuteClaimResetBarrier,
+  VOICE_SESSION_BRIDGE_TIMEOUT_MS,
+  VoiceSessionUnmuteAttemptGuard,
+} from "../utils/voiceSessionActions";
 
 type VoiceSessionNativeModule = {
   startCall(options: VoiceSessionOptions): Promise<VoiceSessionResult>;
@@ -12,8 +19,11 @@ type VoiceSessionNativeModule = {
   stopCall(sessionId: string): Promise<VoiceSessionResult>;
   getStatus(sessionId: string): Promise<VoiceSessionStatus>;
   getActiveStatus(): Promise<VoiceSessionStatus>;
+  resetUnmuteClaims(): Promise<boolean>;
   consumePendingActions(sessionId: string): Promise<VoiceSessionAction[]>;
+  consumeUnmuteClaim(sessionId: string, actionId: string): Promise<boolean>;
   ackAction(sessionId: string, actionId: string): Promise<boolean>;
+  discardFailedUnmute(sessionId: string, actionId: string): Promise<boolean>;
   addListener(eventName: string): void;
   removeListeners(count: number): void;
 };
@@ -28,12 +38,21 @@ const nativeModule = candidate
   && typeof candidate.stopCall === "function"
   && typeof candidate.getStatus === "function"
   && typeof candidate.getActiveStatus === "function"
+  && typeof candidate.resetUnmuteClaims === "function"
   && typeof candidate.consumePendingActions === "function"
+  && typeof candidate.consumeUnmuteClaim === "function"
   && typeof candidate.ackAction === "function"
+  && typeof candidate.discardFailedUnmute === "function"
   ? candidate
   : undefined;
 
 const eventEmitter = nativeModule ? new NativeEventEmitter(nativeModule) : null;
+const unmuteAttemptGuard = new VoiceSessionUnmuteAttemptGuard();
+// Keep the single startup reset result for this JS runtime. A failed/timed-out
+// reset permanently disables notification Unmute here, without blocking other actions.
+export const voiceSessionUnmuteResetReady = nativeModule
+  ? createUnmuteClaimResetBarrier(() => nativeModule.resetUnmuteClaims())
+  : Promise.resolve(false);
 
 export const isVoiceSessionAvailable = nativeModule !== undefined;
 export const voiceSessionPlatformVersion = Platform.OS === "android"
@@ -88,11 +107,36 @@ export function consumeVoiceSessionActions(sessionId: string): Promise<VoiceSess
   return nativeModule?.consumePendingActions(sessionId) ?? Promise.resolve([]);
 }
 
+/** Burns the local action ID before touching the native one-shot claim bridge. */
+export async function consumeVoiceSessionUnmuteClaim(
+  sessionId: string,
+  actionId: string,
+): Promise<boolean> {
+  return consumeUnmuteClaimOnce(
+    unmuteAttemptGuard,
+    sessionId,
+    actionId,
+    voiceSessionUnmuteResetReady,
+    () => nativeModule?.consumeUnmuteClaim(sessionId, actionId) ?? Promise.resolve(false),
+    VOICE_SESSION_BRIDGE_TIMEOUT_MS,
+  );
+}
+
 export function acknowledgeVoiceSessionAction(
   sessionId: string,
   actionId: string,
 ): Promise<boolean> {
   return nativeModule?.ackAction(sessionId, actionId) ?? Promise.resolve(false);
+}
+
+export function discardFailedVoiceSessionUnmute(
+  sessionId: string,
+  actionId: string,
+): Promise<boolean> {
+  return callBooleanBridgeWithTimeout(
+    () => nativeModule?.discardFailedUnmute(sessionId, actionId) ?? Promise.resolve(false),
+    VOICE_SESSION_BRIDGE_TIMEOUT_MS,
+  );
 }
 
 let nativeOperationQueue: Promise<void> = Promise.resolve();

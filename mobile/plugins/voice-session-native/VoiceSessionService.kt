@@ -41,6 +41,9 @@ internal data class VoiceSessionConfig(
 class VoiceSessionService : Service() {
   @Volatile private var config: VoiceSessionConfig? = null
   @Volatile private var activeStartToken: String? = null
+  // Latched only after Android accepted a microphone-typed foreground start.
+  // This represents FGS eligibility, not whether a microphone track is live.
+  @Volatile private var microphoneFgsEstablished = false
   @Volatile private var lastStartId = 0
   private val currentNotificationId = NOTIFICATION_ID
 
@@ -67,7 +70,9 @@ class VoiceSessionService : Service() {
       stopForeground(STOP_FOREGROUND_REMOVE)
       VoiceSessionModule.notifyStatus(statusMap(false, "service_stopped", config?.sessionId))
     }
+    config?.sessionId?.let(::clearUnmuteClaims)
     config = null
+    microphoneFgsEstablished = false
     super.onDestroy()
   }
 
@@ -93,7 +98,7 @@ class VoiceSessionService : Service() {
       stopIfIdle(startId)
       return
     }
-    if (requiresVisibleMicrophonePromotion(active, requested)) {
+    if (requiresVisibleMicrophonePromotion(requested)) {
       sendResult(intent, RESULT_FAILED, "activity_not_visible_for_microphone_fgs", active ?: requested)
       stopIfIdle(startId)
       return
@@ -113,6 +118,7 @@ class VoiceSessionService : Service() {
         runningService = this
       }
       VoiceSessionActionQueue.clearOtherSessions(this, requested.sessionId)
+      clearUnmuteClaimsExcept(requested.sessionId)
       sendResult(intent, RESULT_STARTED, null, requested)
       VoiceSessionModule.notifyStatus(statusMap(true, null, requested.sessionId))
     } catch (error: RuntimeException) {
@@ -126,6 +132,7 @@ class VoiceSessionService : Service() {
         }
         config = null
         activeStartToken = null
+        microphoneFgsEstablished = false
         if (runningService === this) runningService = null
         stopIfIdle(startId)
       }
@@ -146,7 +153,7 @@ class VoiceSessionService : Service() {
       sendResult(intent, RESULT_FAILED, "runtime_permission_missing", requested)
       return
     }
-    if (requiresVisibleMicrophonePromotion(active, requested)) {
+    if (requiresVisibleMicrophonePromotion(requested)) {
       sendResult(intent, RESULT_FAILED, "activity_not_visible_for_microphone_fgs", active)
       return
     }
@@ -173,7 +180,7 @@ class VoiceSessionService : Service() {
       return
     }
     val value = if (intent.hasExtra(EXTRA_VALUE)) intent.getBooleanExtra(EXTRA_VALUE, false) else null
-    val queued = VoiceSessionActionQueue.enqueue(this, active.sessionId, action!!, value)
+    val queued = enqueueNotificationAction(active.sessionId, action!!, value)
     if (action == "disconnect") {
       // If JS is paused or gone, the watchdog kills this app process (and its WebRTC tracks).
       // Keep the durable action unacknowledged unless JS confirms it applied the disconnect.
@@ -184,6 +191,27 @@ class VoiceSessionService : Service() {
     } else {
       VoiceSessionModule.notifyStatus(statusMap(true, "action_queue_write_failed", active.sessionId))
     }
+  }
+
+  /** Publishes the durable action and its volatile authorization as one tap transaction. */
+  private fun enqueueNotificationAction(
+    sessionId: String,
+    action: String,
+    value: Boolean?,
+  ): org.json.JSONObject? = synchronized(unmuteClaimLock) {
+    val queued = VoiceSessionActionQueue.enqueue(this, sessionId, action, value)
+    if (action == "setMicMuted" || action == "disconnect") {
+      clearUnmuteClaims(sessionId)
+    }
+    val isUnmuteTap = queued?.let {
+      it.optString("action") == "setMicMuted"
+        && it.has("value")
+        && !it.optBoolean("value", true)
+    } == true
+    if (isUnmuteTap && microphoneFgsEstablished) {
+      grantNotificationUnmute(sessionId, queued!!.optString("id"))
+    }
+    queued
   }
 
   private fun handleStop(intent: Intent, startId: Int) {
@@ -199,8 +227,10 @@ class VoiceSessionService : Service() {
     if (config?.sessionId != sessionId) return
     cancelDisconnectWatchdog(sessionId)
     stopForeground(STOP_FOREGROUND_REMOVE)
+    clearUnmuteClaims(sessionId)
     config = null
     activeStartToken = null
+    microphoneFgsEstablished = false
     if (runningService === this) runningService = null
     stopSelfResult(startId ?: lastStartId)
     VoiceSessionModule.notifyStatus(statusMap(false, null, sessionId))
@@ -222,6 +252,7 @@ class VoiceSessionService : Service() {
     } else {
       startForeground(currentNotificationId, notification)
     }
+    if (next.microphoneActive) microphoneFgsEstablished = true
   }
 
   private fun foregroundTypes(state: VoiceSessionConfig): Int {
@@ -229,23 +260,20 @@ class VoiceSessionService : Service() {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && state.playbackActive) {
       types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
     }
-    // WebRTC's projection service owns microphone type while projection is active and remote
-    // playback is also active. A mic-only voice service must still declare its actual mic type.
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && usesLocalMicrophoneType(state)) {
+    // Keep a previously established microphone type across mute. Promotion from the background
+    // is still forbidden below; microphoneActive continues to describe the actual live track.
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
+      && (state.microphoneActive || microphoneFgsEstablished)
+    ) {
       types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
     }
     return types
   }
 
-  private fun usesLocalMicrophoneType(state: VoiceSessionConfig): Boolean =
-    state.microphoneActive && (!state.projectionActive || !state.playbackActive)
-
-  private fun requiresVisibleMicrophonePromotion(
-    previous: VoiceSessionConfig?,
-    next: VoiceSessionConfig,
-  ): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE
-    && usesLocalMicrophoneType(next)
-    && (previous == null || !usesLocalMicrophoneType(previous))
+  private fun requiresVisibleMicrophonePromotion(next: VoiceSessionConfig): Boolean =
+    Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE
+    && next.microphoneActive
+    && !microphoneFgsEstablished
     && !VoiceSessionVisibility.isActivityResumed()
 
   private fun hasRequiredRuntimePermissions(state: VoiceSessionConfig): Boolean =
@@ -350,6 +378,7 @@ class VoiceSessionService : Service() {
       putString(RESULT_SESSION_ID, state?.sessionId)
       if (reason != null) putString(RESULT_REASON, reason)
       putInt(RESULT_ACTIVE_TYPES, if (state == null) 0 else foregroundTypes(state))
+      putBoolean(RESULT_MICROPHONE_FGS_ACTIVE, microphoneFgsEstablished)
     }
     receiver.send(resultCode, data)
   }
@@ -366,6 +395,7 @@ class VoiceSessionService : Service() {
         putBoolean("deafened", it.deafened)
         putInt("activeTypes", foregroundTypes(it))
       }
+      putBoolean("microphoneFgsActive", microphoneFgsEstablished)
       putBoolean("notificationPermissionGranted", notificationsAllowed(this@VoiceSessionService))
     }
 
@@ -475,6 +505,7 @@ class VoiceSessionService : Service() {
     internal const val RESULT_REASON = "reason"
     const val RESULT_SESSION_ID = "sessionId"
     const val RESULT_ACTIVE_TYPES = "activeTypes"
+    const val RESULT_MICROPHONE_FGS_ACTIVE = "microphoneFgsActive"
     const val RESULT_STARTED = 1
     const val RESULT_FAILED = 0
     private const val DISCONNECT_WATCHDOG_MS = 2_000L
@@ -493,6 +524,45 @@ class VoiceSessionService : Service() {
       val runnable: Runnable,
     )
     private var pendingDisconnect: PendingDisconnect? = null
+    private data class UnmuteClaimKey(val sessionId: String, val actionId: String)
+    private val unmuteClaimLock = Any()
+    private val unmuteClaims = mutableSetOf<UnmuteClaimKey>()
+
+    /** This process-local claim is created only by an eligible notification tap. */
+    internal fun grantNotificationUnmute(sessionId: String, actionId: String) {
+      synchronized(unmuteClaimLock) {
+        unmuteClaims.removeAll { it.sessionId == sessionId }
+        unmuteClaims.add(UnmuteClaimKey(sessionId, actionId))
+      }
+    }
+
+    /** One successful consume permits exactly one JS microphone attempt. */
+    internal fun consumeNotificationUnmuteClaim(sessionId: String, actionId: String): Boolean =
+      synchronized(unmuteClaimLock) {
+        unmuteClaims.remove(UnmuteClaimKey(sessionId, actionId))
+      }
+
+    internal fun revokeNotificationUnmuteClaim(sessionId: String, actionId: String) {
+      synchronized(unmuteClaimLock) {
+        unmuteClaims.remove(UnmuteClaimKey(sessionId, actionId))
+      }
+    }
+
+    internal fun clearUnmuteClaims(sessionId: String) {
+      synchronized(unmuteClaimLock) {
+        unmuteClaims.removeAll { it.sessionId == sessionId }
+      }
+    }
+
+    internal fun clearAllUnmuteClaims() {
+      synchronized(unmuteClaimLock) { unmuteClaims.clear() }
+    }
+
+    private fun clearUnmuteClaimsExcept(sessionId: String) {
+      synchronized(unmuteClaimLock) {
+        unmuteClaims.removeAll { it.sessionId != sessionId }
+      }
+    }
 
     internal fun startFromModule(context: Context, config: VoiceSessionConfig, receiver: OsResultReceiver): String {
       val startToken = UUID.randomUUID().toString()
@@ -522,12 +592,12 @@ class VoiceSessionService : Service() {
     internal fun updateFromModule(
       context: Context,
       config: VoiceSessionConfig,
-      callback: (Boolean, String?, Int?) -> Unit,
+      callback: (Boolean, String?, Int?, Boolean) -> Unit,
     ) {
       Handler(Looper.getMainLooper()).post {
         val service = runningService
         if (service == null || service.config?.sessionId != config.sessionId) {
-          callback(false, "service_not_running_for_session", null)
+          callback(false, "service_not_running_for_session", null, false)
         } else {
           service.updateConfig(config, callback)
         }
@@ -579,6 +649,7 @@ class VoiceSessionService : Service() {
       return Arguments.createMap().apply {
         putBoolean("running", isRunning)
         putString("sessionId", if (isRunning) sessionId else null)
+        putBoolean("microphoneFgsActive", isRunning && service?.microphoneFgsEstablished == true)
         if (isRunning) {
           service?.config?.let {
             putBoolean("playbackActive", it.playbackActive)
@@ -598,6 +669,7 @@ class VoiceSessionService : Service() {
       return Arguments.createMap().apply {
         putBoolean("running", activeConfig != null)
         putString("sessionId", activeConfig?.sessionId)
+        putBoolean("microphoneFgsActive", service?.microphoneFgsEstablished == true)
         putBoolean("notificationPermissionGranted", notificationsAllowed(context))
         activeConfig?.let {
           putString("roomLabel", it.roomLabel)
@@ -650,28 +722,28 @@ class VoiceSessionService : Service() {
     }
   }
 
-  private fun updateConfig(next: VoiceSessionConfig, callback: (Boolean, String?, Int?) -> Unit) {
+  private fun updateConfig(next: VoiceSessionConfig, callback: (Boolean, String?, Int?, Boolean) -> Unit) {
     val active = config
     if (active == null || active.sessionId != next.sessionId) {
-      callback(false, "service_not_running_for_session", null)
+      callback(false, "service_not_running_for_session", null, microphoneFgsEstablished)
       return
     }
     if (!hasRequiredRuntimePermissions(next)) {
-      callback(false, "record_audio_permission_missing", config?.let(::foregroundTypes))
+      callback(false, "record_audio_permission_missing", config?.let(::foregroundTypes), microphoneFgsEstablished)
       return
     }
-    if (requiresVisibleMicrophonePromotion(active, next)) {
-      callback(false, "activity_not_visible_for_microphone_fgs", foregroundTypes(active))
+    if (requiresVisibleMicrophonePromotion(next)) {
+      callback(false, "activity_not_visible_for_microphone_fgs", foregroundTypes(active), microphoneFgsEstablished)
       return
     }
     try {
       startForegroundFor(next)
       config = next
-      callback(true, null, foregroundTypes(next))
+      callback(true, null, foregroundTypes(next), microphoneFgsEstablished)
       VoiceSessionModule.notifyStatus(statusMap(true, null, next.sessionId))
     } catch (error: RuntimeException) {
       val reason = classifyForegroundFailure(error)
-      callback(false, reason, config?.let(::foregroundTypes))
+      callback(false, reason, config?.let(::foregroundTypes), microphoneFgsEstablished)
       VoiceSessionModule.notifyStatus(statusMap(true, reason, config?.sessionId))
     }
   }
