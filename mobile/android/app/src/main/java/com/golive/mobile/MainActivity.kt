@@ -65,4 +65,14 @@ class MainActivity : ReactActivity() {
       // because it's doing more than [Activity.moveTaskToBack] in fact.
       super.invokeDefaultOnBackPressed()
   }
+
+  override fun onResume() {
+    super.onResume()
+    VoiceSessionVisibility.setActivityResumed(true)
+  }
+
+  override fun onPause() {
+    VoiceSessionVisibility.setActivityResumed(false)
+    super.onPause()
+  }
 }
