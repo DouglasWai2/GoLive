@@ -5,7 +5,7 @@ import {
   RTCPeerConnection,
   RTCRtpSender,
 } from "react-native-webrtc";
-import { availableVideoCodecs, orderVideoCodecs } from "@golive/core";
+import { availableVideoCodecs } from "@golive/core";
 import type {
   IceCandidateInit,
   MediaStream,
@@ -152,16 +152,22 @@ export const nativeAdapter: PlatformAdapter = {
     let choice = screenCodecChoices.get(connection);
     if (!choice) {
       choice = selectScreenVideoCodecs(
-        orderVideoCodecs(capabilities.codecs),
+        capabilities.codecs,
         Platform.OS === "android" ? screenPublisherConnectionCount : 1,
         preferredCodec,
         getNativeHardwareScreenCodecs(),
       );
       screenCodecChoices.set(connection, choice);
       console.log(
-        `Screen publisher ${screenPublisherConnectionCount}: ${choice.codecs[0]?.mimeType ?? "default"}${choice.overflow ? " (overflow fallback)" : " preferred"}`,
+        `Screen publisher ${screenPublisherConnectionCount}: ${choice.codecs[0]?.mimeType ?? "default"} (${preferredCodec === "auto" ? "hardware auto" : `forced ${preferredCodec}`}${choice.overflow ? ", overflow VP8 fallback" : ""})`,
       );
-      if (screenPublisherConnectionCount > 2 && !choice.overflow && Platform.OS === "android" && (preferredCodec === "auto" || preferredCodec === "H264")) {
+      if (
+        screenPublisherConnectionCount > 2
+        && !choice.overflow
+        && choice.codecs[0]?.mimeType.toLowerCase() === "video/h264"
+        && Platform.OS === "android"
+        && preferredCodec === "auto"
+      ) {
         console.warn("VP8 is unavailable; additional Android screen viewers may exceed the hardware encoder limit");
       }
     }

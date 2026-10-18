@@ -162,7 +162,7 @@ export function ShareSheet({ visible, isStarting, onStart, onCancel }: ShareShee
             })}
           </View>
 
-          <Text style={styles.label}>Preferred video codec</Text>
+          <Text style={styles.label}>Video codec</Text>
           <View style={styles.codecOptions} accessibilityRole="radiogroup">
             {videoCodecOptions.filter((option) => option.value === "auto" || availableCodecs.includes(option.value)).map((option) => {
               const active = settings.videoCodec === option.value;
@@ -181,7 +181,7 @@ export function ShareSheet({ visible, isStarting, onStart, onCancel }: ShareShee
               );
             })}
           </View>
-          <Text style={styles.codecHint}>The viewer must also support it. Availability does not guarantee hardware encoding; Auto is recommended for 3+ viewers.</Text>
+          <Text style={styles.codecHint}>Manual sends only this codec, so every viewer must support it; device capacity may limit many viewers. Auto prioritizes detected Android hardware codecs and falls back to VP8 for extra viewers when needed.</Text>
 
             <View style={[styles.audioSetting, !supportsDeviceAudio && styles.audioSettingDisabled]}>
               <View style={styles.audioCopy}>
@@ -264,7 +264,7 @@ const styles = StyleSheet.create({
   segmentActive: { backgroundColor: colors.acid },
   segmentText: { color: "#8d8d84", fontSize: 11, fontWeight: "600" },
   segmentTextActive: { color: colors.acidInk, fontWeight: "800" },
-  codecOptions: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+  codecOptions: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   codecOption: { minHeight: 48, minWidth: 58, paddingHorizontal: 9, borderRadius: radii.control, borderWidth: 1, borderColor: colors.line, alignItems: "center", justifyContent: "center" },
   codecHint: { color: colors.muted, fontSize: 10, lineHeight: 15, marginTop: 7 },
   audioSetting: { minHeight: 66, marginTop: 17, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 1, borderColor: "#373732", borderRadius: radii.control, backgroundColor: "#22221e", flexDirection: "row", alignItems: "center", gap: 12 },

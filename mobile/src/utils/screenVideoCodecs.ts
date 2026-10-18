@@ -1,28 +1,92 @@
-import { preferVideoCodec } from "@golive/core";
+import { orderVideoCodecs } from "@golive/core";
+import type { HardwareAccelerationSupport } from "@golive/core";
 import type { VideoCodecPreference } from "@golive/core";
 
+type ScreenVideoCodec = {
+  mimeType: string;
+  payloadType?: number;
+  sdpFmtpLine?: string;
+};
+
+function codecPreference(mimeType: string): Exclude<VideoCodecPreference, "auto"> | null {
+  const name = mimeType.split("/").pop()?.toUpperCase();
+  if (name === "H264" || name === "VP8" || name === "VP9" || name === "AV1" || name === "AV1X") {
+    return name === "AV1X" ? "AV1" : name;
+  }
+  return null;
+}
+
+function orderForDetectedHardware<T extends ScreenVideoCodec>(
+  codecs: readonly T[],
+  hardwareCodecs: readonly VideoCodecPreference[],
+): T[] {
+  const hardware: HardwareAccelerationSupport = {
+    H264: hardwareCodecs.includes("H264"),
+    VP8: hardwareCodecs.includes("VP8"),
+    VP9: hardwareCodecs.includes("VP9"),
+    AV1: hardwareCodecs.includes("AV1"),
+    HEVC: false,
+  };
+  return orderVideoCodecs(codecs, hardware);
+}
+
+function includeCodecAndRepair<T extends ScreenVideoCodec>(
+  codecs: readonly T[],
+  selected: readonly T[],
+): T[] {
+  const payloadTypes = new Set(
+    selected.flatMap((codec) => typeof codec.payloadType === "number" ? [codec.payloadType] : []),
+  );
+  const repair = codecs.filter((codec) => {
+    const name = codec.mimeType.split("/").pop()?.toLowerCase();
+    if (name === "rtx") {
+      const apt = codec.sdpFmtpLine?.match(/(?:^|;)\s*apt=(\d+)/i)?.[1];
+      return apt ? payloadTypes.has(Number(apt)) : payloadTypes.size === 0;
+    }
+    return name === "red" || name === "ulpfec" || name === "flexfec-03";
+  });
+
+  return [...selected, ...repair];
+}
+
 /**
- * Android devices often allow only two simultaneous H.264 hardware encoders.
- * Each viewer needs its own P2P encoder, so overflow viewers use VP8 rather
- * than risk exhausting the H.264 hardware encoder instances.
- * Do not offer H.264 or other codecs on those connections: an answer could
- * otherwise select H.264 again, even if VP8 is listed first.
+ * Auto avoids the common Android H.264 encoder-instance limit by switching
+ * additional viewers to VP8. Explicit codec choices are never overridden.
  */
-export function selectScreenVideoCodecs<T extends { mimeType: string }>(
+export function selectScreenVideoCodecs<T extends ScreenVideoCodec>(
   codecs: readonly T[],
   screenPublisherConnectionCount: number,
   preference: VideoCodecPreference = "auto",
   hardwareCodecs: readonly VideoCodecPreference[] = [],
 ): { codecs: T[]; overflow: boolean } {
-  if (screenPublisherConnectionCount <= 2 || (preference !== "auto" && preference !== "H264")) {
-    const preferred = preference === "auto" && hardwareCodecs.includes("AV1") ? "AV1" : preference;
-    return { codecs: preferVideoCodec(codecs, preferred), overflow: false };
+  const orderedCodecs = orderForDetectedHardware(codecs, hardwareCodecs);
+
+  if (preference !== "auto") {
+    const selected = orderedCodecs.filter((codec) => codecPreference(codec.mimeType) === preference);
+    return {
+      codecs: selected.length > 0
+        ? includeCodecAndRepair(orderedCodecs, selected)
+        : orderedCodecs,
+      overflow: false,
+    };
   }
 
-  // Even a manual H.264 preference must not exceed the common two-encoder
-  // Android limit. VP8 is used as a compatibility fallback for extra viewers.
-  const vp8 = codecs.filter((codec) => codec.mimeType.toLowerCase() === "video/vp8");
-  return vp8.length > 0
-    ? { codecs: vp8, overflow: true }
-    : { codecs: [...codecs], overflow: false };
+  const automaticCodec = orderedCodecs.find((codec) => codecPreference(codec.mimeType));
+  if (
+    screenPublisherConnectionCount > 2
+    && automaticCodec
+    && codecPreference(automaticCodec.mimeType) === "H264"
+  ) {
+    // Preserve the Android H.264 instance limit in Auto, but never override a
+    // codec explicitly selected by the user.
+    const vp8 = orderedCodecs.filter((codec) => codecPreference(codec.mimeType) === "VP8");
+    if (vp8.length > 0) {
+      return {
+        codecs: includeCodecAndRepair(orderedCodecs, vp8),
+        overflow: true,
+      };
+    }
+  }
+
+  return { codecs: orderedCodecs, overflow: false };
 }
