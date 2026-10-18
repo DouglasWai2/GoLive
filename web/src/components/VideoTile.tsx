@@ -28,6 +28,7 @@ type VideoTileProps = {
   onFullscreen?: (video: HTMLVideoElement, tile: HTMLElement) => void;
   onMinimize?: () => void;
   onStopWatching?: () => void;
+  onSelect?: () => void;
 };
 
 const CONTROLS_HIDE_DELAY = 2500;
@@ -67,7 +68,7 @@ async function startPlayback(
   }
 }
 
-export function VideoTile({ stream, name, local = false, viewerCount, state, qualityLabel, stats, outboundStats = [], volume = 1, muted = false, statsEnabled = true, fullscreenId, isFullscreen = false, variant = "stage", onVolumeChange, onToggleMute, onToggleStats, onFullscreen, onMinimize, onStopWatching }: VideoTileProps) {
+export function VideoTile({ stream, name, local = false, viewerCount, state, qualityLabel, stats, outboundStats = [], volume = 1, muted = false, statsEnabled = true, fullscreenId, isFullscreen = false, variant = "stage", onVolumeChange, onToggleMute, onToggleStats, onFullscreen, onMinimize, onStopWatching, onSelect }: VideoTileProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const tileRef = useRef<HTMLElement>(null);
   const controlsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -286,6 +287,13 @@ export function VideoTile({ stream, name, local = false, viewerCount, state, qua
       }}
       onBlurCapture={(event) => {
         if (isFullscreen && !event.currentTarget.contains(event.relatedTarget)) scheduleControlsHide();
+      }}
+      onClick={(event) => {
+        if (onSelect && variant !== "stage" && event.target instanceof Element) {
+          if (!event.target.closest("button, input, .tile-controls")) {
+            onSelect();
+          }
+        }
       }}
     >
       <video ref={videoRef} autoPlay playsInline muted={local || muted || audioBlocked} />

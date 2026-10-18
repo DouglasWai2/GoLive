@@ -137,26 +137,29 @@ export function ParticipantsGrid({ displayMode, localName, localStream, localVie
           const contents = (
             <>
               {thumbnail ? (
-                <VideoTile
-                  stream={thumbnail}
-                  name={participant.name}
-                  local={participant.local}
-                  viewerCount={participant.local ? localViewerCount : undefined}
-                  state={isFocusedRemote ? focusedConnectionState : undefined}
-                  stats={isFocusedRemote && statsEnabled ? focusedStats : null}
-                  statsEnabled={statsEnabled}
-                  variant={videoVariant}
-                  volume={volume}
-                  muted={muted}
-                  fullscreenId={participant.local ? "local" : participant.id}
-                  isFullscreen={fullscreenPeerId === (participant.local ? "local" : participant.id)}
-                  onVolumeChange={participant.local ? undefined : onVolumeChange}
-                  onToggleMute={participant.local ? undefined : onToggleMute}
-                  onToggleStats={onToggleStats}
-                  onFullscreen={participant.local ? onLocalFullscreen : onRemoteFullscreen}
-                  onMinimize={remoteDisplayMode && displayMode === "stage" ? onMinimizeRemote : undefined}
-                  onStopWatching={remoteDisplayMode ? onStopWatchingRemote : undefined}
-                />
+                <div data-preview-no-drag={!isFocusedRemote && participant.sharing ? "" : undefined}>
+                  <VideoTile
+                    stream={thumbnail}
+                    name={participant.name}
+                    local={participant.local}
+                    viewerCount={participant.local ? localViewerCount : undefined}
+                    state={isFocusedRemote ? focusedConnectionState : undefined}
+                    stats={isFocusedRemote && statsEnabled ? focusedStats : null}
+                    statsEnabled={statsEnabled}
+                    variant={videoVariant}
+                    volume={volume}
+                    muted={muted}
+                    fullscreenId={participant.local ? "local" : participant.id}
+                    isFullscreen={fullscreenPeerId === (participant.local ? "local" : participant.id)}
+                    onVolumeChange={participant.local ? undefined : onVolumeChange}
+                    onToggleMute={participant.local ? undefined : onToggleMute}
+                    onToggleStats={onToggleStats}
+                    onFullscreen={participant.local ? onLocalFullscreen : onRemoteFullscreen}
+                    onMinimize={remoteDisplayMode && displayMode === "stage" ? onMinimizeRemote : undefined}
+                    onStopWatching={remoteDisplayMode ? onStopWatchingRemote : undefined}
+                    onSelect={!isFocusedRemote && participant.sharing ? focus : undefined}
+                  />
+                </div>
               ) : <span className="grid-person-avatar" aria-hidden="true">{participant.name.slice(0, 1).toUpperCase()}</span>}
                     <span className="grid-person-voice" title={voiceStatus} aria-label={voiceStatus} role="img">
                       {participant.voiceJoined && !participant.micMuted ? <MicrophoneIcon size={15} /> : <MicrophoneMutedIcon size={15} />}
