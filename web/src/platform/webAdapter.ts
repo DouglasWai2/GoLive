@@ -82,12 +82,32 @@ export const webAdapter: PlatformAdapter = {
     const codecs = preferVideoCodec(orderVideoCodecs(capabilities.codecs, hwAccel), preferredCodec);
     const peerConnection = connection as unknown as RTCPeerConnection;
 
+    // iOS Safari: VideoToolbox hardware decoder struggles with H.264 High Profile
+    // negotiated by desktop senders. Prefer VP8/VP9 on receiver side to avoid
+    // software decoding fallback which causes severe stuttering.
+    const isIOSSafari =
+      /iPhone|iPad|iPod/.test(navigator.userAgent) &&
+      /Safari/.test(navigator.userAgent) &&
+      !/Chrome|CriOS/.test(navigator.userAgent);
+
+    const receiverCodecs = isIOSSafari
+      ? codecs.filter((c) => !c.mimeType.toLowerCase().includes("h264"))
+      : codecs;
+
     for (const transceiver of peerConnection.getTransceivers()) {
+      // Sender side (local track): use negotiated preference
       if (
         transceiver.sender.track?.kind === "video"
         && typeof transceiver.setCodecPreferences === "function"
       ) {
         transceiver.setCodecPreferences(codecs);
+      }
+      // Receiver side (remote track): on iOS Safari, avoid H.264
+      if (
+        transceiver.receiver.track?.kind === "video"
+        && typeof transceiver.setCodecPreferences === "function"
+      ) {
+        transceiver.setCodecPreferences(receiverCodecs);
       }
     }
   },

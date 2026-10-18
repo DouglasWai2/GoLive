@@ -653,12 +653,13 @@ does not arrive.
   that limit and room membership before forwarding screen signals.
 - The same captured screen stream is reused for each viewer subscribed to it.
 - Each viewer still needs a separate P2P video encoder. Screen-share settings
-  offer Auto or an available preferred codec (H.264, VP8, VP9, AV1); the
-  receiver may negotiate a fallback. Android Auto prefers hardware AV1 where
-  the native WebRTC factory exposes it. With Auto or H.264 selected, additional
-  viewers use VP8 capped at 480p/15 fps to avoid exhausting H.264 encoders.
-  A manually selected AV1/VP8/VP9 is preferred for all viewers, subject to
-  device capacity. The bitrate budget is divided among active viewers.
+  offer Auto or an available codec (H.264, VP8, VP9, AV1). Android Auto
+  prioritizes codecs exposed by the native hardware encoder factory and uses
+  VP8 capped at 480p/15 fps for extra viewers when H.264 would exceed the
+  common encoder limit. On mobile, a manually selected codec is the only video
+  codec offered, so every viewer must support it; manually selecting H.264 may
+  exceed device capacity with many viewers. Web keeps negotiation fallbacks.
+  The bitrate budget is divided among active viewers.
 - Room capacity is 10 participants; simultaneous shares cannot exceed that cap.
 - STUN is always available. TURN uses Cloudflare first and ExpressTURN after the
   configured Cloudflare egress threshold (see [Environment variables](#environment-variables)).

@@ -2021,6 +2021,16 @@ export class RoomSession {
     await this.flushFocusedCandidates(connection);
     if (!isCurrent() || this.focusedConnection !== connection) return;
 
+    try {
+      await this.deps.adapter.configureVideoCodecs?.(connection, {
+        screenPublisherConnectionCount: 1,
+        preferredCodec: "auto",
+      });
+    } catch (caught) {
+      console.warn(`[screen:${streamId}] Could not configure video codecs for focused connection`, caught);
+    }
+    if (!isCurrent() || this.focusedConnection !== connection) return;
+
     const answer = await connection.createAnswer();
     if (!isCurrent() || this.focusedConnection !== connection) return;
 
