@@ -58,19 +58,9 @@ export const webAdapter: PlatformAdapter = {
     const audioTrack = stream.getAudioTracks()[0];
 
     if (audioTrack) {
-      const settings = audioTrack.getSettings();
+      const settings = audioTrack?.getSettings();
 
       console.log("Áudio capturado:", settings);
-      console.log(
-        "Restrição do próprio áudio ativada:",
-        settings.restrictOwnAudio === true
-      );
-
-      if (settings.restrictOwnAudio !== true) {
-        console.warn(
-          "O navegador não confirmou a restrição do próprio áudio."
-        );
-      }
     }
 
     return stream;
