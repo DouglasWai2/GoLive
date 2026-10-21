@@ -34,18 +34,43 @@ export const webAdapter: PlatformAdapter = {
   getDisplayMedia: async (constraints) => {
     const stream = await navigator.mediaDevices.getDisplayMedia({
       ...constraints,
+      // Exclude current tab (GoLive call) from share targets to avoid "hall of mirrors"
+      selfBrowserSurface: "exclude" as const,
+      // Allow system audio for entire-screen shares (user wants tab/window audio too).
+      // Chrome 119+: systemAudio: "include" offers system audio for monitor shares.
+      systemAudio: "include" as const,
       audio: constraints.audio ? {
         echoCancellation: false,
         noiseSuppression: false,
         autoGainControl: false,
         channelCount: { ideal: 2 },
+        // Chrome 141+: filter out GoLive's own audio from captured system audio.
+        // Prevents echo when viewers hear their own voices back through the screen share.
+        restrictOwnAudio: true,
       } : false,
-    });
+    } as DisplayMediaStreamOptions);
 
     // Shared playback is music/media, not microphone speech. Browsers may ignore
     // capture constraints, but this hint also informs the WebRTC audio encoder.
     for (const track of stream.getAudioTracks()) {
       track.contentHint = "music";
+    }
+    const audioTrack = stream.getAudioTracks()[0];
+
+    if (audioTrack) {
+      const settings = audioTrack.getSettings();
+
+      console.log("Áudio capturado:", settings);
+      console.log(
+        "Restrição do próprio áudio ativada:",
+        settings.restrictOwnAudio === true
+      );
+
+      if (settings.restrictOwnAudio !== true) {
+        console.warn(
+          "O navegador não confirmou a restrição do próprio áudio."
+        );
+      }
     }
 
     return stream;
